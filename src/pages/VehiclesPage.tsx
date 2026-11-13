@@ -39,6 +39,11 @@ function formatAvailableDate(iso: string | null | undefined): string {
   });
 }
 
+function toLocalDatetimeInput(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
 export const VehiclesPage: React.FC = () => {
   const { vehicles, activeBranches, settings, loading, fetchAvailabilitySummary } = useCatalog();
   const { t } = useLanguage();
@@ -49,10 +54,10 @@ export const VehiclesPage: React.FC = () => {
   );
   const [branchId, setBranchId] = useState<string>(searchParams.get('branchId') || 'all');
   const [startDate, setStartDate] = useState<string>(
-    () => searchParams.get('start') || new Date(Date.now() + 3600000 * 4).toISOString().slice(0, 16)
+    () => searchParams.get('start') || toLocalDatetimeInput(new Date(Date.now() + 3600000 * 4))
   );
   const [endDate, setEndDate] = useState<string>(
-    () => searchParams.get('end') || new Date(Date.now() + 3600000 * 52).toISOString().slice(0, 16)
+    () => searchParams.get('end') || toLocalDatetimeInput(new Date(Date.now() + 3600000 * 52))
   );
   const [transmission, setTransmission] = useState<string>('All');
   const [fuelType, setFuelType] = useState<string>('All');

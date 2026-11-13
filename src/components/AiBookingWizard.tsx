@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  type ConfirmationResult,
-} from 'firebase/auth';
+import { type ConfirmationResult, type RecaptchaVerifier } from 'firebase/auth';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -31,11 +27,15 @@ import {
   UserCheck,
   Wrench,
 } from 'lucide-react';
-import { auth } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { apiFetch, formatINR, getSessionToken } from '../lib/api';
+import {
+  clearRecaptchaInstance,
+  requestUnifiedMobileOtp,
+  verifyUnifiedMobileOtp,
+} from '../lib/authService';
 import { resolveVehicleImage } from '../lib/mediaAssets';
 import { KycDocumentsUploader, hasAllMandatoryKycDocs } from './KycDocumentsUploader';
 import { LocationMapPicker, type LocationSelection } from './LocationMapPicker';
@@ -71,14 +71,6 @@ function getDefaultWindow(): { start: string; end: string } {
   start.setMinutes(0, 0, 0);
   const end = new Date(start.getTime() + 24 * 3600000);
   return { start: toLocalDatetimeInput(start), end: toLocalDatetimeInput(end) };
-}
-
-function normalizeE164Phone(raw: string): string {
-  const digits = raw.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  const justDigits = digits.replace(/\D/g, '');
-  if (justDigits.length === 10) return `+91${justDigits}`;
-  return `+${justDigits}`;
 }
 
 export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
@@ -121,6 +113,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
   const [otpChallengeId, setOtpChallengeId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
+  const [otpError, setOtpError] = useState('');
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [mobileOverrideMode, setMobileOverrideMode] = useState(false);
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
@@ -313,12 +306,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
 
   useEffect(() => {
     return () => {
-      try {
-        recaptchaVerifierRef.current?.clear();
-      } catch {
-        // ignore
-      }
-      recaptchaVerifierRef.current = null;
+      clearRecaptchaInstance(recaptchaVerifierRef, recaptchaContainerRef.current);
     };
   }, []);
 
@@ -520,56 +508,33 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
     }
   }, [step, refreshQuote]);
 
-  // Unified Mobile OTP Handlers (clean UX with zero technical provider jargon)
-  const useFirebaseSmsMode =
-    authOtpConfig.firebasePhoneAuthEnabled && !authOtpConfig.demoOtpEnabled && !authOtpConfig.whatsappOtpEnabled;
-
+  // Unified Mobile OTP Handlers (centralized via authService, zero technical jargon)
   const handleSendUnifiedOtp = async () => {
-    const cleanDigits = phone.replace(/\D/g, '');
-    if (cleanDigits.length < 10) {
-      toast.error('Please enter a valid 10-digit mobile number.');
-      return;
-    }
-    const configuredCooldown = Number(authOtpConfig.otpResendCooldownSeconds || 60);
     setBusy(true);
+    setOtpError('');
     try {
-      if (useFirebaseSmsMode) {
-        const formatted = normalizeE164Phone(phone.trim());
-        if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
-          recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
-            size: 'invisible',
-          });
-        }
-        if (!recaptchaVerifierRef.current) throw new Error('Verification widget unavailable.');
-        const confirmation = await signInWithPhoneNumber(auth, formatted, recaptchaVerifierRef.current);
-        setFirebaseConfirmation(confirmation);
-        setOtpCooldown(configuredCooldown);
-        setOtpNotice(`A 6-digit verification code has been sent to ${formatted}.`);
-        toast.success(`Verification code sent to ${formatted}`);
+      const result = await requestUnifiedMobileOtp({
+        phone: phone.trim(),
+        purpose: 'ai_booking',
+        verifierRef: recaptchaVerifierRef,
+        containerEl: recaptchaContainerRef.current,
+        firebasePhoneAuthEnabled: Boolean(authOtpConfig.firebasePhoneAuthEnabled),
+        defaultCooldownSeconds: Number(authOtpConfig.otpResendCooldownSeconds || 60),
+      });
+      if (result.channel === 'firebase' && result.confirmation) {
+        setFirebaseConfirmation(result.confirmation);
+        setOtpChallengeId('');
       } else {
-        const res = await apiFetch<{
-          challengeId: string;
-          cooldownSeconds: number;
-          message: string;
-        }>('/api/ai/otp/send', {
-          method: 'POST',
-          body: JSON.stringify({ phone: phone.trim() }),
-        });
-        setOtpChallengeId(res.challengeId);
-        setOtpCooldown(res.cooldownSeconds || configuredCooldown);
-        setOtpNotice(res.message);
-        toast.success(res.message);
+        setFirebaseConfirmation(null);
+        setOtpChallengeId(result.challengeId || '');
       }
+      setOtpCooldown(result.cooldownSeconds);
+      setOtpNotice(result.message);
+      toast.success(result.message);
     } catch (err: any) {
-      toast.error(err.message || 'Could not send verification code. Please try again.');
-      if (recaptchaVerifierRef.current) {
-        try {
-          recaptchaVerifierRef.current.clear();
-        } catch {
-          // ignore
-        }
-        recaptchaVerifierRef.current = null;
-      }
+      const msg = err.message || 'Could not send verification code. Please try again.';
+      setOtpError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -578,15 +543,23 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
   const handleVerifyUnifiedOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (otpCode.trim().length !== 6) {
-      toast.error('Please enter the 6-digit verification code.');
+      const msg = 'Please enter the 6-digit verification code.';
+      setOtpError(msg);
+      toast.error(msg);
       return;
     }
     setBusy(true);
+    setOtpError('');
     try {
-      if (useFirebaseSmsMode && firebaseConfirmation) {
-        const cred = await firebaseConfirmation.confirm(otpCode.trim());
-        const idToken = await cred.user.getIdToken();
-        const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
+      const verified = await verifyUnifiedMobileOtp({
+        phone: phone.trim(),
+        code: otpCode.trim(),
+        purpose: 'ai_booking',
+        firebaseConfirmation,
+        challengeId: otpChallengeId,
+      });
+      if (verified.channel === 'firebase' && verified.idToken) {
+        const logged = await loginWithFirebasePhone(verified.idToken, undefined, phone.trim());
         if (logged) {
           setMobileOverrideMode(false);
           if (logged.displayName && logged.displayName !== 'Customer') {
@@ -595,33 +568,22 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
           if (logged.email) setEmail(logged.email);
           setStep(2);
         }
-      } else {
-        const res = await apiFetch<{
-          verified: boolean;
-          token: string;
-          profile: UserProfile;
-          message: string;
-        }>('/api/ai/otp/verify', {
-          method: 'POST',
-          body: JSON.stringify({
-            challengeId: otpChallengeId,
-            phone: phone.trim(),
-            code: otpCode.trim(),
-          }),
-        });
-        setAuthenticatedSession(res.token, res.profile);
+      } else if (verified.token && verified.profile) {
+        setAuthenticatedSession(verified.token, verified.profile);
         setMobileOverrideMode(false);
-        if (res.profile.displayName && res.profile.displayName !== 'Customer') {
-          setFullName(res.profile.displayName);
+        if (verified.profile.displayName && verified.profile.displayName !== 'Customer') {
+          setFullName(verified.profile.displayName);
         }
-        if (res.profile.email) {
-          setEmail(res.profile.email);
+        if (verified.profile.email) {
+          setEmail(verified.profile.email);
         }
-        toast.success(res.message || 'Mobile verified!');
+        toast.success(verified.message || 'Mobile number verified successfully.');
         setStep(2);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Invalid verification code. Please check and retry.');
+      const msg = err.message || 'Invalid verification code. Please check and retry.';
+      setOtpError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -957,7 +919,10 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                           required
                           disabled={otpSentReady}
                           value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
+                          onChange={(e) => {
+                            setPhone(e.target.value);
+                            if (otpError) setOtpError('');
+                          }}
                           placeholder="+91 98200 11223"
                           className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold disabled:opacity-70"
                         />
@@ -974,12 +939,18 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                       </div>
                     </div>
 
-                    <div ref={recaptchaContainerRef} />
+                    <div ref={recaptchaContainerRef} className="sr-only" aria-hidden="true" />
 
                     {otpNotice && (
-                      <p className="text-[11px] rounded-lg p-2.5 border bg-obsidian border-white/10 text-ivory/80">
+                      <p className="text-[11px] rounded-lg p-2.5 border bg-emerald-500/10 border-emerald-400/25 text-emerald-200">
                         {otpNotice}
                       </p>
+                    )}
+
+                    {otpError && (
+                      <div className="text-[11px] rounded-lg p-2.5 border bg-red-500/10 border-red-400/30 text-red-200">
+                        {otpError}
+                      </div>
                     )}
 
                     {otpSentReady && (
@@ -995,6 +966,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                               setFirebaseConfirmation(null);
                               setOtpCode('');
                               setOtpNotice('');
+                              setOtpError('');
                               setOtpCooldown(0);
                             }}
                             className="text-[11px] text-gold hover:underline cursor-pointer"
@@ -1007,7 +979,10 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                           required
                           maxLength={6}
                           value={otpCode}
-                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                          onChange={(e) => {
+                            setOtpCode(e.target.value.replace(/\D/g, ''));
+                            if (otpError) setOtpError('');
+                          }}
                           placeholder="6-digit code"
                           className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
                         />
@@ -1489,7 +1464,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
 
             <div className="p-4 rounded-xl bg-navy-deep border border-white/15 space-y-3 text-xs">
               <div>
-                <p className="font-semibold text-white text-sm">{t('booking.returnPromptTitle')}</p>
+                <p className="font-semibold text-white text-sm">{t('booking.returnPrompt')}</p>
                 <p className="text-ivory/65 mt-0.5">
                   Return at your pickup location or pick a different drop spot on the map.
                 </p>

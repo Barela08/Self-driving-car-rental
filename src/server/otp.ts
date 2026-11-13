@@ -9,8 +9,9 @@ const OTP_HMAC_SECRET =
   crypto.createHash('sha256').update('elitedrive-otp-hmac-key-v1').digest('hex');
 
 const RATE_WINDOW_MS = 15 * 60 * 1000;
-const MAX_OTP_PER_NUMBER = 5;
-const MAX_OTP_PER_IP = 15;
+const MAX_OTP_PER_NUMBER_PER_PURPOSE = 5;
+const MAX_OTP_PER_NUMBER_TOTAL = 12;
+const MAX_OTP_PER_IP = 25;
 
 interface OtpChallengeDoc {
   id: string;
@@ -37,6 +38,43 @@ function hashOtp(otp: string, salt: string, phone: string, purpose: OtpPurpose):
 
 function hashIp(ip: string): string {
   return crypto.createHash('sha256').update(String(ip || 'unknown')).digest('hex').slice(0, 16);
+}
+
+export function signPhoneVerificationToken(normalizedPhone: string, purpose: OtpPurpose): string {
+  const exp = Math.floor(Date.now() / 1000) + 15 * 60; // valid for 15 minutes
+  const payload = Buffer.from(JSON.stringify({ phone: normalizedPhone, purpose, exp })).toString('base64url');
+  const sig = crypto.createHmac('sha256', OTP_HMAC_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifyPhoneVerificationToken(token: string, expectedPhone?: string): {
+  valid: boolean;
+  phone?: string;
+  purpose?: OtpPurpose;
+} {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 2) return { valid: false };
+    const [payloadB64, sig] = parts;
+    const expectedSig = crypto.createHmac('sha256', OTP_HMAC_SECRET).update(payloadB64).digest('base64url');
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expectedSig);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { valid: false };
+    const data = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as {
+      phone?: string;
+      purpose?: OtpPurpose;
+      exp?: number;
+    };
+    if (!data.phone || !data.exp || data.exp < Math.floor(Date.now() / 1000)) {
+      return { valid: false };
+    }
+    if (expectedPhone && normalizeIndianPhone(expectedPhone) !== normalizeIndianPhone(data.phone)) {
+      return { valid: false };
+    }
+    return { valid: true, phone: normalizeIndianPhone(data.phone), purpose: data.purpose };
+  } catch {
+    return { valid: false };
+  }
 }
 
 export async function getAuthOtpConfig(): Promise<AuthOtpConfig> {
@@ -185,7 +223,11 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  if (recentForPhone.length >= MAX_OTP_PER_NUMBER) {
+  const recentForPurpose = recentForPhone.filter((ch) => ch.purpose === params.purpose);
+  if (
+    recentForPurpose.length >= MAX_OTP_PER_NUMBER_PER_PURPOSE ||
+    recentForPhone.length >= MAX_OTP_PER_NUMBER_TOTAL
+  ) {
     return {
       ok: false,
       statusCode: 429,
@@ -193,14 +235,41 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  const newest = recentForPhone.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (newest && nowMs - new Date(newest.createdAt).getTime() < cooldownMs && !demoEligible) {
-    const waitSec = Math.ceil((cooldownMs - (nowMs - new Date(newest.createdAt).getTime())) / 1000);
+  // Enforce resend cooldown consistently for all requests on the same phone and action
+  const newestForPurpose = recentForPurpose.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (newestForPurpose && nowMs - new Date(newestForPurpose.createdAt).getTime() < cooldownMs) {
+    const waitSec = Math.ceil((cooldownMs - (nowMs - new Date(newestForPurpose.createdAt).getTime())) / 1000);
     return {
       ok: false,
       statusCode: 429,
       cooldownSeconds: waitSec,
-      message: `Please wait ${waitSec}s before requesting another OTP.`,
+      message: `Please wait ${waitSec}s before requesting another verification code.`,
+    };
+  }
+
+  // Reject unavailable / unauthorized numbers BEFORE writing challenge documents
+  if (!demoEligible && (!authOtpConfig.whatsappOtpEnabled || waConfig.connectionStatus !== 'Connected')) {
+    await writeOtpLog({
+      phone: normalizedPhone,
+      purpose: params.purpose,
+      channel: 'whatsapp',
+      status: 'failed',
+      ...(params.userId ? { userId: params.userId } : {}),
+      isDemoMode: false,
+      detail: isNonProd
+        ? isAuthorizedTestPhone
+          ? 'Demo OTP is disabled and external WhatsApp dispatch is inactive.'
+          : 'Number is not an authorized test number and external SMS/WhatsApp dispatch is unavailable.'
+        : 'Production mode: external SMS/WhatsApp dispatch is inactive.',
+    });
+
+    return {
+      ok: false,
+      statusCode: 400,
+      deliveryChannel: 'unavailable',
+      isDemoOtpEligible: false,
+      message:
+        'Mobile verification is unavailable for this number right now. Please check your number or sign in with Email / Google.',
     };
   }
 
@@ -236,7 +305,7 @@ export async function sendWhatsAppOtp(params: {
 
   await db.collection('whatsapp_otp_challenges').doc(challengeId).set(challengeDoc);
 
-  // Internal development test number path: keep audit trail internal, return neutral UX message
+  // Internal test number path: keep audit trail internal, never falsely claim SMS delivery
   if (demoEligible) {
     await writeOtpLog({
       phone: normalizedPhone,
@@ -254,32 +323,10 @@ export async function sendWhatsAppOtp(params: {
       statusCode: 200,
       challengeId,
       expiresInSeconds: expirySeconds,
-      cooldownSeconds: Math.min(30, configuredCooldownSec),
+      cooldownSeconds: configuredCooldownSec,
       deliveryChannel: 'mobile',
-      isDemoOtpEligible: false,
-      message: `A 6-digit verification code has been sent to +${normalizedPhone}.`,
-    };
-  }
-
-  // External messaging automation remains disabled unless explicitly connected
-  if (!authOtpConfig.whatsappOtpEnabled || waConfig.connectionStatus !== 'Connected') {
-    await writeOtpLog({
-      phone: normalizedPhone,
-      purpose: params.purpose,
-      channel: 'whatsapp',
-      status: 'failed',
-      challengeId,
-      ...(params.userId ? { userId: params.userId } : {}),
-      isDemoMode: false,
-      detail: 'External OTP dispatch is inactive.',
-    });
-
-    return {
-      ok: false,
-      statusCode: 400,
-      deliveryChannel: 'unavailable',
-      isDemoOtpEligible: false,
-      message: 'Mobile verification is temporarily unavailable for this number. Please try again shortly or use Email / Google sign-in.',
+      isDemoOtpEligible: true,
+      message: `Verification step is ready for +${normalizedPhone}. Enter your 6-digit verification code to continue.`,
     };
   }
 

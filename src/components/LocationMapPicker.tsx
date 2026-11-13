@@ -581,7 +581,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
     <div
       className={
         fullScreenMobile
-          ? 'fixed inset-0 z-50 bg-obsidian flex flex-col'
+          ? 'fixed inset-0 z-50 h-[100dvh] overflow-hidden bg-obsidian flex flex-col'
           : 'relative rounded-2xl overflow-hidden border border-white/15 bg-obsidian shadow-lg'
       }
     >
@@ -794,7 +794,11 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
 
       {/* Bottom Selected Address Confirmation Card (Ola/Uber Style) */}
       {showInteractivePin ? (
-        <div className="p-3.5 bg-obsidian border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div
+          className={`p-3.5 bg-obsidian border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${
+            fullScreenMobile ? 'pb-[max(0.875rem,env(safe-area-inset-bottom))]' : ''
+          }`}
+        >
           <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gold">
               {resolvingPin

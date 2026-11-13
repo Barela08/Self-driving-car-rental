@@ -594,5 +594,9 @@ service cloud.firestore {
       allow get: if isValidId(jobId) && (isAdmin() || isMasterAdmin());
       allow list, write: if isAdmin() || isMasterAdmin();
     }
+
+    match /firebase_auth_links/{linkId} {
+      allow read, write: if false;
+    }
   }
 }

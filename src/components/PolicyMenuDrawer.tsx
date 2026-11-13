@@ -25,7 +25,7 @@ interface PolicyMenuDrawerProps {
 }
 
 export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClose }) => {
-  const { settings } = useCatalog();
+  const { settings, cmsPages, getPublishedCms } = useCatalog();
   const { language, setLanguage, t } = useLanguage();
 
   useEffect(() => {
@@ -40,19 +40,31 @@ export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClos
   if (!open) return null;
 
   const brandDisplay = settings?.brandName || settings?.companyName || 'EliteDrive';
+  const customPublished = (cmsPages || []).filter((p) => p.isCustom && p.published);
 
   const policyLinks: Array<{ label: string; to: string; icon: React.ReactNode }> = [
     { label: t('policy.about'), to: '/about', icon: <BookOpen className="w-4 h-4 text-gold" /> },
     { label: t('policy.howItWorks'), to: '/how-it-works', icon: <Compass className="w-4 h-4 text-gold" /> },
+    { label: 'Customer Journey Steps', to: '/policies/journey-steps', icon: <Compass className="w-4 h-4 text-gold" /> },
     { label: t('policy.terms'), to: '/policies/terms', icon: <FileText className="w-4 h-4 text-gold" /> },
     { label: t('policy.privacy'), to: '/policies/privacy', icon: <ShieldCheck className="w-4 h-4 text-gold" /> },
     { label: t('policy.cancellation'), to: '/policies/cancellation', icon: <XCircle className="w-4 h-4 text-gold" /> },
     { label: t('policy.refund'), to: '/policies/refund', icon: <RotateCcw className="w-4 h-4 text-gold" /> },
     { label: t('policy.rules'), to: '/policies/rental-rules', icon: <Shield className="w-4 h-4 text-gold" /> },
+    { label: 'Self-Drive Rental Rules', to: '/policies/self-drive-rules', icon: <Shield className="w-4 h-4 text-gold" /> },
     { label: t('policy.payment'), to: '/policies/payment-info', icon: <CreditCard className="w-4 h-4 text-gold" /> },
     { label: t('policy.faqs'), to: '/#faqs', icon: <HelpCircle className="w-4 h-4 text-gold" /> },
     { label: t('policy.contact'), to: '/#contact', icon: <Mail className="w-4 h-4 text-gold" /> },
     { label: t('policy.help'), to: '/policies/help', icon: <LifeBuoy className="w-4 h-4 text-gold" /> },
+    ...customPublished.map((p) => {
+      const slug = p.routeSlug || p.key;
+      const localized = getPublishedCms(p.key, language);
+      return {
+        label: localized.locale?.heading || p.label,
+        to: `/policies/${slug}`,
+        icon: <FileText className="w-4 h-4 text-gold" />,
+      };
+    }),
   ];
 
   return (

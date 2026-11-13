@@ -57,14 +57,13 @@ export const HomePage: React.FC = () => {
   const [detectingGps, setDetectingGps] = useState(false);
   const [rentalDurationDays, setRentalDurationDays] = useState<string>('2');
   const [selectedBranchId, setSelectedBranchId] = useState('');
-  const [pickupDate, setPickupDate] = useState(() => {
-    const d = new Date(Date.now() + 3600000 * 4);
-    return d.toISOString().slice(0, 16);
-  });
-  const [returnDate, setReturnDate] = useState(() => {
-    const d = new Date(Date.now() + 3600000 * 52);
-    return d.toISOString().slice(0, 16);
-  });
+  const toLocalDatetimeInput = (date: Date) => {
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  };
+
+  const [pickupDate, setPickupDate] = useState(() => toLocalDatetimeInput(new Date(Date.now() + 3600000 * 4)));
+  const [returnDate, setReturnDate] = useState(() => toLocalDatetimeInput(new Date(Date.now() + 3600000 * 52)));
   const [summaries, setSummaries] = useState<VehicleAvailabilitySummary[]>([]);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [subscribingPlanId, setSubscribingPlanId] = useState<string | null>(null);
@@ -217,7 +216,7 @@ export const HomePage: React.FC = () => {
     const days = Number(daysVal);
     const startMs = new Date(pickupDate).getTime();
     if (!Number.isFinite(days) || !Number.isFinite(startMs)) return;
-    const endIso = new Date(startMs + days * 24 * 3600000).toISOString().slice(0, 16);
+    const endIso = toLocalDatetimeInput(new Date(startMs + days * 24 * 3600000));
     setReturnDate(endIso);
   };
 
@@ -429,7 +428,7 @@ export const HomePage: React.FC = () => {
                             const dNum = Number(rentalDurationDays);
                             const ms = new Date(nextStart).getTime();
                             if (Number.isFinite(dNum) && Number.isFinite(ms)) {
-                              setReturnDate(new Date(ms + dNum * 24 * 3600000).toISOString().slice(0, 16));
+                              setReturnDate(toLocalDatetimeInput(new Date(ms + dNum * 24 * 3600000)));
                             }
                           }
                         }}

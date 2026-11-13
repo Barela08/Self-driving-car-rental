@@ -12,10 +12,14 @@ import type {
   UserProfile,
 } from '../types.ts';
 
+import { normalizeIndianPhone } from './whatsapp.ts';
+
 export interface AuthUserContext {
   uid: string;
   email?: string;
+  emailVerified?: boolean;
   phoneNumber?: string;
+  signInProvider?: string;
   profile: UserProfile;
   permissions: AdminPermission[];
   branchScope: 'all' | 'assigned';
@@ -123,12 +127,13 @@ async function getGooglePublicCerts(): Promise<Record<string, string>> {
   return certs;
 }
 
-async function verifyFirebaseGoogleIdToken(token: string): Promise<{
+export async function verifyFirebaseGoogleIdToken(token: string): Promise<{
   uid: string;
   email?: string;
   email_verified?: boolean;
   phone_number?: string;
   name?: string;
+  signInProvider?: string;
 } | null> {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -163,10 +168,201 @@ async function verifyFirebaseGoogleIdToken(token: string): Promise<{
       email_verified: Boolean(payload.email_verified),
       phone_number: payload.phone_number ? String(payload.phone_number) : undefined,
       name: payload.name,
+      signInProvider: payload.firebase?.sign_in_provider ? String(payload.firebase.sign_in_provider) : undefined,
     };
   } catch {
     return null;
   }
+}
+
+export async function findUserByEmailNormalized(email: string): Promise<{
+  uid: string;
+  profile: UserProfile;
+  privateEmail?: string;
+} | null> {
+  const normEmail = String(email || '').trim().toLowerCase();
+  if (!normEmail) return null;
+
+  const credMatch = await db.collection('auth_credentials').where('email', '==', normEmail).limit(1).get();
+  if (!credMatch.empty) {
+    const uid = credMatch.docs[0].id;
+    const uSnap = await db.collection('users').doc(uid).get();
+    if (uSnap.exists) {
+      return { uid, profile: uSnap.data() as UserProfile, privateEmail: normEmail };
+    }
+  }
+
+  const userEmailMatch = await db.collection('users').where('email', '==', normEmail).limit(1).get();
+  if (!userEmailMatch.empty) {
+    const d = userEmailMatch.docs[0];
+    return { uid: d.id, profile: d.data() as UserProfile, privateEmail: normEmail };
+  }
+
+  const allUsersSnap = await db.collection('users').get();
+  for (const uDoc of allUsersSnap.docs) {
+    const uData = uDoc.data() as UserProfile;
+    if (String(uData.email || '').trim().toLowerCase() === normEmail) {
+      return { uid: uDoc.id, profile: uData, privateEmail: normEmail };
+    }
+    const pSnap = await uDoc.ref.collection('private').doc('info').get();
+    const pEmail = String(pSnap.data()?.email || '').trim().toLowerCase();
+    if (pEmail && pEmail === normEmail) {
+      return { uid: uDoc.id, profile: uData, privateEmail: pEmail };
+    }
+  }
+  return null;
+}
+
+export async function findUserByNormalizedPhone(rawPhone: string): Promise<{
+  uid: string;
+  profile: UserProfile;
+  email?: string;
+} | null> {
+  const normPhone = normalizeIndianPhone(rawPhone);
+  if (!normPhone || normPhone.length < 10) return null;
+  const targetLast10 = normPhone.slice(-10);
+
+  const deterministicUid = `cust-otp-${normPhone}`;
+  const detSnap = await db.collection('users').doc(deterministicUid).get();
+
+  const allUsersSnap = await db.collection('users').get();
+  for (const uDoc of allUsersSnap.docs) {
+    const uData = uDoc.data() as UserProfile;
+    const pSnap = await uDoc.ref.collection('private').doc('info').get();
+    const pData = pSnap.data();
+    const candidatePhones = [String(uData.phone || ''), String(pData?.phone || '')].filter(Boolean);
+    for (const cand of candidatePhones) {
+      const candNorm = normalizeIndianPhone(cand);
+      if (candNorm && (candNorm === normPhone || (targetLast10.length === 10 && candNorm.slice(-10) === targetLast10))) {
+        return {
+          uid: uDoc.id,
+          profile: uData,
+          email: String(pData?.email || uData.email || '').trim().toLowerCase() || undefined,
+        };
+      }
+    }
+  }
+
+  if (detSnap.exists) {
+    const pSnap = await detSnap.ref.collection('private').doc('info').get();
+    const data = detSnap.data() as UserProfile;
+    return {
+      uid: detSnap.id,
+      profile: data,
+      email: String(pSnap.data()?.email || data.email || '').trim().toLowerCase() || undefined,
+    };
+  }
+  return null;
+}
+
+export async function resolveOrCreatePhoneCustomer(params: {
+  phone: string;
+  displayName?: string;
+  consentVersion?: string;
+}): Promise<
+  | { ok: true; uid: string; profile: UserProfile; email: string; isExistingCustomer: boolean }
+  | { ok: false; statusCode: number; error: string }
+> {
+  const normPhone = normalizeIndianPhone(params.phone);
+  if (!normPhone || normPhone.length < 10 || normPhone.length > 15) {
+    return { ok: false, statusCode: 400, error: 'Please provide a valid mobile number with country code.' };
+  }
+
+  const now = new Date().toISOString();
+  const formattedPhone = `+${normPhone}`;
+  const existing = await findUserByNormalizedPhone(normPhone);
+
+  if (existing) {
+    if (existing.profile.role !== 'customer') {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: 'Mobile OTP sign-in is exclusively for Customer accounts. Staff and administrators must sign in with email and password.',
+      };
+    }
+    if (existing.profile.accountStatus === 'suspended') {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: 'Your account is suspended or deactivated. Contact EliteDrive compliance team.',
+      };
+    }
+    const nextDisplayName =
+      params.displayName && (!existing.profile.displayName || existing.profile.displayName === 'Customer')
+        ? params.displayName.trim()
+        : existing.profile.displayName;
+    await db.collection('users').doc(existing.uid).update({
+      phone: formattedPhone,
+      ...(nextDisplayName !== existing.profile.displayName ? { displayName: nextDisplayName } : {}),
+      lastLoginAt: now,
+      updatedAt: now,
+    });
+    await db.collection('users').doc(existing.uid).collection('private').doc('info').set(
+      {
+        uid: existing.uid,
+        phone: formattedPhone,
+        phoneVerified: true,
+        phoneVerifiedAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    const updatedProfile: UserProfile = {
+      ...existing.profile,
+      phone: formattedPhone,
+      displayName: nextDisplayName,
+      lastLoginAt: now,
+      updatedAt: now,
+    };
+    return {
+      ok: true,
+      uid: existing.uid,
+      profile: updatedProfile,
+      email: existing.email || existing.profile.email || '',
+      isExistingCustomer: true,
+    };
+  }
+
+  const uid = `cust-otp-${normPhone}`;
+  const profile: UserProfile = {
+    uid,
+    displayName: params.displayName?.trim() || '',
+    phone: formattedPhone,
+    role: 'customer',
+    accountStatus: 'active',
+    kycStatus: 'Not Started',
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: now,
+  };
+  await db.collection('users').doc(uid).set(profile);
+  await db.collection('users').doc(uid).collection('private').doc('info').set({
+    uid,
+    email: '',
+    phone: formattedPhone,
+    phoneVerified: true,
+    phoneVerifiedAt: now,
+    savedAddresses: [],
+    favouriteVehicleIds: [],
+    marketingConsent: false,
+    whatsappConsent: true,
+    whatsappOptOut: false,
+    fcmTokens: [],
+    serviceConsentVersion: params.consentVersion || 'v1.0',
+    serviceConsentAt: now,
+    updatedAt: now,
+  });
+  await db.collection('auth_credentials').doc(uid).set(
+    {
+      uid,
+      email: '',
+      tokenVersion: 1,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+
+  return { ok: true, uid, profile, email: '', isExistingCustomer: false };
 }
 
 export async function getTokenVersion(uid: string): Promise<number> {
@@ -276,6 +472,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     let phoneNumber: string | undefined;
     let emailVerified = false;
     let name: string | undefined;
+    let signInProvider: string | undefined;
 
     const sessionPayload = verifyServerSessionToken(token);
     if (sessionPayload) {
@@ -286,6 +483,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       uid = sessionPayload.uid;
       email = sessionPayload.email;
       emailVerified = true;
+      signInProvider = 'session';
     } else {
       const firebaseDecoded = await verifyFirebaseGoogleIdToken(token);
       if (!firebaseDecoded) {
@@ -296,22 +494,72 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       phoneNumber = firebaseDecoded.phone_number;
       emailVerified = Boolean(firebaseDecoded.email_verified || firebaseDecoded.phone_number);
       name = firebaseDecoded.name;
+      signInProvider = firebaseDecoded.signInProvider;
     }
 
-    const [snap, rolesList] = await Promise.all([
-      db.collection('users').doc(uid).get(),
-      loadRolesList(),
-    ]);
+    const rolesList = await loadRolesList();
+    let canonicalUid = uid;
+    let snap = await db.collection('users').doc(canonicalUid).get();
+
+    if (!snap.exists) {
+      const linkSnap = await db.collection('firebase_auth_links').doc(uid).get();
+      const linkedUid = linkSnap.exists ? String(linkSnap.data()?.canonicalUid || '') : '';
+      if (linkedUid) {
+        const linkedUserSnap = await db.collection('users').doc(linkedUid).get();
+        if (linkedUserSnap.exists) {
+          canonicalUid = linkedUid;
+          snap = linkedUserSnap;
+        }
+      }
+    }
+
+    if (!snap.exists && email) {
+      const emailMatch = await findUserByEmailNormalized(email);
+      if (emailMatch) {
+        canonicalUid = emailMatch.uid;
+        snap = await db.collection('users').doc(canonicalUid).get();
+        await db.collection('firebase_auth_links').doc(uid).set(
+          {
+            firebaseUid: uid,
+            canonicalUid,
+            email: email.trim().toLowerCase(),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    if (!snap.exists && phoneNumber) {
+      const phoneMatch = await findUserByNormalizedPhone(phoneNumber);
+      if (phoneMatch && phoneMatch.profile.role === 'customer') {
+        canonicalUid = phoneMatch.uid;
+        snap = await db.collection('users').doc(canonicalUid).get();
+        await db.collection('firebase_auth_links').doc(uid).set(
+          {
+            firebaseUid: uid,
+            canonicalUid,
+            phone: phoneNumber,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    uid = canonicalUid;
+
     let profile: UserProfile;
     if (snap.exists) {
       profile = snap.data() as UserProfile;
     } else {
       const now = new Date().toISOString();
+      const normPhone = phoneNumber ? `+${normalizeIndianPhone(phoneNumber)}` : undefined;
       profile = {
         uid,
         displayName: name || email?.split('@')[0] || 'Customer',
         ...(email ? { email: email.toLowerCase() } : {}),
-        ...(phoneNumber ? { phone: phoneNumber } : {}),
+        ...(normPhone ? { phone: normPhone } : {}),
         role: 'customer',
         active: true,
         accountStatus: 'active',
@@ -323,12 +571,14 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       await db.collection('users').doc(uid).collection('private').doc('info').set({
         uid,
         email: (email || '').toLowerCase(),
-        phone: phoneNumber || '',
+        phone: normPhone || '',
+        ...(normPhone ? { phoneVerified: true, phoneVerifiedAt: now } : {}),
         savedAddresses: [],
         favouriteVehicleIds: [],
         marketingConsent: false,
         whatsappConsent: true,
         whatsappOptOut: false,
+        fcmTokens: [],
         serviceConsentVersion: 'v1.0',
         serviceConsentAt: now,
         updatedAt: now,
@@ -379,7 +629,9 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     req.authUser = {
       uid,
       email,
+      emailVerified,
       ...(phoneNumber ? { phoneNumber } : {}),
+      ...(signInProvider ? { signInProvider } : {}),
       profile,
       permissions,
       branchScope,

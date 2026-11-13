@@ -532,7 +532,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="p-4 rounded-xl bg-obsidian/80 border border-white/15 space-y-3">
                 <div>
                   <h4 className="text-sm font-semibold text-white">
-                    {t('booking.returnPromptTitle')}
+                    {t('booking.returnPrompt')}
                   </h4>
                   <p className="text-xs text-ivory/65 mt-0.5">
                     Select whether you will return the vehicle at your pickup address or at a different drop spot.

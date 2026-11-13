@@ -28,8 +28,11 @@ export type PolicySlug =
   | 'cancellation'
   | 'refund'
   | 'rental-rules'
+  | 'self-drive-rules'
   | 'payment-info'
-  | 'help';
+  | 'journey-steps'
+  | 'help'
+  | (string & {});
 
 interface PoliciesPageProps {
   forcedSlug?: PolicySlug;
@@ -38,7 +41,7 @@ interface PoliciesPageProps {
 export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
   const { slug: routeSlug } = useParams<{ slug: string }>();
   const slug = (forcedSlug || routeSlug || 'about') as PolicySlug;
-  const { settings, getPublishedCms } = useCatalog();
+  const { settings, cmsPages, getPublishedCms } = useCatalog();
   const { language, t } = useLanguage();
 
   const brandName = settings?.brandName || settings?.companyName || 'EliteDrive Car Rentals';
@@ -46,17 +49,40 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
   const howItWorksCms = getPublishedCms('how_it_works', language);
   const faqsCms = getPublishedCms('faqs', language);
   const policiesCms = getPublishedCms('policies', language);
+  const termsCms = getPublishedCms('terms', language);
+  const privacyCms = getPublishedCms('privacy', language);
+  const cancellationCms = getPublishedCms('cancellation', language);
+  const refundCms = getPublishedCms('refund', language);
+  const rentalRulesCms = getPublishedCms('rental_rules', language);
+  const selfDriveRulesCms = getPublishedCms('self_drive_rules', language);
+  const paymentInfoCms = getPublishedCms('payment_info', language);
+  const journeyStepsCms = getPublishedCms('journey_steps', language);
+  const contactCms = getPublishedCms('contact', language);
+
+  const customCmsPages = (cmsPages || []).filter((p) => p.isCustom && p.published);
 
   const tabs: Array<{ slug: PolicySlug; label: string; to: string; icon: React.ReactNode }> = [
     { slug: 'about', label: t('policy.about'), to: '/about', icon: <BookOpen className="w-3.5 h-3.5" /> },
     { slug: 'how-it-works', label: t('policy.howItWorks'), to: '/how-it-works', icon: <Compass className="w-3.5 h-3.5" /> },
+    { slug: 'journey-steps', label: 'Customer Journey', to: '/policies/journey-steps', icon: <Compass className="w-3.5 h-3.5" /> },
     { slug: 'terms', label: t('policy.terms'), to: '/policies/terms', icon: <FileText className="w-3.5 h-3.5" /> },
     { slug: 'privacy', label: t('policy.privacy'), to: '/policies/privacy', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
     { slug: 'cancellation', label: t('policy.cancellation'), to: '/policies/cancellation', icon: <XCircle className="w-3.5 h-3.5" /> },
     { slug: 'refund', label: t('policy.refund'), to: '/policies/refund', icon: <RotateCcw className="w-3.5 h-3.5" /> },
     { slug: 'rental-rules', label: t('policy.rules'), to: '/policies/rental-rules', icon: <Shield className="w-3.5 h-3.5" /> },
+    { slug: 'self-drive-rules', label: 'Self-Drive Rules', to: '/policies/self-drive-rules', icon: <Shield className="w-3.5 h-3.5" /> },
     { slug: 'payment-info', label: t('policy.payment'), to: '/policies/payment-info', icon: <CreditCard className="w-3.5 h-3.5" /> },
     { slug: 'help', label: t('policy.help'), to: '/policies/help', icon: <LifeBuoy className="w-3.5 h-3.5" /> },
+    ...customCmsPages.map((p) => {
+      const customSlug = p.routeSlug || p.key;
+      const customLocale = getPublishedCms(p.key, language);
+      return {
+        slug: customSlug,
+        label: customLocale.locale?.heading || p.label,
+        to: `/policies/${customSlug}`,
+        icon: <FileText className="w-3.5 h-3.5" />,
+      };
+    }),
   ];
 
   const howItWorksSteps = settings?.howItWorksSteps?.length
@@ -73,9 +99,9 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             'Collect from our central hub or pin your doorstep delivery location with automatic geo-radius and delivery fee computation.',
         },
         {
-          title: '03. Verify Digital KYC & Settle via UPI',
+          title: '03. Verify Identity Documents & Settle via UPI',
           description:
-            'Submit your Driving Licence and Aadhaar/Passport once for verification, then pay securely via dynamic UPI QR and UTR reference.',
+            'Submit your Driving Licence and Aadhaar once for document verification, then pay securely via dynamic UPI QR and UTR reference.',
         },
         {
           title: '04. Digital Handover & 24x7 Support',
@@ -85,6 +111,21 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
       ];
 
   const getTitleAndContent = (): { title: string; subtitle: string; body: string; unpublished?: boolean } => {
+    const customMatch = (cmsPages || []).find(
+      (p) => p.isCustom && (p.routeSlug === slug || p.key === slug || p.key.replace(/_/g, '-') === slug)
+    );
+    if (customMatch) {
+      const res = getPublishedCms(customMatch.key, language);
+      if (!res.published) {
+        return { title: customMatch.label, subtitle: brandName, body: '', unpublished: true };
+      }
+      return {
+        title: res.locale?.heading || customMatch.label,
+        subtitle: res.locale?.subheading || brandName,
+        body: res.locale?.body || customMatch.description || '',
+      };
+    }
+
     switch (slug) {
       case 'about':
         if (!aboutCms.published) {
@@ -119,99 +160,146 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
               'Every booking is backed by real physical inventory holds, transparent GST billing, and digital inspection records.'
             ),
         };
+      case 'journey-steps':
+        if (!journeyStepsCms.published) {
+          return { title: 'Customer Journey Steps', subtitle: brandName, body: '', unpublished: true };
+        }
+        return {
+          title: journeyStepsCms.locale?.heading || 'Customer Journey Steps',
+          subtitle: journeyStepsCms.locale?.subheading || 'Four Seamless Steps to Hit the Road',
+          body:
+            journeyStepsCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'howItWorksSummary',
+              'Select dates and pickup location, choose a car, complete document verification + UPI settlement, and drive with 24x7 support.'
+            ),
+        };
       case 'terms':
-        if (!policiesCms.published) {
+        if (!termsCms.published && !policiesCms.published) {
           return { title: t('policy.terms'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.terms'),
-          subtitle: 'Master Self-Drive Rental Agreement',
-          body: getLocalizedField(
-            settings,
-            language,
-            'termsSummary',
-            policiesCms.locale?.body ||
-              'Valid original Driving Licence (LMV) and Government Photo ID are mandatory at pickup. Minimum driver age is 21 years.'
-          ),
+          title: termsCms.locale?.heading || t('policy.terms'),
+          subtitle: termsCms.locale?.subheading || 'Master Self-Drive Rental Agreement',
+          body:
+            termsCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'termsSummary',
+              policiesCms.locale?.body ||
+                'Valid original Driving Licence (LMV) and Government Photo ID are mandatory at pickup. Minimum driver age is 21 years.'
+            ),
         };
       case 'privacy':
-        if (!policiesCms.published) {
+        if (!privacyCms.published && !policiesCms.published) {
           return { title: t('policy.privacy'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.privacy'),
-          subtitle: 'Identity Protection & Data Governance',
-          body: getLocalizedField(
-            settings,
-            language,
-            'privacySummary',
-            'Document verification records, contact coordinates, and trip telemetry are encrypted and accessed strictly for regulatory compliance and insurance verification.'
-          ),
+          title: privacyCms.locale?.heading || t('policy.privacy'),
+          subtitle: privacyCms.locale?.subheading || 'Identity Protection & Data Governance',
+          body:
+            privacyCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'privacySummary',
+              'Document verification records, contact coordinates, and trip telemetry are encrypted and accessed strictly for regulatory compliance and insurance verification.'
+            ),
         };
       case 'cancellation':
-        if (!policiesCms.published) {
+        if (!cancellationCms.published && !policiesCms.published) {
           return { title: t('policy.cancellation'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.cancellation'),
-          subtitle: 'Rescheduling & Cancellation Schedule',
-          body: getLocalizedField(
-            settings,
-            language,
-            'cancellationSummary',
-            'Free cancellation up to 24 hours prior to scheduled pickup. Within 24 hours, a nominal reservation retention fee applies.'
-          ),
+          title: cancellationCms.locale?.heading || t('policy.cancellation'),
+          subtitle: cancellationCms.locale?.subheading || 'Rescheduling & Cancellation Schedule',
+          body:
+            cancellationCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'cancellationSummary',
+              'Free cancellation up to 24 hours prior to scheduled pickup. Within 24 hours, a nominal reservation retention fee applies.'
+            ),
         };
       case 'refund':
-        if (!policiesCms.published) {
+        if (!refundCms.published && !policiesCms.published) {
           return { title: t('policy.refund'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.refund'),
-          subtitle: 'Security Deposit & Cancellation Refunds',
-          body: getLocalizedField(
-            settings,
-            language,
-            'refundSummary',
-            'Refundable security deposits are released back to your verified source account within 24 to 48 hours after clean return inspection.'
-          ),
+          title: refundCms.locale?.heading || t('policy.refund'),
+          subtitle: refundCms.locale?.subheading || 'Security Deposit & Cancellation Refunds',
+          body:
+            refundCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'refundSummary',
+              'Refundable security deposits are released back to your verified source account within 24 to 48 hours after clean return inspection.'
+            ),
         };
       case 'rental-rules':
-        if (!policiesCms.published) {
+        if (!rentalRulesCms.published && !policiesCms.published) {
           return { title: t('policy.rules'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.rules'),
-          subtitle: 'Mileage, Fuel, Speed & Usage Guidelines',
-          body: getLocalizedField(
-            settings,
-            language,
-            'rentalRulesSummary',
-            'Vehicles must return with the handover fuel level. Smoking inside cabins, sub-leasing, and commercial racing are strictly prohibited.'
-          ),
+          title: rentalRulesCms.locale?.heading || t('policy.rules'),
+          subtitle: rentalRulesCms.locale?.subheading || 'Mileage, Fuel, Speed & Usage Guidelines',
+          body:
+            rentalRulesCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'rentalRulesSummary',
+              'Vehicles must return with the handover fuel level. Smoking inside cabins, sub-leasing, and commercial racing are strictly prohibited.'
+            ),
+        };
+      case 'self-drive-rules':
+        if (!selfDriveRulesCms.published && !rentalRulesCms.published && !policiesCms.published) {
+          return { title: 'Self-Drive Rental Rules', subtitle: brandName, body: '', unpublished: true };
+        }
+        return {
+          title: selfDriveRulesCms.locale?.heading || 'Self-Drive Rental Rules',
+          subtitle: selfDriveRulesCms.locale?.subheading || 'Driver Eligibility, Fuel & Inter-State Terms',
+          body:
+            selfDriveRulesCms.locale?.body ||
+            rentalRulesCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'rentalRulesSummary',
+              'Original Driving Licence and Aadhaar card must match the booking holder. Adherence to speed limits and traffic rules is mandatory.'
+            ),
         };
       case 'payment-info':
-        if (!policiesCms.published) {
+        if (!paymentInfoCms.published && !policiesCms.published) {
           return { title: t('policy.payment'), subtitle: brandName, body: '', unpublished: true };
         }
         return {
-          title: t('policy.payment'),
-          subtitle: 'Verified Manual UPI Checkout & Security Deposits',
-          body: getLocalizedField(
-            settings,
-            language,
-            'paymentInfoSummary',
-            `Payments are settled strictly via verified UPI (${settings?.upiId || 'Merchant VPA'}) with exact amount matching and 12-digit UTR proof verification. Choose full settlement or ${settings?.advancePaymentPercent ?? 30}% booking advance with remaining balance + security deposit at pickup.`
-          ),
+          title: paymentInfoCms.locale?.heading || t('policy.payment'),
+          subtitle: paymentInfoCms.locale?.subheading || 'Verified Manual UPI Checkout & Security Deposits',
+          body:
+            paymentInfoCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'paymentInfoSummary',
+              `Payments are settled strictly via verified UPI (${settings?.upiId || 'Merchant VPA'}) with exact amount matching and 12-digit UTR proof verification. Choose full settlement or ${settings?.advancePaymentPercent ?? 30}% booking advance with remaining balance + security deposit at pickup.`
+            ),
         };
       case 'help':
       default:
         return {
-          title: t('policy.help'),
-          subtitle: '24x7 Concierge & Roadside Assistance',
-          body: `Reach our primary desk on ${settings?.supportPhone || '+91 98200 11223'} or email ${
-            settings?.supportEmail || 'concierge@elitedrive.in'
-          }. For active roadside assistance, dial ${settings?.roadsideEmergencyPhone || settings?.supportPhone || '+91 98200 99112'}.`,
+          title: contactCms.locale?.heading || t('policy.help'),
+          subtitle: contactCms.locale?.subheading || '24x7 Concierge & Roadside Assistance',
+          body:
+            contactCms.locale?.body ||
+            `Reach our primary desk on ${settings?.supportPhone || '+91 98200 11223'} or email ${
+              settings?.supportEmail || 'concierge@elitedrive.in'
+            }. For active roadside assistance, dial ${settings?.roadsideEmergencyPhone || settings?.supportPhone || '+91 98200 99112'}.`,
         };
     }
   };

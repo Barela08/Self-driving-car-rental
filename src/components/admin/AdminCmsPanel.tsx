@@ -5,8 +5,10 @@ import {
   ExternalLink,
   FileEdit,
   Globe,
+  Plus,
   RefreshCw,
   Save,
+  Trash2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -40,6 +42,15 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
   const [loading, setLoading] = useState(!initialPages || initialPages.length === 0);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [newRouteSlug, setNewRouteSlug] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newHeading, setNewHeading] = useState('');
+  const [newBody, setNewBody] = useState('');
+  const [newPublished, setNewPublished] = useState(true);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
 
   const loadPages = async () => {
     setLoading(true);
@@ -74,6 +85,7 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
       hi: { ...EMPTY_LOCALE, ...(selectedPage.content?.hi || {}) },
       mr: { ...EMPTY_LOCALE, ...(selectedPage.content?.mr || {}) },
     });
+    setConfirmDeleteKey(null);
   }, [selectedPage?.key, selectedPage?.updatedAt]);
 
   const activeLocale = draftContent[lang] || { ...EMPTY_LOCALE };
@@ -128,19 +140,99 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
     }
   };
 
+  const handleCreatePage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLabel.trim()) {
+      toast.error('Please enter a CMS page title.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const sanitizedSlug = (newRouteSlug || newKey || newLabel)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const res = await apiFetch<{ page: CmsPageRecord }>('/api/master/cms', {
+        method: 'POST',
+        body: JSON.stringify({
+          key: (newKey || sanitizedSlug).replace(/-/g, '_'),
+          label: newLabel.trim(),
+          description: newDescription.trim() || `Custom storefront page (${newLabel.trim()})`,
+          routeSlug: sanitizedSlug,
+          published: newPublished,
+          content: {
+            en: {
+              title: newHeading.trim() || newLabel.trim(),
+              subtitle: '',
+              body: newBody.trim(),
+              ctaLabel: '',
+              ctaLink: '',
+            },
+          },
+        }),
+      });
+      setPages((prev) => [...prev, res.page]);
+      setSelectedKey(res.page.key);
+      setCreateOpen(false);
+      setNewLabel('');
+      setNewKey('');
+      setNewRouteSlug('');
+      setNewDescription('');
+      setNewHeading('');
+      setNewBody('');
+      setNewPublished(true);
+      toast.success(`Created CMS page "${res.page.label}".`);
+      if (onReload) await onReload();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create CMS page.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCustomPage = async (page: CmsPageRecord) => {
+    setSaving(true);
+    try {
+      await apiFetch(`/api/master/cms/${page.key}`, { method: 'DELETE' });
+      setPages((prev) => {
+        const remaining = prev.filter((p) => p.key !== page.key);
+        if (selectedKey === page.key && remaining[0]) {
+          setSelectedKey(remaining[0].key);
+        }
+        return remaining;
+      });
+      setConfirmDeleteKey(null);
+      toast.success(`Deleted custom CMS page "${page.label}".`);
+      if (onReload) await onReload();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete custom CMS page.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6 text-xs">
       <div className="bg-white border border-black/10 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="font-display text-xl font-semibold text-ink flex items-center gap-2">
             <FileEdit className="w-5 h-5 text-gold-hover" />
-            CMS & Website Content Control (14 Storefront Areas)
+            CMS & Website Content Control ({pages.length} Storefront & Policy Pages)
           </h2>
           <p className="text-slate-muted mt-0.5">
-            Edit multilingual EN / HI / MR storefront sections, preview content before publishing, and toggle live visibility.
+            Edit multilingual EN / HI / MR storefront sections, policy pages, preview drafts, and toggle live visibility.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="px-3.5 py-2 bg-obsidian text-white rounded-lg font-semibold inline-flex items-center gap-1.5 hover:bg-charcoal cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 text-gold" />
+            Create CMS Page
+          </button>
           <button
             type="button"
             onClick={() => void loadPages()}
@@ -211,11 +303,16 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
             <>
               <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-black/10">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-display text-lg font-semibold text-ink">{selectedPage.label}</h3>
                     <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-alabaster border border-black/10 text-slate-muted">
                       {selectedPage.key}
                     </span>
+                    {selectedPage.isCustom && (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-gold/20 text-gold-hover font-semibold">
+                        Custom Page · /policies/{selectedPage.routeSlug || selectedPage.key}
+                      </span>
+                    )}
                   </div>
                   <p className="text-slate-muted mt-0.5">{selectedPage.description}</p>
                   <p className="font-mono text-[10px] text-slate-muted mt-1">
@@ -246,6 +343,38 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
                     <CheckCircle2 className="w-3.5 h-3.5" />
                     {selectedPage.published ? 'Unpublish (Draft)' : 'Publish Live'}
                   </button>
+                  {selectedPage.isCustom && (
+                    confirmDeleteKey === selectedPage.key ? (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 border border-red-200">
+                        <span className="font-semibold text-red-800">Delete?</span>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void handleDeleteCustomPage(selectedPage)}
+                          className="px-2 py-0.5 bg-red-700 text-white rounded font-semibold cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteKey(null)}
+                          className="px-1.5 py-0.5 text-slate-muted hover:text-ink cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => setConfirmDeleteKey(selectedPage.key)}
+                        className="px-3 py-1.5 border border-red-300 text-red-700 bg-white hover:bg-red-50 rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
 
@@ -392,6 +521,122 @@ export const AdminCmsPanel: React.FC<AdminCmsPanelProps> = ({ initialPages, onRe
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Create Custom CMS Page Modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <form
+            onSubmit={(e) => void handleCreatePage(e)}
+            className="bg-white rounded-2xl max-w-lg w-full overflow-hidden border border-black/15 shadow-2xl"
+          >
+            <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-gold">
+                  Storefront Policy & Content Builder
+                </p>
+                <h4 className="font-display text-lg font-semibold">Create Custom CMS Page</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(false)}
+                className="p-1.5 text-white/75 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block font-semibold text-ink mb-1">Page Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  placeholder="e.g. Airport Pickup Guidelines"
+                  className="w-full px-3 py-2 border border-black/15 rounded-lg"
+                />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-ink mb-1">CMS Key (Optional)</label>
+                  <input
+                    type="text"
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    placeholder="e.g. airport_pickup"
+                    className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-ink mb-1">URL Slug (/policies/...)</label>
+                  <input
+                    type="text"
+                    value={newRouteSlug}
+                    onChange={(e) => setNewRouteSlug(e.target.value)}
+                    placeholder="e.g. airport-pickup"
+                    className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-ink mb-1">Description (Admin Summary)</label>
+                <input
+                  type="text"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Short internal description..."
+                  className="w-full px-3 py-2 border border-black/15 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-ink mb-1">Initial English Heading</label>
+                <input
+                  type="text"
+                  value={newHeading}
+                  onChange={(e) => setNewHeading(e.target.value)}
+                  placeholder="Displayed H1 on storefront..."
+                  className="w-full px-3 py-2 border border-black/15 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-ink mb-1">Initial English Body Content</label>
+                <textarea
+                  rows={4}
+                  value={newBody}
+                  onChange={(e) => setNewBody(e.target.value)}
+                  placeholder="Write policy or page content..."
+                  className="w-full px-3 py-2 border border-black/15 rounded-lg"
+                />
+              </div>
+              <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newPublished}
+                  onChange={(e) => setNewPublished(e.target.checked)}
+                  className="accent-gold"
+                />
+                <span className="font-semibold text-ink">Publish immediately to storefront</span>
+              </label>
+            </div>
+            <div className="px-6 py-4 bg-alabaster border-t border-black/10 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateOpen(false)}
+                className="px-4 py-2 border border-black/15 rounded-lg font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 bg-obsidian text-white rounded-lg font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {saving ? 'Creating...' : 'Create CMS Page'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

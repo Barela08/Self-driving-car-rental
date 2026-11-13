@@ -167,9 +167,9 @@ async function runSeed(): Promise<void> {
     id: 'default',
     companyName: 'EliteDrive',
     brandName: 'EliteDrive Luxury Mobility',
-    websiteTitle: 'EliteDrive — Luxury & Self-Drive Car Rentals in Mumbai',
+    websiteTitle: 'EliteDrive — Precision Luxury & Self-Drive Car Rentals',
     tagline: 'Precision Executive Self-Drive Mobility',
-    shortDescription: 'Private flagship self-drive fleet in Mumbai with doorstep delivery, transparent GST tariffs, and instant digital KYC.',
+    shortDescription: 'Company-owned flagship self-drive fleet with doorstep delivery, transparent GST tariffs, and instant digital document verification.',
     fullDescription: 'EliteDrive operates a company-owned fleet of executive sedans, rugged 4x4 SUVs, flagship hybrids, and zero-emission EVs with concierge-grade inspection before every handover.',
     primaryColor: '#C8A24D',
     secondaryColor: '#0F1420',
@@ -183,29 +183,30 @@ async function runSeed(): Promise<void> {
     supportEmail: 'concierge@elitedrive.in',
     whatsappNumber: '919820011223',
     businessHours: 'Daily 06:00 AM – 11:30 PM (24×7 Roadside Concierge)',
-    operatingCityId: 'city-mumbai',
-    operatingCityName: 'Mumbai',
-    operatingCityState: 'Maharashtra',
-    officeName: 'EliteDrive Mumbai Flagship Hub & Lounge',
-    businessAddress: 'G-14, Bandra West Flagship Hub, 14th Road off Pali Hill, Mumbai 400050, Maharashtra',
+    operatingCityId: 'city-primary',
+    operatingCityName: '',
+    operatingCityState: '',
+    officeName: 'EliteDrive Flagship Hub & Lounge',
+    businessAddress: 'Central Operations Hub & Concierge Lounge',
     officeImages: ['hero'],
     hubLat: 19.0607,
     hubLng: 72.8362,
     serviceRadiusKm: 35,
     baseDeliveryFee: 299,
     perKmDeliveryFee: 25,
-    googleMapsUrl: 'https://maps.google.com/?q=19.0607,72.8362',
+    differentReturnLocationFee: 499,
+    googleMapsUrl: '',
     socialLinks: {
-      instagram: 'https://instagram.com/elitedrive.mumbai',
-      facebook: 'https://facebook.com/elitedrivemumbai',
+      instagram: 'https://instagram.com/elitedrive.in',
+      facebook: 'https://facebook.com/elitedrivein',
       youtube: 'https://youtube.com/@elitedrivemobility',
       twitter: 'https://x.com/elitedrive_in',
       linkedin: 'https://linkedin.com/company/elitedrive-mobility',
       other: '',
     },
     socialProfiles: [
-      { id: 'soc-instagram', platform: 'instagram', displayName: 'Instagram', url: 'https://instagram.com/elitedrive.mumbai', enabled: true, order: 1 },
-      { id: 'soc-facebook', platform: 'facebook', displayName: 'Facebook', url: 'https://facebook.com/elitedrivemumbai', enabled: true, order: 2 },
+      { id: 'soc-instagram', platform: 'instagram', displayName: 'Instagram', url: 'https://instagram.com/elitedrive.in', enabled: true, order: 1 },
+      { id: 'soc-facebook', platform: 'facebook', displayName: 'Facebook', url: 'https://facebook.com/elitedrivein', enabled: true, order: 2 },
       { id: 'soc-youtube', platform: 'youtube', displayName: 'YouTube', url: 'https://youtube.com/@elitedrivemobility', enabled: true, order: 3 },
       { id: 'soc-twitter', platform: 'twitter', displayName: 'X / Twitter', url: 'https://x.com/elitedrive_in', enabled: true, order: 4 },
       { id: 'soc-linkedin', platform: 'linkedin', displayName: 'LinkedIn', url: 'https://linkedin.com/company/elitedrive-mobility', enabled: true, order: 5 },
@@ -232,15 +233,15 @@ async function runSeed(): Promise<void> {
     balancePaymentRule: 'Remaining rental balance is collected at vehicle pickup or verified prior to handover.',
     roadsideAddonPerDay: 199,
     driverAddonPerDay: 950,
-    heroBannerHeadline: 'Precision Self-Drive Mobility Across Mumbai.',
+    heroBannerHeadline: 'Precision Self-Drive Mobility.',
     heroBannerSubcopy:
-      'Company-owned flagship fleet serving Greater Mumbai with interactive doorstep delivery, instant digital KYC, and transparent GST billing.',
+      'Company-owned flagship fleet with interactive doorstep delivery, instant digital document verification, and transparent GST billing.',
     heroBannerImage: 'hero',
-    fleetSectionHeading: 'Curated Fleet in Mumbai',
-    offersSectionHeading: 'Exclusive City Offers & Seasonal Privileges',
-    footerTagline: 'Obsidian-grade self-drive mobility operating across Mumbai.',
+    fleetSectionHeading: 'Curated Self-Drive Fleet',
+    offersSectionHeading: 'Exclusive Fleet Offers & Seasonal Privileges',
+    footerTagline: 'Obsidian-grade self-drive mobility.',
     aboutSummary:
-      'EliteDrive operates a single-company maintained self-drive fleet from our Bandra West flagship hub, engineered for executive city travel, airport transfers, and coastal highway getaways.',
+      'EliteDrive operates a company-maintained self-drive fleet from our flagship operations hubs, engineered for executive city travel, airport transfers, and highway getaways.',
     howItWorksSummary:
       'Reserve your preferred flagship vehicle in under three minutes with verified KYC, transparent GST pricing, and flexible doorstep or hub handover.',
     howItWorksSteps: [
@@ -263,33 +264,33 @@ async function runSeed(): Promise<void> {
       'Minimum driver age 21 years with original Aadhaar/Passport and valid LMV Driving Licence. Speed cap 120 km/h; strictly non-smoking cabins.',
     localizedContent: {
       en: {
-        heroHeadline: 'Precision Self-Drive Mobility Across Mumbai.',
-        heroSubcopy: 'Company-owned flagship fleet serving Greater Mumbai with interactive doorstep delivery, instant digital KYC, and transparent GST billing.',
-        fleetHeading: 'Curated Fleet in Mumbai',
-        offersHeading: 'Exclusive City Offers & Seasonal Privileges',
-        footerTagline: 'Obsidian-grade self-drive mobility operating across Mumbai.',
-        aboutSummary: 'EliteDrive operates a company-maintained self-drive fleet engineered for executive city travel, airport transfers, and coastal highway getaways.',
-        howItWorksSummary: 'Reserve your preferred flagship vehicle in under three minutes with verified KYC and transparent GST pricing.',
+        heroHeadline: 'Precision Self-Drive Mobility.',
+        heroSubcopy: 'Company-owned flagship fleet with interactive doorstep delivery, instant digital document verification, and transparent GST billing.',
+        fleetHeading: 'Curated Self-Drive Fleet',
+        offersHeading: 'Exclusive Fleet Offers & Seasonal Privileges',
+        footerTagline: 'Obsidian-grade self-drive mobility.',
+        aboutSummary: 'EliteDrive operates a company-maintained self-drive fleet engineered for executive city travel, airport transfers, and highway getaways.',
+        howItWorksSummary: 'Reserve your preferred flagship vehicle in under three minutes with verified documents and transparent GST pricing.',
         paymentInfoSummary: 'Manual UPI QR settlement with 12-digit UTR verification and authorized Cash at Pickup options.',
       },
       hi: {
-        heroHeadline: 'मुंबई में प्रीमियम सेल्फ-ड्राइव कार रेंटल अनुभव।',
-        heroSubcopy: 'डोरस्टेप डिलीवरी, तेज़ डिजिटल केवाईसी और पारदर्शी जीएसटी बिलिंग के साथ कंपनी-संचालित फ्लैगशिप फ्लीट।',
-        fleetHeading: 'मुंबई में हमारा चुनिंदा फ्लीट',
+        heroHeadline: 'प्रीमियम सेल्फ-ड्राइव कार रेंटल अनुभव।',
+        heroSubcopy: 'डोरस्टेप डिलीवरी, तेज़ डिजिटल दस्तावेज़ सत्यापन और पारदर्शी जीएसटी बिलिंग के साथ कंपनी-संचालित फ्लैगशिप फ्लीट।',
+        fleetHeading: 'हमारा चुनिंदा फ्लीट',
         offersHeading: 'विशेष ऑफ़र और मौसमी लाभ',
-        footerTagline: 'मुंबई भर में विश्वसनीय और लग्ज़री सेल्फ-ड्राइव मोबिलिटी।',
+        footerTagline: 'विश्वसनीय और लग्ज़री सेल्फ-ड्राइव मोबिलिटी।',
         aboutSummary: 'EliteDrive कार्यकारी शहरी यात्रा, एयरपोर्ट ट्रांसफर और हाईवे ट्रिप्स के लिए पूरी तरह कंपनी-मेंटेन्ड सेल्फ-ड्राइव फ्लीट संचालित करता है।',
-        howItWorksSummary: 'वेरिफाइड केवाईसी और पारदर्शी किराए के साथ तीन मिनट से भी कम समय में अपनी कार बुक करें।',
+        howItWorksSummary: 'वेरिफाइड दस्तावेज़ों और पारदर्शी किराए के साथ तीन मिनट से भी कम समय में अपनी कार बुक करें।',
         paymentInfoSummary: '12-अंकीय UTR सत्यापन के साथ मैन्युअल UPI QR भुगतान और पिकअप पर नकद विकल्प उपलब्ध हैं।',
       },
       mr: {
-        heroHeadline: 'मुंबईमध्ये प्रीमियम सेल्फ-ड्राइव्ह कार रेंटल सेवा.',
-        heroSubcopy: 'डोअरस्टेप डिलिव्हरी, झटपट डिजिटल केवायसी आणि पारदर्शक जीएसटी बिलिंगसह कंपनी-मालकीचा फ्लॅगशिप फ्लीट.',
-        fleetHeading: 'मुंबईमधील निवडक वाहन संग्रह',
+        heroHeadline: 'प्रीमियम सेल्फ-ड्राइव्ह कार रेंटल सेवा.',
+        heroSubcopy: 'डोअरस्टेप डिलिव्हरी, झटपट डिजिटल कागदपत्र पडताळणी आणि पारदर्शक जीएसटी बिलिंगसह कंपनी-मालकीचा फ्लॅगशिप फ्लीट.',
+        fleetHeading: 'निवडक वाहन संग्रह',
         offersHeading: 'विशेष ऑफर्स आणि हंगामी सवलती',
-        footerTagline: 'मुंबईत विश्वासार्ह आणि लक्झरी सेल्फ-ड्राइव्ह प्रवास.',
+        footerTagline: 'विश्वासार्ह आणि लक्झरी सेल्फ-ड्राइव्ह प्रवास.',
         aboutSummary: 'EliteDrive कॉर्पोरेट प्रवास, एअरपोर्ट ट्रान्सफर आणि वीकेंड ट्रिप्ससाठी कंपनीने स्वतः मेंटेन केलेली सेल्फ-ड्राइव्ह वाहने देते.',
-        howItWorksSummary: 'सत्यापित केवायसी आणि पारदर्शक दरांसह काही मिनिटांत तुमचे आवडते वाहन आरक्षित करा.',
+        howItWorksSummary: 'सत्यापित कागदपत्रे आणि पारदर्शक दरांसह काही मिनिटांत तुमचे आवडते वाहन आरक्षित करा.',
         paymentInfoSummary: '12-अंकी UTR पडताळणीसह मॅन्युअल UPI QR पेमेंट आणि पिकअप वेळी रोख पेमेंट पर्याय उपलब्ध आहेत.',
       },
     },
@@ -297,7 +298,7 @@ async function runSeed(): Promise<void> {
       {
         question: 'Where does EliteDrive operate and deliver vehicles?',
         answer:
-          'We operate exclusively across our Mumbai service zone (35 km radius from Bandra West hub) with direct doorstep delivery and seamless pickup/return anywhere inside our coverage boundary.',
+          'We operate within our configured service coverage zone around our active dispatch hubs with direct doorstep delivery and seamless pickup/return.',
       },
       {
         question: 'How does instant booking differ from approval booking?',
@@ -305,9 +306,9 @@ async function runSeed(): Promise<void> {
           'Flagship hatches, sedans, and EVs marked Instant Book confirm automatically upon Finance payment verification. Specialty 4x4s and luxury sedans route to operations approval before confirmation.',
       },
       {
-        question: 'Can I pick a custom pickup and a different return point in the city?',
+        question: 'Can I pick a custom pickup and a different return point?',
         answer:
-          'Yes. Use our interactive map picker to pin any address inside our Mumbai service boundary for pickup and choose either the same point or a separate return pin.',
+          'Yes. Use our interactive map picker to pin your pickup address and choose either the same location or a different return pin within our service boundary.',
       },
       {
         question: 'How does payment verification work for UPI bookings?',
@@ -319,31 +320,31 @@ async function runSeed(): Promise<void> {
       {
         name: 'Rohan Deshmukh',
         role: 'Principal Architect',
-        city: 'Mumbai',
+        city: 'Verified Client',
         quote:
-          'Doorstep delivery to Worli arrived ten minutes early in spotless condition. Handover inspection photos and OTP lock gave total clarity on deposit return.',
+          'Doorstep delivery arrived ten minutes early in spotless condition. Handover inspection photos and OTP lock gave total clarity on deposit return.',
       },
       {
         name: 'Ananya Krishnan',
         role: 'VP Product',
-        city: 'Mumbai',
+        city: 'Verified Client',
         quote:
-          'Pinned our Powai office on the map picker and got a full-charged Nexon EV delivered right to the gate with transparent GST invoicing.',
+          'Pinned our office on the map picker and got a full-charged Nexon EV delivered right to the gate with transparent GST invoicing.',
       },
       {
         name: 'Vikramaditya Singh',
         role: 'Managing Director',
-        city: 'Mumbai',
+        city: 'Verified Client',
         quote:
-          'Booked an Innova Hycross for a Lonavala weekend run with verified driver option. Every rupee was itemized before payment.',
+          'Booked an Innova Hycross for a weekend highway run with verified driver option. Every rupee was itemized before payment.',
       },
     ],
     updatedAt: now,
   };
 
-  let activeCityId = 'city-mumbai';
-  let activeCityName = 'Mumbai';
-  let activeCityState = 'Maharashtra';
+  let activeCityId = 'city-primary';
+  let activeCityName = '';
+  let activeCityState = '';
   let activeHubLat = 19.0607;
   let activeHubLng = 72.8362;
   let activeRadiusKm = 35;
@@ -356,7 +357,9 @@ async function runSeed(): Promise<void> {
     const current = settingsSnap.data() as Record<string, any>;
     const patch: Record<string, any> = {};
     for (const [key, val] of Object.entries(defaultSettingsPayload)) {
-      if (current[key] === undefined || current[key] === null || current[key] === '') {
+      if (current[key] === undefined || current[key] === null) {
+        patch[key] = val;
+      } else if (current[key] === '' && val !== '') {
         patch[key] = val;
       }
     }
@@ -370,9 +373,9 @@ async function runSeed(): Promise<void> {
       await settingsRef.set(patch, { merge: true });
     }
     const merged = { ...defaultSettingsPayload, ...current, ...patch };
-    activeCityId = merged.operatingCityId || 'city-mumbai';
-    activeCityName = merged.operatingCityName || 'Mumbai';
-    activeCityState = merged.operatingCityState || 'Maharashtra';
+    activeCityId = merged.operatingCityId || 'city-primary';
+    activeCityName = merged.operatingCityName || '';
+    activeCityState = merged.operatingCityState || '';
     activeHubLat = Number(merged.hubLat ?? 19.0607);
     activeHubLng = Number(merged.hubLng ?? 72.8362);
     activeRadiusKm = Number(merged.serviceRadiusKm ?? 35);
@@ -455,7 +458,7 @@ async function runSeed(): Promise<void> {
     {
       id: 'role-kyc-executive',
       slug: 'kyc_executive',
-      name: 'KYC Verification Executive',
+      name: 'Document Verification Executive',
       description: 'Reviews customer Driving Licences, ID documents, and compliance resubmissions.',
       color: '#EA580C',
       isSystem: true,
@@ -501,13 +504,13 @@ async function runSeed(): Promise<void> {
   if (!centralBranchSnap.exists) {
     await centralBranchRef.set({
       id: 'branch-central-hub',
-      code: 'MUM-BAN',
+      code: 'ED-HUB-01',
       cityId: activeCityId,
       cityName: activeCityName,
       name: activeOfficeName,
       address: activeAddress,
       phone: '+91 22 4890 2200',
-      email: 'bandra-hub@elitedrive.in',
+      email: 'central-hub@elitedrive.in',
       managerUid: 'staff-super-admin',
       managerName: 'Vikram Mehta (Owner)',
       lat: activeHubLat,
@@ -523,9 +526,9 @@ async function runSeed(): Promise<void> {
   } else if (!centralBranchSnap.data()?.code) {
     await centralBranchRef.set(
       {
-        code: 'MUM-BAN',
+        code: 'ED-HUB-01',
         phone: centralBranchSnap.data()?.phone || '+91 22 4890 2200',
-        email: centralBranchSnap.data()?.email || 'bandra-hub@elitedrive.in',
+        email: centralBranchSnap.data()?.email || 'central-hub@elitedrive.in',
         managerUid: centralBranchSnap.data()?.managerUid || 'staff-super-admin',
         managerName: centralBranchSnap.data()?.managerName || 'Vikram Mehta (Owner)',
       },
@@ -539,13 +542,13 @@ async function runSeed(): Promise<void> {
     if (!(await southBranchRef.get()).exists) {
       await southBranchRef.set({
         id: 'branch-south-lounge',
-        code: 'MUM-COL',
+        code: 'ED-HUB-02',
         cityId: activeCityId,
         cityName: activeCityName,
-        name: 'EliteDrive Nariman Point Executive Lounge',
-        address: 'Ground Floor, Maker Chambers IV, Nariman Point, Mumbai 400021',
+        name: 'EliteDrive Executive Lounge & Dispatch Hub',
+        address: 'Ground Floor, Executive Plaza Terminal 2',
         phone: '+91 22 4890 2299',
-        email: 'south-lounge@elitedrive.in',
+        email: 'executive-lounge@elitedrive.in',
         managerUid: 'staff-ops-1',
         managerName: 'Arjun Nair (Operations Staff)',
         lat: 18.9256,
@@ -992,7 +995,7 @@ async function runSeed(): Promise<void> {
         seats: 5,
         luggageCapacity: 2,
         ac: true,
-        description: 'Agile Z-Series urban hatchback ideal for Mumbai city commutes with dual airbags and wireless SmartPlay.',
+        description: 'Agile Z-Series urban hatchback ideal for city commutes with dual airbags and wireless SmartPlay.',
         pricePerHour: 135,
         pricePerDay: 1400,
         pricePerWeek: 8400,
@@ -1044,7 +1047,7 @@ async function runSeed(): Promise<void> {
         seats: 5,
         luggageCapacity: 2,
         ac: true,
-        description: 'Agile Z-Series urban hatchback ideal for Mumbai city commutes with dual airbags and wireless SmartPlay.',
+        description: 'Agile Z-Series urban hatchback ideal for city commutes with dual airbags and wireless SmartPlay.',
         pricePerHour: 135,
         pricePerDay: 1400,
         pricePerWeek: 8400,
@@ -1315,9 +1318,9 @@ async function runSeed(): Promise<void> {
       {
         id: 'offer-monsoon-luxury',
         title: 'Executive Sedan & SUV Privilege — 10% Off',
-        subtitle: 'Limited-time offer across Greater Mumbai pickups & doorstep deliveries',
+        subtitle: 'Limited-time offer across hub pickups & doorstep deliveries',
         description:
-          'Apply code ELITE10 at checkout on 2+ day trips across our Mumbai flagship fleet with complimentary zero-contact handover.',
+          'Apply code ELITE10 at checkout on 2+ day trips across our flagship fleet with complimentary zero-contact handover.',
         offerType: 'banner',
         badgeText: 'SAVE UP TO ₹1,500',
         bannerImage: 'hero',
@@ -1334,7 +1337,7 @@ async function runSeed(): Promise<void> {
       {
         id: 'offer-zero-emission-ev',
         title: 'Zero-Emission Electric Weekdays — 15% Off EVs',
-        subtitle: 'Tata Nexon EV & MG ZS EV delivered at 90%+ charge inside Mumbai',
+        subtitle: 'Tata Nexon EV & MG ZS EV delivered at 90%+ charge within service zones',
         description:
           'Unlock 15% savings up to ₹1,200 with code EVGREEN on all Electric SUVs with fast-charge cable kit included.',
         offerType: 'featured_vehicle',
@@ -1640,7 +1643,7 @@ async function runSeed(): Promise<void> {
     await tenantRef.set({
       id: 'tenant-elitedrive-default',
       businessName: 'EliteDrive Mobility Pvt. Ltd.',
-      slug: 'elitedrive-mumbai',
+      slug: 'elitedrive-default',
       ownerUid: 'staff-super-admin',
       ownerName: 'Vikram Mehta (Owner)',
       ownerEmail: 'admin@gmail.com',
@@ -1658,14 +1661,141 @@ async function runSeed(): Promise<void> {
   // Admin Notification Center initial alert
   const adminNotifSnap = await db.collection('admin_notifications').get();
   if (adminNotifSnap.empty) {
+    const cityLabel = activeCityName || 'Configured Coverage Zone';
     await db.collection('admin_notifications').doc('anotif-welcome').set({
       id: 'anotif-welcome',
       type: 'system',
-      title: `Single-City Control Center Active (${activeCityName})`,
-      message: `Your Owner Admin Control Center is configured for ${activeCityName} (${activeRadiusKm} km coverage).`,
+      title: `Operations Control Center Active (${cityLabel})`,
+      message: `Your Owner Admin Control Center is configured with a ${activeRadiusKm} km coverage radius.`,
       targetTab: 'overview',
       read: false,
       createdAt: now,
     });
+  }
+
+  // Idempotent cleanup of legacy hardcoded Mumbai seed defaults & KYC naming without overwriting custom owner config
+  const cleanupMarkerRef = db.collection('seed_markers').doc('clean_mumbai_defaults_v5');
+  if (!(await cleanupMarkerRef.get()).exists) {
+    const latestSettings = (await settingsRef.get()).data() as Record<string, any> | undefined;
+    if (latestSettings) {
+      const cleanPatch: Record<string, any> = {};
+      if (latestSettings.operatingCityName === 'Mumbai') cleanPatch.operatingCityName = '';
+      if (latestSettings.operatingCityId === 'city-mumbai') cleanPatch.operatingCityId = 'city-primary';
+      if (latestSettings.operatingCityState === 'Maharashtra') cleanPatch.operatingCityState = '';
+      if (String(latestSettings.officeName || '').includes('Mumbai')) {
+        cleanPatch.officeName = defaultSettingsPayload.officeName;
+      }
+      if (String(latestSettings.businessAddress || '').includes('Mumbai') || String(latestSettings.businessAddress || '').includes('Bandra')) {
+        cleanPatch.businessAddress = defaultSettingsPayload.businessAddress;
+      }
+      if (String(latestSettings.websiteTitle || '').includes('Mumbai')) cleanPatch.websiteTitle = defaultSettingsPayload.websiteTitle;
+      if (String(latestSettings.shortDescription || '').includes('Mumbai')) cleanPatch.shortDescription = defaultSettingsPayload.shortDescription;
+      if (String(latestSettings.heroBannerHeadline || '').includes('Mumbai')) cleanPatch.heroBannerHeadline = defaultSettingsPayload.heroBannerHeadline;
+      if (String(latestSettings.heroBannerSubcopy || '').includes('Mumbai')) cleanPatch.heroBannerSubcopy = defaultSettingsPayload.heroBannerSubcopy;
+      if (String(latestSettings.fleetSectionHeading || '').includes('Mumbai')) cleanPatch.fleetSectionHeading = defaultSettingsPayload.fleetSectionHeading;
+      if (String(latestSettings.footerTagline || '').includes('Mumbai')) cleanPatch.footerTagline = defaultSettingsPayload.footerTagline;
+      if (String(latestSettings.aboutSummary || '').includes('Bandra West')) cleanPatch.aboutSummary = defaultSettingsPayload.aboutSummary;
+      if (typeof latestSettings.differentReturnLocationFee !== 'number') cleanPatch.differentReturnLocationFee = 499;
+
+      if (latestSettings.socialLinks && typeof latestSettings.socialLinks === 'object') {
+        const cleanedSocialLinks = { ...latestSettings.socialLinks };
+        let socialLinksChanged = false;
+        for (const [k, val] of Object.entries(cleanedSocialLinks)) {
+          if (typeof val === 'string' && /mumbai/i.test(val)) {
+            cleanedSocialLinks[k] = val.replace(/\.?mumbai/gi, '.official');
+            socialLinksChanged = true;
+          }
+        }
+        if (socialLinksChanged) cleanPatch.socialLinks = cleanedSocialLinks;
+      }
+
+      if (Array.isArray(latestSettings.socialProfiles) && latestSettings.socialProfiles.some((s: any) => /mumbai/i.test(String(s?.url || '')))) {
+        cleanPatch.socialProfiles = latestSettings.socialProfiles.map((s: any) => ({
+          ...s,
+          url: typeof s?.url === 'string' ? s.url.replace(/\.?mumbai/gi, '.official') : s?.url,
+        }));
+      }
+
+      if (latestSettings.localizedContent?.en && typeof latestSettings.localizedContent.en === 'object') {
+        const enCopy = { ...latestSettings.localizedContent.en };
+        let enChanged = false;
+        for (const [k, val] of Object.entries(enCopy)) {
+          if (typeof val === 'string' && /mumbai/i.test(val)) {
+            enCopy[k] = val
+              .replace(/Across Greater Mumbai|Across Mumbai|Serving Greater Mumbai|Greater Mumbai|inside Mumbai|in Mumbai|across Mumbai/gi, 'Across Your City')
+              .replace(/Mumbai/gi, 'Your City');
+            enChanged = true;
+          }
+        }
+        if (enChanged) {
+          cleanPatch.localizedContent = {
+            ...latestSettings.localizedContent,
+            en: enCopy,
+          };
+        }
+      }
+
+      if (Array.isArray(latestSettings.faqs) && latestSettings.faqs.some((f: any) => String(f?.answer || '').includes('Mumbai'))) {
+        cleanPatch.faqs = defaultSettingsPayload.faqs;
+      }
+      if (Array.isArray(latestSettings.testimonials) && latestSettings.testimonials.some((t: any) => t?.city === 'Mumbai')) {
+        cleanPatch.testimonials = defaultSettingsPayload.testimonials;
+      }
+      if (Object.keys(cleanPatch).length > 0) {
+        cleanPatch.updatedAt = now;
+        await settingsRef.set(cleanPatch, { merge: true });
+      }
+    }
+
+    const kycRoleRef = db.collection('roles').doc('role-kyc-executive');
+    const kycRoleSnap = await kycRoleRef.get();
+    if (kycRoleSnap.exists && kycRoleSnap.data()?.name === 'KYC Verification Executive') {
+      await kycRoleRef.update({ name: 'Document Verification Executive', updatedAt: now });
+    }
+
+    for (const [bId, nextFields] of [
+      ['branch-central-hub', { cityId: 'city-primary', cityName: '', name: defaultSettingsPayload.officeName, address: defaultSettingsPayload.businessAddress, email: 'central-hub@elitedrive.in' }],
+      ['branch-south-lounge', { cityId: 'city-primary', cityName: '', name: 'EliteDrive Executive Lounge & Dispatch Hub', address: 'Ground Floor, Executive Plaza Terminal 2', email: 'executive-lounge@elitedrive.in' }],
+    ] as Array<[string, Record<string, any>]>) {
+      const bRef = db.collection('branches').doc(bId);
+      const bSnap = await bRef.get();
+      if (bSnap.exists) {
+        const bd = bSnap.data() || {};
+        if (bd.cityId === 'city-mumbai' || bd.cityName === 'Mumbai' || String(bd.address || '').includes('Mumbai')) {
+          await bRef.set({ ...nextFields, updatedAt: now }, { merge: true });
+        }
+      }
+    }
+
+    const vehSnapAll = await db.collection('vehicles').get();
+    for (const vDoc of vehSnapAll.docs) {
+      const vd = vDoc.data() || {};
+      const vPatch: Record<string, any> = {};
+      if (vd.cityName === 'Mumbai') vPatch.cityName = '';
+      if (vd.cityId === 'city-mumbai') vPatch.cityId = 'city-primary';
+      if (String(vd.branchName || '').includes('Mumbai')) vPatch.branchName = defaultSettingsPayload.officeName;
+      if (String(vd.description || '').includes('Mumbai')) {
+        vPatch.description = String(vd.description).replace(/\s*Mumbai\s*/gi, ' ');
+      }
+      if (Object.keys(vPatch).length > 0) {
+        await vDoc.ref.set(vPatch, { merge: true });
+      }
+    }
+
+    const offSnapAll = await db.collection('offers').get();
+    for (const oDoc of offSnapAll.docs) {
+      const od = oDoc.data() || {};
+      const oPatch: Record<string, any> = {};
+      if (String(od.subtitle || '').includes('Mumbai')) oPatch.subtitle = String(od.subtitle).replace(/Greater Mumbai|inside Mumbai/gi, 'service zones');
+      if (String(od.description || '').includes('Mumbai')) oPatch.description = String(od.description).replace(/our Mumbai /gi, 'our ');
+      if (Object.keys(oPatch).length > 0) await oDoc.ref.set(oPatch, { merge: true });
+    }
+
+    const tSnap = await tenantRef.get();
+    if (tSnap.exists && (tSnap.data()?.primaryCity === 'Mumbai' || tSnap.data()?.slug === 'elitedrive-mumbai')) {
+      await tenantRef.set({ primaryCity: '', slug: 'elitedrive-default', updatedAt: now }, { merge: true });
+    }
+
+    await cleanupMarkerRef.set({ completedAt: now });
   }
 }

@@ -1067,6 +1067,7 @@ export interface CompanySettings {
   serviceRadiusKm?: number;
   baseDeliveryFee?: number;
   perKmDeliveryFee?: number;
+  differentReturnLocationFee?: number;
   googleMapsUrl?: string;
   socialLinks?: SocialLinks;
   socialProfiles?: SocialProfileItem[];
@@ -1481,7 +1482,16 @@ export type CmsAreaKey =
   | 'contact'
   | 'footer'
   | 'about'
-  | 'policies';
+  | 'terms'
+  | 'privacy'
+  | 'cancellation'
+  | 'refund'
+  | 'rental_rules'
+  | 'self_drive_rules'
+  | 'payment_info'
+  | 'journey_steps'
+  | 'policies'
+  | (string & {});
 
 export interface CmsAreaLocaleContent {
   title: string;
@@ -1497,6 +1507,8 @@ export interface CmsPageRecord {
   description: string;
   published: boolean;
   sortOrder: number;
+  isCustom?: boolean;
+  routeSlug?: string;
   content: Partial<Record<SupportedLanguage, CmsAreaLocaleContent>>;
   updatedByUid?: string;
   updatedByName?: string;

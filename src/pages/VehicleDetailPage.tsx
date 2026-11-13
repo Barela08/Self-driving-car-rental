@@ -8,6 +8,11 @@ import { resolveVehicleImage } from '../lib/mediaAssets';
 import { BookingModal } from '../components/BookingModal';
 import type { CustomerReview, VehicleAvailabilitySummary } from '../types';
 
+function toLocalDatetimeInput(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
 export const VehicleDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -22,10 +27,10 @@ export const VehicleDetailPage: React.FC = () => {
   const [availabilitySummary, setAvailabilitySummary] = useState<VehicleAvailabilitySummary | null>(null);
   const [reviews, setReviews] = useState<CustomerReview[]>([]);
   const [startDate, setStartDate] = useState(
-    () => searchParams.get('start') || new Date(Date.now() + 3600000 * 4).toISOString().slice(0, 16)
+    () => searchParams.get('start') || toLocalDatetimeInput(new Date(Date.now() + 3600000 * 4))
   );
   const [endDate, setEndDate] = useState(
-    () => searchParams.get('end') || new Date(Date.now() + 3600000 * 52).toISOString().slice(0, 16)
+    () => searchParams.get('end') || toLocalDatetimeInput(new Date(Date.now() + 3600000 * 52))
   );
   const [bookingOpen, setBookingOpen] = useState(false);
 

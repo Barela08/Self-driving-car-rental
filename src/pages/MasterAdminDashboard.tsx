@@ -172,7 +172,7 @@ export const MasterAdminDashboard: React.FC = () => {
         setSysSupportPhone(res.systemSettings.supportPhone || '');
         setSysWhatsAppPhone(res.systemSettings.whatsappNumber || '');
         setSysGstPercent(String(res.systemSettings.taxRatePercent ?? 18));
-        setSysOneWayCharge(String(res.systemSettings.baseDeliveryFee ?? 299));
+        setSysOneWayCharge(String(res.systemSettings.differentReturnLocationFee ?? 499));
         setSysPerKmReturnCharge(String(res.systemSettings.perKmDeliveryFee ?? 25));
       }
     } catch (err: any) {
@@ -266,7 +266,7 @@ export const MasterAdminDashboard: React.FC = () => {
           supportPhone: sysSupportPhone.trim(),
           whatsappNumber: sysWhatsAppPhone.trim(),
           taxRatePercent: Math.max(0, Math.min(35, Number(sysGstPercent) || 18)),
-          baseDeliveryFee: Math.max(0, Number(sysOneWayCharge) || 0),
+          differentReturnLocationFee: Math.max(0, Number(sysOneWayCharge) || 0),
           perKmDeliveryFee: Math.max(0, Number(sysPerKmReturnCharge) || 0),
         }),
       });
@@ -656,7 +656,7 @@ export const MasterAdminDashboard: React.FC = () => {
                         />
                       </label>
                       <label className="space-y-1 block">
-                        <span className="font-semibold text-ink">One-Way Base Fee (₹)</span>
+                        <span className="font-semibold text-ink">Different Return Location Fee (₹)</span>
                         <input
                           type="number"
                           min={0}

@@ -679,12 +679,13 @@ export function validateMultiBranchLocation(params: {
   pickupLng: number;
   returnLat: number;
   returnLng: number;
+  isOneWay?: boolean;
   pickupBranch: Branch;
   allBranches: Branch[];
   vehicle: Vehicle;
   settings?: Partial<CompanySettings>;
 }) {
-  const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, pickupBranch, allBranches, vehicle, settings } = params;
+  const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, isOneWay, pickupBranch, allBranches, vehicle, settings } = params;
   const isCentralHub = pickupBranch.id === 'branch-central-hub';
   const operatingCityName = pickupBranch.cityName || settings?.operatingCityName || 'Service Area';
   const hubLat = Number(isCentralHub ? (settings?.hubLat ?? pickupBranch.lat) : (pickupBranch.lat ?? settings?.hubLat));
@@ -781,12 +782,18 @@ export function validateMultiBranchLocation(params: {
     deliveryCharge = Math.round(baseDeliveryFee + pickupDistanceKm * perKmDeliveryFee);
   }
 
+  const isDifferentReturn =
+    Boolean(isOneWay) || haversineKm(pickupLat, pickupLng, returnLat, returnLng) > 0.5;
+  const oneWayCharge = isDifferentReturn
+    ? Math.max(0, Math.round(Number(settings?.differentReturnLocationFee ?? 0)))
+    : 0;
+
   return {
     serviceable: true,
     distanceKm: pickupDistanceKm,
     returnDistanceKm,
     maxRadiusKm,
     deliveryCharge,
-    oneWayCharge: 0,
+    oneWayCharge,
   };
 }

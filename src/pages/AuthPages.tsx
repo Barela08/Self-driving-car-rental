@@ -1,10 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import {
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  type ConfirmationResult,
-} from 'firebase/auth';
+import { type ConfirmationResult, type RecaptchaVerifier } from 'firebase/auth';
 import { toast } from 'sonner';
 import {
   ArrowRight,
@@ -16,24 +12,20 @@ import {
   Smartphone,
   User,
 } from 'lucide-react';
-import { auth } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { apiFetch } from '../lib/api';
+import {
+  clearRecaptchaInstance,
+  requestUnifiedMobileOtp,
+  verifyUnifiedMobileOtp,
+} from '../lib/authService';
 import { canAccessAdminConsole, canAccessMasterConsole } from '../lib/permissions';
 
 interface AuthPortalProps {
   portal: 'customer' | 'admin' | 'staff' | 'master';
-}
-
-function normalizeE164Phone(raw: string): string {
-  const digits = raw.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  const justDigits = digits.replace(/\D/g, '');
-  if (justDigits.length === 10) return `+91${justDigits}`;
-  return `+${justDigits}`;
 }
 
 export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
@@ -42,6 +34,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     loading,
     loginWithEmail,
     registerWithEmail,
+    sendPasswordReset,
     loginWithGoogle,
     loginWithFirebasePhone,
     setAuthenticatedSession,
@@ -56,9 +49,12 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   const [mode, setMode] = useState<'login' | 'register' | 'reset' | 'otp_login'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+91 ');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [resetMethod, setResetMethod] = useState<'email' | 'mobile_otp'>('email');
   const [serviceConsent, setServiceConsent] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [whatsappConsent, setWhatsappConsent] = useState(true);
@@ -68,18 +64,30 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   const [otpChallengeId, setOtpChallengeId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
+  const [otpError, setOtpError] = useState('');
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [regOtpVerified, setRegOtpVerified] = useState(false);
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
 
-  // Firebase Phone Auth invisible verifier state
+  // Invisible reCAPTCHA verifier ref (shared cleanly across OTP tabs)
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
   const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
   const [firebaseConfirmation, setFirebaseConfirmation] = useState<ConfirmationResult | null>(null);
 
   const cooldownDefault = Math.max(15, Number(authOtpConfig.otpResendCooldownSeconds || 60));
-  const useServerOtpPrimary = Boolean(
-    authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled || !authOtpConfig.firebasePhoneAuthEnabled
-  );
+  const showOtpFeatures = portal === 'customer';
+
+  const resetOtpUi = () => {
+    setOtpChallengeId('');
+    setFirebaseConfirmation(null);
+    setOtpCode('');
+    setOtpNotice('');
+    setOtpError('');
+    setOtpCooldown(0);
+    setRegOtpVerified(false);
+    setPhoneVerificationToken('');
+    clearRecaptchaInstance(recaptchaVerifierRef, recaptchaContainerRef.current);
+  };
 
   useEffect(() => {
     if (otpCooldown <= 0) return;
@@ -91,12 +99,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
 
   useEffect(() => {
     return () => {
-      try {
-        recaptchaVerifierRef.current?.clear();
-      } catch {
-        // Ignore cleanup errors
-      }
-      recaptchaVerifierRef.current = null;
+      clearRecaptchaInstance(recaptchaVerifierRef, recaptchaContainerRef.current);
     };
   }, []);
 
@@ -125,146 +128,125 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     }
   }
 
-  const handleRequestServerOtp = async (purpose: 'login' | 'registration' | 'password_recovery') => {
-    if (!phone.trim()) {
-      toast.error('Please enter your mobile number with country code (e.g. +91 98200 11223).');
+  const handleRequestUnifiedOtp = async (purpose: 'login' | 'registration' | 'password_recovery') => {
+    const cleanDigits = phone.replace(/\D/g, '');
+    if (cleanDigits.length < 10) {
+      const msg = 'Please enter your 10-digit mobile number with country code (e.g. +91 98200 11223).';
+      setOtpError(msg);
+      toast.error(msg);
       return;
     }
     setBusy(true);
+    setOtpError('');
     try {
-      const res = await apiFetch<{
-        challengeId: string;
-        cooldownSeconds: number;
-        message: string;
-      }>('/api/auth/otp/send', {
-        method: 'POST',
-        body: JSON.stringify({ phone: phone.trim(), purpose, email: email.trim() || undefined }),
+      const result = await requestUnifiedMobileOtp({
+        phone: phone.trim(),
+        purpose,
+        email: email.trim() || undefined,
+        verifierRef: recaptchaVerifierRef,
+        containerEl: recaptchaContainerRef.current,
+        firebasePhoneAuthEnabled: Boolean(authOtpConfig.firebasePhoneAuthEnabled),
+        defaultCooldownSeconds: cooldownDefault,
       });
-      setOtpChallengeId(res.challengeId);
-      setOtpCooldown(res.cooldownSeconds || cooldownDefault);
-      setOtpNotice(res.message);
-      toast.success(res.message);
+
+      if (result.channel === 'firebase' && result.confirmation) {
+        setFirebaseConfirmation(result.confirmation);
+        setOtpChallengeId('');
+      } else {
+        setFirebaseConfirmation(null);
+        setOtpChallengeId(result.challengeId || '');
+      }
+      setOtpCooldown(result.cooldownSeconds);
+      setOtpNotice(result.message);
+      toast.success(result.message);
     } catch (err: any) {
-      toast.error(err.message || 'Unable to send verification code');
+      const msg = err.message || 'Unable to initiate mobile verification right now. Please try again.';
+      setOtpError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
   };
 
-  const handleUnifiedSendOtp = async () => {
-    if (!phone.trim()) {
-      toast.error('Please enter your mobile number with country code (e.g. +91 98200 11223).');
-      return;
-    }
-    if (!useServerOtpPrimary && authOtpConfig.firebasePhoneAuthEnabled) {
-      setBusy(true);
-      try {
-        const formattedPhone = normalizeE164Phone(phone.trim());
-        if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
-          recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
-            size: 'invisible',
-          });
-        }
-        if (!recaptchaVerifierRef.current) {
-          throw new Error('Verification service could not initialize.');
-        }
-        const confirmation = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifierRef.current);
-        setFirebaseConfirmation(confirmation);
-        setOtpCooldown(cooldownDefault);
-        setOtpNotice(`Verification code sent to ${formattedPhone}.`);
-        toast.success(`Verification code sent to ${formattedPhone}`);
-      } catch (err: any) {
-        toast.error(err.message || 'Unable to send verification code. Please check your mobile number.');
-        try {
-          recaptchaVerifierRef.current?.clear();
-        } catch {
-          // Ignore cleanup
-        }
-        recaptchaVerifierRef.current = null;
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    await handleRequestServerOtp('login');
-  };
-
   const handleUnifiedVerifyOtpLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (otpCode.trim().length !== 6) {
-      toast.error('Please enter the 6-digit verification code.');
-      return;
-    }
-    if (firebaseConfirmation) {
-      setBusy(true);
-      try {
-        const cred = await firebaseConfirmation.confirm(otpCode.trim());
-        const idToken = await cred.user.getIdToken();
-        const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
-        if (logged) {
-          navigate('/dashboard');
-        }
-      } catch (err: any) {
-        toast.error(err.message || 'Invalid verification code. Please try again.');
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    if (!otpChallengeId) {
-      toast.error('Please request a verification code first.');
+      const msg = 'Please enter the 6-digit verification code.';
+      setOtpError(msg);
+      toast.error(msg);
       return;
     }
     setBusy(true);
+    setOtpError('');
     try {
-      const res = await apiFetch<{ verified: boolean; token?: string; profile?: any; message: string }>(
-        '/api/auth/otp/verify',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            challengeId: otpChallengeId,
-            phone: phone.trim(),
-            code: otpCode.trim(),
-            purpose: 'login',
-          }),
+      const verified = await verifyUnifiedMobileOtp({
+        phone: phone.trim(),
+        code: otpCode.trim(),
+        purpose: 'login',
+        firebaseConfirmation,
+        challengeId: otpChallengeId,
+      });
+
+      if (verified.channel === 'firebase' && verified.idToken) {
+        const logged = await loginWithFirebasePhone(verified.idToken, undefined, phone.trim());
+        if (logged) {
+          const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+          navigate(redirectTo);
         }
-      );
-      if (res.token && res.profile) {
-        setAuthenticatedSession(res.token, res.profile);
-        toast.success(`Login Successful — Welcome, ${res.profile.displayName}`);
-        navigate('/dashboard');
+      } else if (verified.token && verified.profile) {
+        setAuthenticatedSession(verified.token, verified.profile);
+        toast.success(`Welcome, ${verified.profile.displayName || 'Customer'}`);
+        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+        navigate(redirectTo);
       } else {
-        toast.info('Mobile number verified, but no registered account matched this number yet.');
+        const msg = 'Verification succeeded, but account session could not be initialized. Please retry.';
+        setOtpError(msg);
+        toast.error(msg);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Invalid verification code');
+      const msg = err.message || 'Invalid verification code. Please try again.';
+      setOtpError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
   };
 
   const handleVerifyRegistrationOtp = async () => {
-    if (!otpChallengeId || otpCode.trim().length !== 6) {
-      toast.error('Enter the 6-digit verification code.');
+    if (otpCode.trim().length !== 6) {
+      const msg = 'Enter the 6-digit verification code.';
+      setOtpError(msg);
+      toast.error(msg);
       return;
     }
     setBusy(true);
+    setOtpError('');
     try {
-      const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          challengeId: otpChallengeId,
-          phone: phone.trim(),
-          code: otpCode.trim(),
-          purpose: 'registration',
-        }),
+      const verified = await verifyUnifiedMobileOtp({
+        phone: phone.trim(),
+        code: otpCode.trim(),
+        purpose: 'registration',
+        firebaseConfirmation,
+        challengeId: otpChallengeId,
       });
-      if (res.verified) {
+
+      if (verified.channel === 'firebase' && verified.idToken) {
+        const logged = await loginWithFirebasePhone(verified.idToken, name.trim() || undefined, phone.trim());
+        if (logged) {
+          setRegOtpVerified(true);
+          toast.success('Mobile number verified successfully.');
+        }
+      } else {
         setRegOtpVerified(true);
-        toast.success(res.message);
+        if (verified.phoneVerificationToken) {
+          setPhoneVerificationToken(verified.phoneVerificationToken);
+        }
+        toast.success(verified.message || 'Mobile number verified successfully.');
       }
     } catch (err: any) {
-      toast.error(err.message || 'OTP verification failed');
+      const msg = err.message || 'OTP verification failed.';
+      setOtpError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -297,59 +279,86 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (name.trim().length < 2) {
+      toast.error('Please enter your full legal name (minimum 2 characters).');
+      return;
+    }
+    if (password.length < 6) {
+      toast.error('Password must be at least 6 characters long.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast.error('Password and Confirm Password do not match.');
+      return;
+    }
     if (!serviceConsent) {
       toast.error('Please accept the Terms & Privacy Policy to create an account.');
       return;
     }
     setBusy(true);
-    const ok = await registerWithEmail({
-      name,
-      email,
+    const createdProfile = await registerWithEmail({
+      name: name.trim(),
+      email: email.trim(),
       password,
-      phone,
+      confirmPassword,
+      phone: phone.trim(),
       serviceConsentAccepted: serviceConsent,
       marketingConsent,
       whatsappConsent,
-    } as any);
+      phoneVerificationToken: phoneVerificationToken || undefined,
+    });
     setBusy(false);
-    if (ok) {
-      setMode('login');
+    if (createdProfile) {
       setPassword('');
-      setRegOtpVerified(false);
-      setOtpChallengeId('');
-      setOtpCode('');
-      setOtpNotice('');
+      setConfirmPassword('');
+      resetOtpUi();
+      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+      navigate(redirectTo);
     }
   };
 
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (resetMethod === 'email') {
+      setBusy(true);
+      const sent = await sendPasswordReset(email);
+      setBusy(false);
+      if (sent) {
+        setMode('login');
+      }
+      return;
+    }
+
+    if (!otpChallengeId || otpCode.trim().length !== 6) {
+      toast.error('Please request and enter the 6-digit verification code first.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      toast.error('New password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      toast.error('New password and confirmation do not match.');
+      return;
+    }
+
     setBusy(true);
     try {
-      if (otpChallengeId && otpCode.trim().length === 6) {
-        const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
-          method: 'POST',
-          body: JSON.stringify({
-            challengeId: otpChallengeId,
-            phone: phone.trim(),
-            code: otpCode.trim(),
-            purpose: 'password_recovery',
-            newPassword,
-          }),
-        });
-        toast.success(res.message);
-      } else {
-        const res = await apiFetch<{ message: string }>('/api/auth/password-reset', {
-          method: 'POST',
-          body: JSON.stringify({ email, newPassword }),
-        });
-        toast.success(res.message);
-      }
+      const res = await apiFetch<{ success: boolean; message: string }>('/api/auth/password-reset', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email.trim(),
+          challengeId: otpChallengeId,
+          phone: phone.trim(),
+          code: otpCode.trim(),
+          newPassword,
+        }),
+      });
+      toast.success(res.message);
       setMode('login');
       setNewPassword('');
-      setOtpCode('');
-      setOtpChallengeId('');
-      setOtpNotice('');
+      setConfirmNewPassword('');
+      resetOtpUi();
     } catch (err: any) {
       toast.error(err.message || 'Password reset failed');
     } finally {
@@ -369,7 +378,8 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       } else if (canAccessAdminConsole(logged)) {
         navigate('/dashboard/admin');
       } else {
-        navigate('/dashboard');
+        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+        navigate(redirectTo);
       }
     }
   };
@@ -383,11 +393,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
           ? t('auth.staffTitle')
           : t('auth.customerTitle');
 
-  const showOtpTab =
-    portal === 'customer' &&
-    (authOtpConfig.firebasePhoneAuthEnabled ||
-      authOtpConfig.demoOtpEnabled ||
-      authOtpConfig.whatsappOtpEnabled);
+  const otpSentReady = Boolean(otpChallengeId || firebaseConfirmation);
 
   return (
     <div
@@ -408,26 +414,31 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
         </div>
 
         <div className="p-6 space-y-5">
+          {/* Persistent off-screen reCAPTCHA mount (never display:none) for all customer mobile OTP actions */}
+          {portal === 'customer' && <div ref={recaptchaContainerRef} className="sr-only" aria-hidden="true" />}
+
           {portal === 'customer' && (
-            <div className={`grid ${showOtpTab ? 'grid-cols-3' : 'grid-cols-2'} p-1 bg-obsidian border border-white/10 rounded-xl`}>
+            <div
+              className={`grid ${showOtpFeatures ? 'grid-cols-3' : 'grid-cols-2'} p-1 bg-obsidian border border-white/10 rounded-xl`}
+            >
               <button
                 type="button"
-                onClick={() => setMode('login')}
+                onClick={() => {
+                  setMode('login');
+                  resetOtpUi();
+                }}
                 className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                   mode === 'login' ? 'bg-gold text-obsidian' : 'text-ivory/65 hover:text-white'
                 }`}
               >
                 {t('auth.passwordTab')}
               </button>
-              {showOtpTab && (
+              {showOtpFeatures && (
                 <button
                   type="button"
                   onClick={() => {
                     setMode('otp_login');
-                    setOtpChallengeId('');
-                    setOtpCode('');
-                    setOtpNotice('');
-                    setFirebaseConfirmation(null);
+                    resetOtpUi();
                   }}
                   className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                     mode === 'otp_login' ? 'bg-gold text-obsidian' : 'text-ivory/65 hover:text-white'
@@ -438,7 +449,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
               )}
               <button
                 type="button"
-                onClick={() => setMode('register')}
+                onClick={() => {
+                  setMode('register');
+                  resetOtpUi();
+                }}
                 className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                   mode === 'register' ? 'bg-gold text-obsidian' : 'text-ivory/65 hover:text-white'
                 }`}
@@ -479,7 +493,11 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   {portal === 'customer' && (
                     <button
                       type="button"
-                      onClick={() => setMode('reset')}
+                      onClick={() => {
+                        setMode('reset');
+                        setResetMethod('email');
+                        resetOtpUi();
+                      }}
                       className="text-[11px] text-gold underline hover:text-gold-bright cursor-pointer"
                     >
                       Forgot password?
@@ -520,7 +538,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     type="button"
                     disabled={busy}
                     onClick={() => void handleGoogle()}
-                    className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer"
+                    className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer disabled:opacity-50"
                   >
                     Continue with Google Account
                   </button>
@@ -545,49 +563,47 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
           {/* Customer Mobile OTP Sign-In */}
           {mode === 'otp_login' && portal === 'customer' && (
             <form onSubmit={(e) => void handleUnifiedVerifyOtpLogin(e)} className="space-y-4 text-xs">
-              <div ref={recaptchaContainerRef} />
-
-              {!(otpChallengeId || firebaseConfirmation) ? (
+              {!otpSentReady ? (
                 <>
                   <div>
-                    <label className="block font-semibold text-ivory/70 mb-1">
-                      Mobile Number (+91)
-                    </label>
+                    <label className="block font-semibold text-ivory/70 mb-1">Mobile Number</label>
                     <input
                       type="tel"
                       required
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        if (otpError) setOtpError('');
+                      }}
                       placeholder="+91 98200 11223"
                       className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
                     />
                   </div>
+                  {otpError && (
+                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-400/30 text-red-200 text-xs leading-relaxed">
+                      {otpError}
+                    </div>
+                  )}
                   <button
                     type="button"
                     disabled={busy || !phone.trim()}
-                    onClick={() => void handleUnifiedSendOtp()}
+                    onClick={() => void handleRequestUnifiedOtp('login')}
                     className="w-full py-3 px-4 bg-gold text-obsidian text-sm font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Smartphone className="w-4 h-4" />
-                    {busy ? 'Sending Code...' : 'Send OTP'}
+                    {busy ? 'Requesting OTP...' : 'Request OTP'}
                   </button>
                 </>
               ) : (
                 <>
                   <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-obsidian border border-white/10">
                     <div>
-                      <p className="text-[11px] text-ivory/55">Verification code sent to</p>
+                      <p className="text-[11px] text-ivory/55">Mobile Number</p>
                       <p className="font-mono font-semibold text-white">{phone}</p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => {
-                        setOtpChallengeId('');
-                        setFirebaseConfirmation(null);
-                        setOtpCode('');
-                        setOtpNotice('');
-                        setOtpCooldown(0);
-                      }}
+                      onClick={resetOtpUi}
                       className="text-xs font-semibold text-gold hover:text-gold-bright underline cursor-pointer"
                     >
                       Change Mobile Number
@@ -595,22 +611,30 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   </div>
 
                   {otpNotice && (
-                    <p className="text-[11px] rounded-xl p-2.5 border bg-obsidian border-white/10 text-ivory/75">
+                    <p className="text-[11px] rounded-xl p-2.5 border bg-emerald-500/10 border-emerald-400/25 text-emerald-200">
                       {otpNotice}
                     </p>
                   )}
 
+                  {otpError && (
+                    <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-400/30 text-red-200 text-[11px]">
+                      {otpError}
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block font-semibold text-ivory/70 mb-1">
-                      Enter 6-Digit Verification Code
-                    </label>
+                    <label className="block font-semibold text-ivory/70 mb-1">Enter OTP</label>
                     <input
                       type="text"
                       required
+                      inputMode="numeric"
                       maxLength={6}
                       value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="6-digit code"
+                      onChange={(e) => {
+                        setOtpCode(e.target.value.replace(/\D/g, ''));
+                        if (otpError) setOtpError('');
+                      }}
+                      placeholder="Enter 6-digit OTP"
                       className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
                     />
                   </div>
@@ -626,19 +650,32 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
 
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-ivory/55 font-mono">
-                      {otpCooldown > 0 ? `Resend code in ${otpCooldown}s` : 'Did not receive the code?'}
+                      {otpCooldown > 0 ? `Resend OTP in ${otpCooldown}s` : 'Did not receive the code?'}
                     </span>
                     <button
                       type="button"
                       disabled={busy || otpCooldown > 0}
-                      onClick={() => void handleUnifiedSendOtp()}
+                      onClick={() => void handleRequestUnifiedOtp('login')}
                       className="font-semibold text-gold hover:text-gold-bright disabled:opacity-45 cursor-pointer"
                     >
-                      Resend Code
+                      Resend OTP
                     </button>
                   </div>
                 </>
               )}
+
+              <div className="relative py-1 text-center">
+                <span className="bg-navy-deep px-2 text-[11px] text-ivory/50 relative z-10">or continue with</span>
+                <div className="absolute inset-x-0 top-1/2 border-t border-white/10" />
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleGoogle()}
+                className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Continue with Google Account
+              </button>
             </form>
           )}
 
@@ -654,6 +691,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   <input
                     type="text"
                     required
+                    minLength={2}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Aarav Sharma"
@@ -683,44 +721,58 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     <input
                       type="tel"
                       required
+                      disabled={regOtpVerified}
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        setRegOtpVerified(false);
+                        setPhoneVerificationToken('');
+                        if (otpError) setOtpError('');
+                      }}
                       placeholder="+91 98200 11223"
-                      className="w-full pl-9 pr-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold disabled:opacity-75"
                     />
                   </div>
-                  {(authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled) && (
+                  {showOtpFeatures && (
                     <button
                       type="button"
                       disabled={busy || otpCooldown > 0 || regOtpVerified}
-                      onClick={() => void handleRequestServerOtp('registration')}
+                      onClick={() => void handleRequestUnifiedOtp('registration')}
                       className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-xl text-xs font-semibold hover:border-gold disabled:opacity-50 cursor-pointer whitespace-nowrap"
                     >
-                      {regOtpVerified ? 'Verified' : otpCooldown > 0 ? `${otpCooldown}s` : 'Verify'}
+                      {regOtpVerified ? 'Verified' : otpCooldown > 0 ? `Resend ${otpCooldown}s` : otpSentReady ? 'Resend OTP' : 'Request OTP'}
                     </button>
                   )}
                 </div>
-                {otpChallengeId && !regOtpVerified && (
+                {otpSentReady && !regOtpVerified && (
                   <div className="mt-2 flex gap-2">
                     <input
                       type="text"
+                      inputMode="numeric"
                       maxLength={6}
                       value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="6-digit verification code"
-                      className="flex-1 px-3 py-1.5 bg-obsidian border border-white/15 rounded-lg text-xs text-white font-mono"
+                      onChange={(e) => {
+                        setOtpCode(e.target.value.replace(/\D/g, ''));
+                        if (otpError) setOtpError('');
+                      }}
+                      placeholder="Enter OTP"
+                      className="flex-1 px-3 py-1.5 bg-obsidian border border-white/15 rounded-lg text-xs text-white font-mono tracking-widest"
                     />
                     <button
                       type="button"
+                      disabled={busy || otpCode.length !== 6}
                       onClick={() => void handleVerifyRegistrationOtp()}
-                      className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg cursor-pointer"
+                      className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50"
                     >
-                      Verify OTP
+                      Verify & Continue
                     </button>
                   </div>
                 )}
                 {otpNotice && !regOtpVerified && (
-                  <p className="text-[11px] text-amber-200 mt-1">{otpNotice}</p>
+                  <p className="text-[11px] text-emerald-300 mt-1.5">{otpNotice}</p>
+                )}
+                {otpError && !regOtpVerified && (
+                  <p className="text-[11px] text-red-300 mt-1.5">{otpError}</p>
                 )}
                 {regOtpVerified && (
                   <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
@@ -745,6 +797,26 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-ivory/70 mb-1">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-ivory/45 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full pl-9 pr-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                  />
+                </div>
+                {confirmPassword && password !== confirmPassword && (
+                  <p className="text-[11px] text-red-400 mt-1">Passwords do not match.</p>
+                )}
+              </div>
 
               <div className="space-y-2 pt-1">
                 <label className="flex items-start gap-2 text-xs text-ivory cursor-pointer">
@@ -755,7 +827,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     className="mt-0.5 accent-gold"
                   />
                   <span>
-                    I accept the mandatory Self-Drive Terms of Service and Privacy Policy (v1.0) for booking & KYC processing.
+                    I accept the mandatory Self-Drive Terms of Service and Privacy Policy (v1.0) for booking & Document Verification.
                   </span>
                 </label>
 
@@ -766,7 +838,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     onChange={(e) => setWhatsappConsent(e.target.checked)}
                     className="mt-0.5 accent-gold"
                   />
-                  <span>Receive transactional booking, payment, KYC, and trip updates (opt out anytime).</span>
+                  <span>Receive transactional booking, payment, document verification, and trip updates (opt out anytime).</span>
                 </label>
 
                 <label className="flex items-start gap-2 text-xs text-ivory/60 cursor-pointer">
@@ -787,67 +859,137 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
               >
                 {busy ? 'Creating Account...' : 'Register Account'}
               </button>
+
+              <div className="relative py-1 text-center">
+                <span className="bg-navy-deep px-2 text-[11px] text-ivory/50 relative z-10">or continue with</span>
+                <div className="absolute inset-x-0 top-1/2 border-t border-white/10" />
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleGoogle()}
+                className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Continue with Google Account
+              </button>
             </form>
           )}
 
-          {mode === 'reset' && (
+          {mode === 'reset' && portal === 'customer' && (
             <form onSubmit={(e) => void handlePasswordReset(e)} className="space-y-4 text-xs">
-              <p className="text-ivory/70">
-                Reset via registered email or verify with a mobile verification code when enabled.
-              </p>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Registered email"
-                className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white focus:outline-none focus:border-gold"
-              />
-              {(authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled) && (
+              <div className="grid grid-cols-2 p-1 bg-obsidian border border-white/10 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetMethod('email');
+                    resetOtpUi();
+                  }}
+                  className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
+                    resetMethod === 'email' ? 'bg-gold text-obsidian' : 'text-ivory/65'
+                  }`}
+                >
+                  Email Reset Link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetMethod('mobile_otp');
+                    resetOtpUi();
+                  }}
+                  className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
+                    resetMethod === 'mobile_otp' ? 'bg-gold text-obsidian' : 'text-ivory/65'
+                  }`}
+                >
+                  Mobile Verification
+                </button>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-ivory/70 mb-1">Registered Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white focus:outline-none focus:border-gold"
+                />
+              </div>
+
+              {resetMethod === 'email' ? (
+                <p className="text-ivory/70 leading-relaxed">
+                  We will send a secure password reset link to your registered email address.
+                </p>
+              ) : (
                 <>
-                  <div className="flex gap-2">
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="Optional mobile (+91...)"
-                      className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-white font-mono"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || otpCooldown > 0 || !phone.trim()}
-                      onClick={() => void handleRequestServerOtp('password_recovery')}
-                      className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-xl font-semibold cursor-pointer disabled:opacity-50"
-                    >
-                      {otpCooldown > 0 ? `${otpCooldown}s` : 'Send OTP'}
-                    </button>
+                  <div>
+                    <label className="block font-semibold text-ivory/70 mb-1">Registered Mobile Number</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="tel"
+                        required
+                        value={phone}
+                        onChange={(e) => {
+                          setPhone(e.target.value);
+                          if (otpError) setOtpError('');
+                        }}
+                        placeholder="+91 98200 11223"
+                        className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-white font-mono"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || otpCooldown > 0 || !phone.trim()}
+                        onClick={() => void handleRequestUnifiedOtp('password_recovery')}
+                        className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-xl font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {otpCooldown > 0 ? `Resend ${otpCooldown}s` : otpSentReady ? 'Resend OTP' : 'Request OTP'}
+                      </button>
+                    </div>
                   </div>
-                  {otpNotice && <p className="text-[11px] text-amber-200">{otpNotice}</p>}
-                  {otpChallengeId && (
-                    <input
-                      type="text"
-                      maxLength={6}
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Enter 6-digit verification code"
-                      className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-white font-mono"
-                    />
+                  {otpNotice && <p className="text-[11px] text-emerald-300">{otpNotice}</p>}
+                  {otpError && <p className="text-[11px] text-red-300">{otpError}</p>}
+                  {otpSentReady && (
+                    <>
+                      <input
+                        type="text"
+                        required
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Enter OTP"
+                        className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-white font-mono tracking-widest"
+                      />
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="New password (min 6 characters)"
+                        className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white focus:outline-none focus:border-gold"
+                      />
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        placeholder="Confirm new password"
+                        className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white focus:outline-none focus:border-gold"
+                      />
+                    </>
                   )}
                 </>
               )}
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="New password (min 6 characters)"
-                className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white focus:outline-none focus:border-gold"
-              />
+
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setMode('login')}
+                  onClick={() => {
+                    setMode('login');
+                    resetOtpUi();
+                  }}
                   className="flex-1 py-2.5 border border-white/15 rounded-xl text-xs font-semibold text-ivory cursor-pointer"
                 >
                   Back
@@ -855,9 +997,13 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 <button
                   type="submit"
                   disabled={busy}
-                  className="flex-1 py-2.5 bg-gold text-obsidian rounded-xl text-xs font-semibold cursor-pointer"
+                  className="flex-1 py-2.5 bg-gold text-obsidian rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
                 >
-                  {busy ? 'Updating...' : 'Reset Password'}
+                  {busy
+                    ? 'Processing...'
+                    : resetMethod === 'email'
+                      ? 'Send Reset Email'
+                      : 'Reset Password'}
                 </button>
               </div>
             </form>
@@ -870,3 +1016,4 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     </div>
   );
 };
+

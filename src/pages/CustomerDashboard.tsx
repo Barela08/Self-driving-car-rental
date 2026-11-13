@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { type ConfirmationResult, type RecaptchaVerifier } from 'firebase/auth';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -24,6 +25,11 @@ import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SUPPORTED_LANGUAGES } from '../lib/i18n';
 import { apiFetch, formatINR } from '../lib/api';
+import {
+  clearRecaptchaInstance,
+  requestUnifiedMobileOtp,
+  verifyUnifiedMobileOtp,
+} from '../lib/authService';
 import { canAccessAdminConsole, canAccessMasterConsole } from '../lib/permissions';
 import { downloadBookingInvoicePdf, downloadRentalAgreementPdf } from '../lib/pdfExport';
 import { resolveVehicleImage } from '../lib/mediaAssets';
@@ -63,8 +69,8 @@ interface DashboardPayload {
 }
 
 export const CustomerDashboard: React.FC = () => {
-  const { profile, firebaseUser, loading: authLoading, logout, logoutAllDevices, refreshProfile } = useAuth();
-  const { branches, activeBranches, vehicles, settings, isPreviewMode } = useCatalog();
+  const { profile, firebaseUser, loading: authLoading, logout, logoutAllDevices, refreshProfile, loginWithFirebasePhone } = useAuth();
+  const { branches, activeBranches, vehicles, settings, authOtpConfig, isPreviewMode } = useCatalog();
   const { language, setLanguage, t } = useLanguage();
   const navigate = useNavigate();
 
@@ -111,6 +117,10 @@ export const CustomerDashboard: React.FC = () => {
   const [otpCode, setOtpCode] = useState('');
   const [otpHint, setOtpHint] = useState('');
   const [otpVerified, setOtpVerified] = useState(false);
+  const [otpCooldown, setOtpCooldown] = useState(0);
+  const accountRecaptchaContainerRef = useRef<HTMLDivElement | null>(null);
+  const accountRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
+  const [accountFirebaseConf, setAccountFirebaseConf] = useState<ConfirmationResult | null>(null);
   const [newAddrLabel, setNewAddrLabel] = useState('');
   const [newAddrText, setNewAddrText] = useState('');
   const [newAddrCity] = useState(operatingCity);
@@ -366,6 +376,18 @@ export const CustomerDashboard: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const id = window.setInterval(() => setOtpCooldown((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => window.clearInterval(id);
+  }, [otpCooldown]);
+
+  useEffect(() => {
+    return () => {
+      clearRecaptchaInstance(accountRecaptchaRef, accountRecaptchaContainerRef.current);
+    };
+  }, []);
+
   const handleSendAccountOtp = async () => {
     if (!editPhone.trim()) {
       toast.error('Enter your mobile number first.');
@@ -373,17 +395,24 @@ export const CustomerDashboard: React.FC = () => {
     }
     setBusyId('otp');
     try {
-      const res = await apiFetch<{
-        challengeId: string;
-        message: string;
-        isDemoOtpEligible?: boolean;
-      }>('/api/auth/otp/send', {
-        method: 'POST',
-        body: JSON.stringify({ phone: editPhone.trim(), purpose: 'verification' }),
+      const result = await requestUnifiedMobileOtp({
+        phone: editPhone.trim(),
+        purpose: 'verification',
+        verifierRef: accountRecaptchaRef,
+        containerEl: accountRecaptchaContainerRef.current,
+        firebasePhoneAuthEnabled: Boolean(authOtpConfig.firebasePhoneAuthEnabled),
+        defaultCooldownSeconds: Number(authOtpConfig.otpResendCooldownSeconds || 60),
       });
-      setOtpChallengeId(res.challengeId);
-      setOtpHint(res.message);
-      toast.success(res.message);
+      if (result.channel === 'firebase' && result.confirmation) {
+        setAccountFirebaseConf(result.confirmation);
+        setOtpChallengeId('');
+      } else {
+        setAccountFirebaseConf(null);
+        setOtpChallengeId(result.challengeId || '');
+      }
+      setOtpCooldown(result.cooldownSeconds);
+      setOtpHint(result.message);
+      toast.success(result.message);
     } catch (err: any) {
       toast.error(err.message || 'Unable to issue verification code');
     } finally {
@@ -392,22 +421,23 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const handleVerifyAccountOtp = async () => {
-    if (!otpChallengeId || otpCode.trim().length !== 6) return;
+    if ((!otpChallengeId && !accountFirebaseConf) || otpCode.trim().length !== 6) return;
     setBusyId('otp_verify');
     try {
-      const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          challengeId: otpChallengeId,
-          phone: editPhone.trim(),
-          code: otpCode.trim(),
-          purpose: 'verification',
-        }),
+      const res = await verifyUnifiedMobileOtp({
+        phone: editPhone.trim(),
+        code: otpCode.trim(),
+        purpose: 'verification',
+        firebaseConfirmation: accountFirebaseConf,
+        challengeId: otpChallengeId,
       });
-      if (res.verified) {
-        setOtpVerified(true);
-        toast.success(res.message);
+      if (res.channel === 'firebase' && res.idToken) {
+        await loginWithFirebasePhone(res.idToken, editName || undefined, editPhone.trim());
       }
+      setOtpVerified(true);
+      setAccountFirebaseConf(null);
+      setOtpChallengeId('');
+      toast.success(res.message);
     } catch (err: any) {
       toast.error(err.message || 'OTP verification failed');
     } finally {
@@ -534,7 +564,7 @@ export const CustomerDashboard: React.FC = () => {
               {t('dashboard.welcome')}, {profile?.displayName || 'Traveller'}
             </h1>
             <p className="text-xs text-ivory/65">
-              {data?.privateInfo?.email || firebaseUser?.email} · KYC:{' '}
+              {data?.privateInfo?.email || firebaseUser?.email} · Document Verification:{' '}
               <span className="text-gold font-semibold">{profile?.kycStatus || 'Not Started'}</span> · Account:{' '}
               <span className="capitalize">{profile?.accountStatus?.replace('_', ' ') || 'active'}</span>
             </p>
@@ -603,7 +633,7 @@ export const CustomerDashboard: React.FC = () => {
                     <div className="flex items-start gap-3">
                       <ShieldCheck className="w-5 h-5 text-gold shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-sm font-semibold">KYC Verification Required Prior to Handover</p>
+                        <p className="text-sm font-semibold">Document Verification Required Prior to Handover</p>
                         <p className="text-xs text-ivory/70">
                           Current status: <span className="text-gold">{profile?.kycStatus || 'Not Started'}</span>. Complete online upload or schedule a lounge verification before pickup.
                         </p>
@@ -614,7 +644,7 @@ export const CustomerDashboard: React.FC = () => {
                       onClick={() => setTab('kyc')}
                       className="px-4 py-2 bg-gold text-obsidian text-xs font-semibold rounded-xl whitespace-nowrap cursor-pointer"
                     >
-                      Complete KYC
+                      Verify Documents
                     </button>
                   </div>
                 )}
@@ -988,7 +1018,7 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="lg:col-span-7 bg-navy-deep border border-white/10 rounded-2xl p-6 space-y-5">
                   <div>
                     <h2 className="font-display text-2xl font-semibold text-white">
-                      Driver KYC & Document Verification
+                      Driver Identity & Document Verification
                     </h2>
                     <p className="text-xs text-ivory/65 mt-1">
                       Choose encrypted online verification or schedule an in-person check at our{' '}
@@ -1175,7 +1205,7 @@ export const CustomerDashboard: React.FC = () => {
                       {busyId === 'kyc'
                         ? 'Submitting...'
                         : kycMode === 'online'
-                          ? 'Submit Online KYC'
+                          ? 'Submit Documents for Verification'
                           : 'Schedule Lounge Appointment'}
                     </button>
                   </form>
@@ -1482,7 +1512,7 @@ export const CustomerDashboard: React.FC = () => {
                         <option>Booking Query</option>
                         <option>Billing & GST Invoice</option>
                         <option>Deposit & Refund</option>
-                        <option>KYC Assistance</option>
+                        <option>Document Verification Assistance</option>
                       </select>
                       <input
                         type="text"
@@ -1588,13 +1618,20 @@ export const CustomerDashboard: React.FC = () => {
                           }}
                           className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-lg text-sm text-white font-mono"
                         />
+                        <div ref={accountRecaptchaContainerRef} className="sr-only" aria-hidden="true" />
                         <button
                           type="button"
-                          disabled={busyId === 'otp' || otpVerified || !editPhone.trim()}
+                          disabled={busyId === 'otp' || otpVerified || otpCooldown > 0 || !editPhone.trim()}
                           onClick={() => void handleSendAccountOtp()}
                           className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-lg font-semibold hover:border-gold cursor-pointer whitespace-nowrap disabled:opacity-50"
                         >
-                          {otpVerified ? 'Verified' : otpChallengeId ? 'Resend OTP' : 'Verify Mobile'}
+                          {otpVerified
+                            ? 'Verified'
+                            : otpCooldown > 0
+                              ? `Resend ${otpCooldown}s`
+                              : otpChallengeId || accountFirebaseConf
+                                ? 'Resend OTP'
+                                : 'Verify Mobile'}
                         </button>
                       </div>
                       {otpHint && (
@@ -1602,7 +1639,7 @@ export const CustomerDashboard: React.FC = () => {
                           {otpHint}
                         </p>
                       )}
-                      {otpChallengeId && !otpVerified && (
+                      {(otpChallengeId || accountFirebaseConf) && !otpVerified && (
                         <div className="mt-2 flex gap-2">
                           <input
                             type="text"
@@ -1618,7 +1655,7 @@ export const CustomerDashboard: React.FC = () => {
                             onClick={() => void handleVerifyAccountOtp()}
                             className="px-3 py-1.5 bg-gold text-obsidian font-semibold rounded-lg cursor-pointer"
                           >
-                            Confirm OTP
+                            Verify & Continue
                           </button>
                         </div>
                       )}
@@ -1631,7 +1668,7 @@ export const CustomerDashboard: React.FC = () => {
                         className="mt-0.5 accent-gold"
                       />
                       <span className="text-ivory">
-                        Receive official WhatsApp booking, payment verification, KYC & trip alerts (opt out anytime by unchecking or replying STOP).
+                        Receive official WhatsApp booking, payment verification, document verification & trip alerts (opt out anytime by unchecking or replying STOP).
                       </span>
                     </label>
                     <label className="flex items-start gap-2 pt-1 cursor-pointer">

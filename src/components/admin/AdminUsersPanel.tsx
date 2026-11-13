@@ -1,15 +1,53 @@
 import React, { useMemo, useState } from 'react';
 import {
   Ban,
+  Eye,
   KeyRound,
   Search,
   ShieldCheck,
   UserCheck,
   Users,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, formatINR } from '../../lib/api';
 import type { UserProfile } from '../../types';
+
+interface UserActivityPayload {
+  user: UserProfile;
+  bookings: Array<{
+    id: string;
+    bookingReference: string;
+    vehicleName: string;
+    startDate: string;
+    endDate: string;
+    status: string;
+    paymentStatus: string;
+    totalPayable?: number;
+  }>;
+  kycRecords: Array<{
+    id: string;
+    status: string;
+    mode: string;
+    licenseNumber?: string;
+    updatedAt?: string;
+  }>;
+  documents: Array<{
+    id: string;
+    type: string;
+    label: string;
+    status: string;
+    maskedNumber?: string;
+    updatedAt?: string;
+  }>;
+  auditLogs: Array<{
+    id: string;
+    action: string;
+    module: string;
+    summary?: string;
+    timestamp: string;
+  }>;
+}
 
 interface AdminUsersPanelProps {
   mode: 'owner' | 'master';
@@ -29,6 +67,9 @@ export const AdminUsersPanel: React.FC<AdminUsersPanelProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [confirmResetUid, setConfirmResetUid] = useState<string | null>(null);
+  const [activityUser, setActivityUser] = useState<UserProfile | null>(null);
+  const [activityData, setActivityData] = useState<UserActivityPayload | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
 
   const scopedUsers = useMemo(() => {
     const base = mode === 'owner'
@@ -63,6 +104,24 @@ export const AdminUsersPanel: React.FC<AdminUsersPanelProps> = ({
       staffAndAdmins: base.filter((u) => u.role !== 'customer').length,
     };
   }, [users, mode]);
+
+  const handleViewActivity = async (target: UserProfile) => {
+    setActivityUser(target);
+    setActivityData(null);
+    setActivityLoading(true);
+    const endpoint =
+      mode === 'master'
+        ? `/api/master/users/${target.uid}/activity`
+        : `/api/admin/users/${target.uid}/activity`;
+    try {
+      const res = await apiFetch<UserActivityPayload>(endpoint);
+      setActivityData(res);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load user activity history.');
+    } finally {
+      setActivityLoading(false);
+    }
+  };
 
   const handleToggleStatus = async (target: UserProfile) => {
     if (target.uid === actor.uid) {
@@ -145,7 +204,7 @@ export const AdminUsersPanel: React.FC<AdminUsersPanelProps> = ({
           </h2>
           <p className="text-slate-muted mt-0.5">
             {mode === 'master'
-              ? 'View all registered accounts, activate or suspend access, and initiate secure session-revoking password resets.'
+              ? 'View all registered accounts, inspect activity history, activate or suspend access, and initiate secure session-revoking password resets.'
               : 'Manage customer and operational staff account access across accessible branches. Credentials are never exposed.'}
           </p>
         </div>
@@ -267,6 +326,15 @@ export const AdminUsersPanel: React.FC<AdminUsersPanelProps> = ({
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="inline-flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleViewActivity(u)}
+                          className="px-2.5 py-1.5 border border-black/15 bg-white hover:bg-alabaster text-ink font-semibold rounded-md inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-gold-hover" />
+                          Details
+                        </button>
+
                         {!isSelf && (
                           <button
                             type="button"
@@ -339,6 +407,135 @@ export const AdminUsersPanel: React.FC<AdminUsersPanelProps> = ({
           </table>
         </div>
       </div>
+
+      {/* User Details & Activity History Modal */}
+      {activityUser && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-3xl w-full overflow-hidden border border-black/15 shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-gold">
+                  Account Profile & Activity History
+                </p>
+                <h3 className="font-display text-lg font-semibold">
+                  {activityUser.displayName} ({activityUser.roleName || activityUser.role})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActivityUser(null)}
+                className="p-1.5 text-white/75 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-5 bg-alabaster">
+              <div className="grid sm:grid-cols-2 gap-3 bg-white border border-black/10 rounded-xl p-4">
+                <div>
+                  <p className="text-[11px] text-slate-muted">Email & Mobile</p>
+                  <p className="font-mono font-semibold text-ink mt-0.5">
+                    {activityUser.email || '—'} · {activityUser.phone || '—'}
+                  </p>
+                  <p className="text-[10px] font-mono text-slate-muted mt-0.5">UID: {activityUser.uid}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-slate-muted">Status & Verification</p>
+                  <p className="font-semibold text-ink mt-0.5">
+                    Account: <span className="capitalize">{activityUser.accountStatus}</span> · Documents:{' '}
+                    <span className="text-gold-hover">{activityUser.kycStatus || 'Not Started'}</span>
+                  </p>
+                  <p className="text-[10px] text-slate-muted mt-0.5">
+                    Credentials and password hashes are strictly hidden.
+                  </p>
+                </div>
+              </div>
+
+              {activityLoading ? (
+                <div className="py-10 text-center text-slate-muted bg-white border border-black/10 rounded-xl">
+                  Loading activity history...
+                </div>
+              ) : activityData ? (
+                <>
+                  <div className="bg-white border border-black/10 rounded-xl p-4 space-y-2.5">
+                    <h4 className="font-semibold text-ink">
+                      Document Verification Status ({activityData.documents?.length || 0} Uploaded Files)
+                    </h4>
+                    {activityData.documents?.length ? (
+                      <div className="grid sm:grid-cols-3 gap-2.5">
+                        {activityData.documents.map((doc) => (
+                          <div key={doc.id} className="p-2.5 rounded-lg bg-alabaster border border-black/10 space-y-0.5">
+                            <p className="font-semibold text-ink">{doc.label || doc.type}</p>
+                            <p className="text-[11px] text-gold-hover font-semibold">{doc.status}</p>
+                            {doc.maskedNumber && <p className="font-mono text-[10px] text-slate-muted">{doc.maskedNumber}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-muted">No identity document records uploaded yet.</p>
+                    )}
+                  </div>
+
+                  <div className="bg-white border border-black/10 rounded-xl p-4 space-y-2.5">
+                    <h4 className="font-semibold text-ink">Booking History ({activityData.bookings?.length || 0})</h4>
+                    {activityData.bookings?.length ? (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {activityData.bookings.map((bk) => (
+                          <div key={bk.id} className="p-2.5 rounded-lg bg-alabaster border border-black/10 flex flex-wrap justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-ink">
+                                <span className="font-mono">{bk.bookingReference}</span> · {bk.vehicleName}
+                              </p>
+                              <p className="text-[11px] text-slate-muted">
+                                {new Date(bk.startDate).toLocaleDateString('en-IN')} → {new Date(bk.endDate).toLocaleDateString('en-IN')}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-semibold text-gold-hover">
+                                {bk.status} · {bk.paymentStatus}
+                              </p>
+                              {typeof bk.totalPayable === 'number' && (
+                                <p className="font-mono text-[11px] font-semibold text-ink">{formatINR(bk.totalPayable)}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-muted">No bookings associated with this account.</p>
+                    )}
+                  </div>
+
+                  <div className="bg-white border border-black/10 rounded-xl p-4 space-y-2.5">
+                    <h4 className="font-semibold text-ink">Recent Audit Logs ({activityData.auditLogs?.length || 0})</h4>
+                    {activityData.auditLogs?.length ? (
+                      <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                        {activityData.auditLogs.map((log) => (
+                          <div key={log.id} className="p-2 rounded-lg bg-alabaster border border-black/10 flex justify-between gap-3">
+                            <div>
+                              <span className="font-semibold text-ink">{log.module}:</span>{' '}
+                              <span className="text-slate-muted">{log.summary || log.action}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-slate-muted shrink-0">
+                              {new Date(log.timestamp).toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-muted">No recent audit trail entries.</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="py-8 text-center text-slate-muted bg-white border border-black/10 rounded-xl">
+                  Unable to load activity details.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

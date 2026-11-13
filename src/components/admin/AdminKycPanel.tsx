@@ -89,7 +89,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
       const res = await apiFetch<{ kyc: KycVerification }>(`/api/admin/kyc/${kyc.id}/document`);
       setSelectedKyc(res.kyc);
     } catch (err: any) {
-      toast.error(err.message || 'Could not retrieve encrypted KYC bundle.');
+      toast.error(err.message || 'Could not retrieve encrypted document verification bundle.');
     } finally {
       setDocLoading(false);
     }
@@ -97,7 +97,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
 
   const handlePreviewUploadedDoc = async (docItem: CustomerDocumentRecord) => {
     if (!canInspectDocs) {
-      toast.error('Requires view_kyc_documents permission.');
+      toast.error('Requires document inspection permission.');
       return;
     }
     setDocPreviewMeta(docItem);
@@ -113,7 +113,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Unable to stream KYC document');
+        throw new Error(err.error || 'Unable to stream verification document');
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);

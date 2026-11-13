@@ -18,6 +18,7 @@ export function normalizeIndianPhone(raw: string): string {
   if (!digits) return '';
   if (digits.length === 10) return `91${digits}`;
   if (digits.startsWith('0') && digits.length === 11) return `91${digits.slice(1)}`;
+  if (digits.startsWith('910') && digits.length === 13) return `91${digits.slice(3)}`;
   return digits;
 }
 

@@ -108,8 +108,8 @@ export function downloadBookingInvoicePdf(
         )}/km extra)`,
       ],
       [
-        'Payment Method & KYC',
-        `${booking.paymentMethod} | KYC: ${booking.kycStatusSnapshot}`,
+        'Payment Method & Documents',
+        `${booking.paymentMethod} | Verification: ${booking.kycStatusSnapshot}`,
       ],
     ],
     theme: 'grid',
@@ -275,7 +275,7 @@ export function downloadRentalAgreementPdf(
       ['Lessor (Operator)', `${legalInfo} (${settings?.businessAddress || booking.branchName})`],
       ['Operator Contact', `${supportPhone} | ${supportEmail}`],
       ['Lessee (Customer)', `${booking.customerName} (${booking.customerEmail}${booking.customerPhone ? ` | ${booking.customerPhone}` : ''})`],
-      ['KYC Verification Snapshot', booking.kycStatusSnapshot],
+      ['Document Verification Snapshot', booking.kycStatusSnapshot],
       ['Vehicle Model & Category', `${booking.vehicleName} (${booking.vehicleCategory})`],
       ['Units Booked & Reg. Numbers', `${booking.quantity || 1} unit(s) — ${regs}`],
       ['Pickup Window', new Date(booking.startDate).toLocaleString('en-IN')],
@@ -303,7 +303,7 @@ export function downloadRentalAgreementPdf(
   doc.setFontSize(8);
   doc.setTextColor(65, 67, 77);
   const terms = [
-    '1. Valid original Driving Licence and KYC clearance must be presented prior to key & OTP handover.',
+    '1. Valid original Driving Licence and identity document clearance must be presented prior to key & OTP handover.',
     '2. Fuel must be returned at the same level as recorded during handover inspection (Full-to-Full policy unless noted).',
     '3. Excess kilometres beyond included allowance and unapproved late returns attract standard tariff charges.',
     '4. The vehicle shall not be used for commercial sub-leasing, racing, hazardous cargo, or outside permitted jurisdiction.',

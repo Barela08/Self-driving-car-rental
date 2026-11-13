@@ -14,11 +14,14 @@ import { runFirebaseMigration } from './src/server/firebaseMigration.ts';
 import {
   assertBranchAccess,
   filterByBranch,
+  findUserByEmailNormalized,
+  findUserByNormalizedPhone,
   getTokenVersion,
   loadRolesList,
   requireAuth,
   requireMasterAdmin,
   requirePermission,
+  resolveOrCreatePhoneCustomer,
   revokeAllUserSessions,
   signScreenshotSignature,
   signSessionToken,
@@ -61,7 +64,9 @@ import {
 import {
   getAuthOtpConfig,
   sendWhatsAppOtp,
+  signPhoneVerificationToken,
   updateAuthOtpConfig,
+  verifyPhoneVerificationToken,
   verifyWhatsAppOtp,
   writeOtpLog,
 } from './src/server/otp.ts';
@@ -190,14 +195,22 @@ const CMS_AREA_DEFINITIONS: Array<{ key: CmsAreaKey; label: string; description:
   { key: 'offers', label: 'Offers & Announcements', description: 'Active seasonal promotions and promotional discount banner copy.', sortOrder: 4 },
   { key: 'why_choose', label: 'Why Choose Us (Benefits & Trust)', description: 'Key reliability highlights, safety assurances, and doorstep delivery pillars.', sortOrder: 5 },
   { key: 'how_it_works', label: 'How It Works', description: 'Step-by-step customer self-drive rental workflow overview.', sortOrder: 6 },
-  { key: 'experience', label: 'Self-Drive Experience', description: 'Concierge handover, GPS security, and driving experience narrative.', sortOrder: 7 },
-  { key: 'services', label: 'Concierge & Add-On Services', description: 'Doorstep delivery, outstation permits, and additional rental services.', sortOrder: 8 },
-  { key: 'testimonials', label: 'Verified Testimonials', description: 'Customer feedback and rating stories published on the homepage.', sortOrder: 9 },
-  { key: 'faqs', label: 'Frequently Asked Questions', description: 'Frequently asked questions displayed on the policies and help pages.', sortOrder: 10 },
-  { key: 'contact', label: 'Contact & Support', description: 'Support channels, hub contact notes, and enquiry lead-in text.', sortOrder: 11 },
-  { key: 'footer', label: 'Footer Content', description: 'Brand tagline, HackifyPro product attribution, and footer notes.', sortOrder: 12 },
-  { key: 'about', label: 'About Us', description: 'Company background, quality commitment, and HackifyPro mobility ethos.', sortOrder: 13 },
-  { key: 'policies', label: 'Rental Policies & Terms', description: 'Terms & Conditions, Privacy, Cancellation/Refund, and Rental Eligibility copy.', sortOrder: 14 },
+  { key: 'journey_steps', label: 'Journey Steps for Customers', description: 'Detailed milestone steps shown on the customer booking journey & policies hub.', sortOrder: 7 },
+  { key: 'experience', label: 'Self-Drive Experience', description: 'Concierge handover, GPS security, and driving experience narrative.', sortOrder: 8 },
+  { key: 'services', label: 'Concierge & Add-On Services', description: 'Doorstep delivery, outstation permits, and additional rental services.', sortOrder: 9 },
+  { key: 'testimonials', label: 'Verified Testimonials', description: 'Customer feedback and rating stories published on the homepage.', sortOrder: 10 },
+  { key: 'faqs', label: 'Frequently Asked Questions', description: 'Frequently asked questions displayed on the policies and help pages.', sortOrder: 11 },
+  { key: 'contact', label: 'Contact & Support', description: 'Support channels, hub contact notes, and enquiry lead-in text.', sortOrder: 12 },
+  { key: 'footer', label: 'Footer Content', description: 'Brand tagline, HackifyPro product attribution, and footer notes.', sortOrder: 13 },
+  { key: 'about', label: 'About Us', description: 'Company background, quality commitment, and HackifyPro mobility ethos.', sortOrder: 14 },
+  { key: 'terms', label: 'Terms & Conditions', description: 'Primary self-drive rental terms, driver eligibility, and liability clauses.', sortOrder: 15 },
+  { key: 'privacy', label: 'Privacy Policy', description: 'Customer identity document handling, GPS consent, and privacy disclosures.', sortOrder: 16 },
+  { key: 'cancellation', label: 'Cancellation Policy', description: 'Cancellation notice windows, fee slabs, and schedule modification rules.', sortOrder: 17 },
+  { key: 'refund', label: 'Refund Policy', description: 'Security deposit release SLA and UPI/bank refund settlement timelines.', sortOrder: 18 },
+  { key: 'rental_rules', label: 'Rental Rules', description: 'Speed caps, fuel levels, outstation permits, and vehicle care guidelines.', sortOrder: 19 },
+  { key: 'self_drive_rules', label: 'Self-Drive Rental Rules', description: 'Mandatory self-drive compliance checklist, age limit, and original document rules.', sortOrder: 20 },
+  { key: 'payment_info', label: 'Payment Information', description: 'Manual UPI QR settlement, 12-digit UTR verification, and security deposit disclosures.', sortOrder: 21 },
+  { key: 'policies', label: 'Policies Overview Hub', description: 'Summary landing introduction displayed across the public policies hub.', sortOrder: 22 },
 ];
 
 function buildDefaultCmsRecord(
@@ -209,7 +222,7 @@ function buildDefaultCmsRecord(
   now: string
 ): CmsPageRecord {
   const company = settings.companyName || 'EliteDrive';
-  const baseMap: Record<CmsAreaKey, { title: string; subtitle?: string; body: string; ctaLabel?: string; ctaLink?: string }> = {
+  const baseMap: Record<string, { title: string; subtitle?: string; body: string; ctaLabel?: string; ctaLink?: string }> = {
     hero: {
       title: settings.heroBannerHeadline || `Precision Self-Drive Mobility by ${company}`,
       subtitle: settings.heroBannerSubcopy || 'Company-owned flagship fleet with doorstep delivery, transparent tariffs, and digital document verification.',
@@ -240,7 +253,12 @@ function buildDefaultCmsRecord(
     how_it_works: {
       title: 'How Self-Drive Rental Works',
       subtitle: 'Four straightforward steps from booking to handover.',
-      body: '1. Select your pickup location and rental window.\n2. Upload Driving Licence & Aadhaar for verification.\n3. Confirm return location and complete Manual UPI payment.\n4. Pick up at hub or receive doorstep delivery.',
+      body: settings.howItWorksSummary || '1. Select your pickup location and rental window.\n2. Upload Driving Licence & Aadhaar for verification.\n3. Confirm return location and complete Manual UPI payment.\n4. Pick up at hub or receive doorstep delivery.',
+    },
+    journey_steps: {
+      title: 'Journey Steps for Customers',
+      subtitle: 'Step-by-step booking, document verification, and handover experience.',
+      body: (settings.howItWorksSteps || []).map((s, idx) => `${idx + 1}. ${s.title}: ${s.description}`).join('\n\n') || '1. Select Car & Pickup Location\n2. Upload Driving Licence & Aadhaar\n3. Choose Same or Different Return Location\n4. Pay via Verified Manual UPI & Drive',
     },
     experience: {
       title: 'The Self-Drive Concierge Experience',
@@ -250,12 +268,12 @@ function buildDefaultCmsRecord(
     services: {
       title: 'Doorstep Delivery & Fleet Services',
       subtitle: 'Flexible pickup hubs, doorstep handovers, and optional return locations.',
-      body: 'Choose hub pickup or doorstep delivery at checkout, and select whether to return to the same hub or a different location.',
+      body: 'Choose hub pickup or doorstep delivery at checkout, and select whether to return to the same pickup point or a different drop location.',
     },
     testimonials: {
       title: 'Verified Customer Stories',
       subtitle: 'Rated highly across business and leisure trips.',
-      body: (settings.testimonials || []).map((t) => `"${t.quote}" — ${t.name} (${t.city})`).join('\n\n') || 'Trusted by thousands of self-drive renters.',
+      body: (settings.testimonials || []).map((t) => `"${t.quote}" — ${t.name} (${t.city})`).join('\n\n') || 'Trusted by self-drive renters.',
     },
     faqs: {
       title: 'Frequently Asked Questions',
@@ -275,7 +293,42 @@ function buildDefaultCmsRecord(
     about: {
       title: `About ${company}`,
       subtitle: 'Engineered mobility — A product of HackifyPro.',
-      body: settings.aboutSummary || `${company} provides company-owned, meticulously maintained self-drive vehicles with transparent pricing and digital verification. Built and powered by HackifyPro.`,
+      body: settings.aboutSummary || `${company} provides company-owned, meticulously maintained self-drive vehicles with transparent pricing and digital document verification. Built and powered by HackifyPro.`,
+    },
+    terms: {
+      title: 'Terms & Conditions',
+      subtitle: 'Primary rental agreement, driver eligibility, and liability guidelines.',
+      body: settings.termsSummary || 'Drivers must hold a valid original Driving Licence and Aadhaar card and adhere to speed and traffic regulations.',
+    },
+    privacy: {
+      title: 'Privacy Policy',
+      subtitle: 'Document storage, consent logging, and customer privacy safeguards.',
+      body: settings.privacySummary || 'Verification documents are stored securely for statutory rental compliance and never sold to third parties.',
+    },
+    cancellation: {
+      title: 'Cancellation Policy',
+      subtitle: 'Clear advance cancellation and schedule adjustment policy.',
+      body: settings.cancellationSummary || 'Free cancellation up to 24 hours prior to scheduled pickup.',
+    },
+    refund: {
+      title: 'Refund Policy',
+      subtitle: 'Security deposit refund window and cancelled trip settlement timelines.',
+      body: settings.refundSummary || 'Approved security deposit and cancellation refunds settle within 3–5 business days back to your verified UPI or bank account.',
+    },
+    rental_rules: {
+      title: 'Rental Rules',
+      subtitle: 'Vehicle care, fuel policy, speed caps, and permitted territories.',
+      body: settings.rentalRulesSummary || 'Minimum age 21 with valid original Driving Licence. Smoking and unauthorized commercial use are prohibited.',
+    },
+    self_drive_rules: {
+      title: 'Self-Drive Rental Rules',
+      subtitle: 'Important compliance standards for all self-drive reservations.',
+      body: settings.rentalRulesSummary || 'Original LMV Driving Licence and Aadhaar verification are mandatory prior to handover. Maximum speed limit is capped at 120 km/h.',
+    },
+    payment_info: {
+      title: 'Payment Information',
+      subtitle: 'Manual UPI settlement with UTR verification and security deposit rules.',
+      body: settings.paymentInfoSummary || 'All online payments use verified Manual UPI QR with 12-digit UTR & receipt verification. Cash at Pickup may also be authorized.',
     },
     policies: {
       title: 'Rental Policies, Terms & Eligibility',
@@ -289,15 +342,14 @@ function buildDefaultCmsRecord(
     },
   };
 
-  const def = baseMap[key];
+  const def = baseMap[key] || { title: label, subtitle: description, body: description };
   return {
     key,
     label,
     description,
     published: true,
     sortOrder,
-    updatedAt: now,
-    publishedAt: now,
+    updatedAt: new Date().toISOString(),
     content: {
       en: { ...def },
       hi: { ...def },
@@ -318,6 +370,8 @@ async function seedAndLoadCmsPages(): Promise<CmsPageRecord[]> {
   }
   const now = new Date().toISOString();
   const result: CmsPageRecord[] = [];
+  const builtInKeys = new Set<string>(CMS_AREA_DEFINITIONS.map((d) => d.key));
+
   for (const def of CMS_AREA_DEFINITIONS) {
     const existing = existingMap.get(def.key) as any;
     if (existing) {
@@ -343,6 +397,19 @@ async function seedAndLoadCmsPages(): Promise<CmsPageRecord[]> {
       result.push(created);
     }
   }
+
+  for (const [docId, existing] of existingMap.entries()) {
+    if (!builtInKeys.has(docId)) {
+      result.push({
+        ...(existing as any),
+        key: existing.key || docId,
+        isCustom: true,
+        published: typeof existing.published === 'boolean' ? existing.published : true,
+        sortOrder: typeof existing.sortOrder === 'number' ? existing.sortOrder : result.length + 1,
+        updatedAt: existing.updatedAt || now,
+      });
+    }
+  }
   return result.sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -358,10 +425,22 @@ async function syncCmsAreaToSettings(record: CmsPageRecord) {
     if (en.title) patch.fleetSectionHeading = en.title;
   } else if (record.key === 'about') {
     if (en.body) patch.aboutSummary = en.body;
+  } else if (record.key === 'how_it_works') {
+    if (en.body) patch.howItWorksSummary = en.body;
   } else if (record.key === 'footer') {
     if (en.subtitle) patch.footerTagline = en.subtitle;
-  } else if (record.key === 'policies') {
+  } else if (record.key === 'terms' || record.key === 'policies') {
     if (en.body) patch.termsSummary = en.body;
+  } else if (record.key === 'privacy') {
+    if (en.body) patch.privacySummary = en.body;
+  } else if (record.key === 'cancellation') {
+    if (en.body) patch.cancellationSummary = en.body;
+  } else if (record.key === 'refund') {
+    if (en.body) patch.refundSummary = en.body;
+  } else if (record.key === 'rental_rules' || record.key === 'self_drive_rules') {
+    if (en.body) patch.rentalRulesSummary = en.body;
+  } else if (record.key === 'payment_info') {
+    if (en.body) patch.paymentInfoSummary = en.body;
   }
   if (Object.keys(patch).length > 1) {
     await db.collection('company_settings').doc('default').set(patch, { merge: true });
@@ -1256,7 +1335,7 @@ async function startServer() {
   // --- LOCATION SERVICEABILITY & DELIVERY FEE VALIDATION (MULTI-BRANCH + SINGLE-HUB FALLBACK) ---
   app.post('/api/locations/validate', async (req, res) => {
     try {
-      const { vehicleId, pickupMode, pickupLat, pickupLng, returnLat, returnLng, pickupBranchId } = req.body;
+      const { vehicleId, pickupMode, pickupLat, pickupLng, returnLat, returnLng, isOneWay, pickupBranchId } = req.body;
       const [vehSnap, settingsSnap, branchesSnap] = await Promise.all([
         db.collection('vehicles').doc(vehicleId).get(),
         db.collection('company_settings').doc('default').get(),
@@ -1284,6 +1363,7 @@ async function startServer() {
         pickupLng: Number(pickupLng ?? defaultLng),
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
         returnLng: Number(returnLng ?? pickupLng ?? defaultLng),
+        isOneWay: Boolean(isOneWay),
         pickupBranch: hub,
         allBranches: effectiveBranches,
         vehicle,
@@ -1363,6 +1443,7 @@ async function startServer() {
         pickupLng,
         returnLat,
         returnLng,
+        isOneWay,
         insurancePackageId,
         roadsideRequested,
         driverRequested,
@@ -1402,6 +1483,7 @@ async function startServer() {
         pickupLng: Number(pickupLng ?? defaultLng),
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
         returnLng: Number(returnLng ?? pickupLng ?? defaultLng),
+        isOneWay: Boolean(isOneWay),
         pickupBranch: hub,
         allBranches: effectiveBranches,
         vehicle,
@@ -1427,7 +1509,7 @@ async function startServer() {
         startDate,
         endDate,
         deliveryCharge: geo.deliveryCharge || 0,
-        oneWayCharge: 0,
+        oneWayCharge: geo.oneWayCharge || 0,
         insurancePackage,
         roadsideRequested: Boolean(roadsideRequested),
         driverRequested: Boolean(driverRequested),
@@ -1461,6 +1543,7 @@ async function startServer() {
               prelim.baseRentalAmount +
               prelim.weekendSurcharge +
               prelim.deliveryCharge +
+              prelim.oneWayCharge +
               prelim.insuranceCharge +
               prelim.roadsideCharge +
               prelim.driverCharge,
@@ -1482,7 +1565,7 @@ async function startServer() {
         startDate,
         endDate,
         deliveryCharge: geo.deliveryCharge || 0,
-        oneWayCharge: 0,
+        oneWayCharge: geo.oneWayCharge || 0,
         insurancePackage,
         roadsideRequested: Boolean(roadsideRequested),
         driverRequested: Boolean(driverRequested),
@@ -1505,31 +1588,76 @@ async function startServer() {
   });
 
   // --- AUTHENTICATION ENDPOINTS ---
+  app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      res.json({ profile: req.authUser!.profile });
+    } catch {
+      res.status(500).json({ error: 'Failed to load authenticated profile.' });
+    }
+  });
+
   app.post('/api/auth/register', rateLimit(15, 60000), async (req, res) => {
     try {
-      const { email, password, name, phone, serviceConsentAccepted, marketingConsent } = req.body;
+      const {
+        email,
+        password,
+        confirmPassword,
+        name,
+        phone,
+        serviceConsentAccepted,
+        marketingConsent,
+        phoneVerificationToken,
+      } = req.body;
       const normalizedEmail = String(email || '').trim().toLowerCase();
-      if (!normalizedEmail || !password || String(password).length < 6 || !name) {
-        return res.status(400).json({ error: 'Name, valid email, and password (min 6 chars) are required.' });
+      const cleanName = String(name || '').trim();
+      const rawPassword = String(password || '');
+      if (!cleanName || cleanName.length < 2 || !normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || rawPassword.length < 6) {
+        return res.status(400).json({ error: 'Full name, valid email, and password (minimum 6 characters) are required.' });
+      }
+      if (confirmPassword !== undefined && String(confirmPassword) !== rawPassword) {
+        return res.status(400).json({ error: 'Password and confirm password do not match.' });
       }
       if (!serviceConsentAccepted) {
         return res.status(400).json({ error: 'You must accept the Rental Terms and Privacy Policy to register.' });
       }
 
-      const existingCred = await db
-        .collection('auth_credentials')
-        .where('email', '==', normalizedEmail)
-        .limit(1)
-        .get();
-      if (!existingCred.empty) {
-        return res.status(400).json({ error: 'An account with this email already exists.' });
+      const existingEmailUser = await findUserByEmailNormalized(normalizedEmail);
+      if (existingEmailUser) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please sign in instead.' });
       }
 
-      const uid = `usr-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      const normPhone = normalizeIndianPhone(String(phone || ''));
+      const formattedPhone = normPhone.length >= 10 ? `+${normPhone}` : String(phone || '').trim();
+      const phoneTokenCheck = phoneVerificationToken
+        ? verifyPhoneVerificationToken(String(phoneVerificationToken), normPhone)
+        : { valid: false };
+
+      let targetUid = `usr-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      let upgradingOtpAccount = false;
+
+      if (normPhone.length >= 10) {
+        const existingPhoneUser = await findUserByNormalizedPhone(normPhone);
+        if (existingPhoneUser) {
+          const existingEmail = existingPhoneUser.email || existingPhoneUser.profile.email || '';
+          const credSnap = await db.collection('auth_credentials').doc(existingPhoneUser.uid).get();
+          const hasPassword = Boolean(credSnap.data()?.passwordHash);
+          if (existingPhoneUser.profile.role !== 'customer' || existingEmail || hasPassword) {
+            return res.status(409).json({
+              error: 'An account with this mobile number already exists. Please sign in using Mobile OTP or Email.',
+            });
+          }
+          // Safe canonical link: upgrade existing phone-only OTP customer profile cleanly
+          targetUid = existingPhoneUser.uid;
+          upgradingOtpAccount = true;
+        }
+      }
+
       const now = new Date().toISOString();
       const profile: UserProfile = {
-        uid,
-        displayName: String(name).trim(),
+        uid: targetUid,
+        displayName: cleanName,
+        email: normalizedEmail,
+        ...(formattedPhone ? { phone: formattedPhone } : {}),
         role: 'customer',
         accountStatus: 'active',
         kycStatus: 'Not Started',
@@ -1537,43 +1665,62 @@ async function startServer() {
         updatedAt: now,
       };
 
-      await db.collection('users').doc(uid).set(profile);
-      await db.collection('users').doc(uid).collection('private').doc('info').set({
-        uid,
-        email: normalizedEmail,
-        phone: String(phone || '').trim(),
-        savedAddresses: [],
-        favouriteVehicleIds: [],
-        marketingConsent: Boolean(marketingConsent),
-        whatsappConsent: req.body.whatsappConsent !== false,
-        whatsappOptOut: false,
-        fcmTokens: [],
-        serviceConsentVersion: 'v1.0',
-        serviceConsentAt: now,
-        updatedAt: now,
-      });
-      await db.collection('auth_credentials').doc(uid).set({
-        uid,
-        email: normalizedEmail,
-        passwordHash: hashPassword(String(password)),
-        tokenVersion: 1,
-        updatedAt: now,
-      });
-      await db.collection('consent_records').doc(`consent-${uid}-${Date.now()}`).set({
-        uid,
+      if (upgradingOtpAccount) {
+        const existingSnap = await db.collection('users').doc(targetUid).get();
+        const prev = (existingSnap.data() || {}) as Partial<UserProfile>;
+        profile.kycStatus = prev.kycStatus || 'Not Started';
+        profile.createdAt = prev.createdAt || now;
+        await db.collection('users').doc(targetUid).set(profile, { merge: true });
+      } else {
+        await db.collection('users').doc(targetUid).set(profile);
+      }
+
+      await db.collection('users').doc(targetUid).collection('private').doc('info').set(
+        {
+          uid: targetUid,
+          email: normalizedEmail,
+          phone: formattedPhone,
+          ...(phoneTokenCheck.valid ? { phoneVerified: true, phoneVerifiedAt: now } : {}),
+          savedAddresses: [],
+          favouriteVehicleIds: [],
+          marketingConsent: Boolean(marketingConsent),
+          whatsappConsent: req.body.whatsappConsent !== false,
+          whatsappOptOut: false,
+          fcmTokens: [],
+          serviceConsentVersion: 'v1.0',
+          serviceConsentAt: now,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+      await db.collection('auth_credentials').doc(targetUid).set(
+        {
+          uid: targetUid,
+          email: normalizedEmail,
+          passwordHash: hashPassword(rawPassword),
+          tokenVersion: 1,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+      await db.collection('consent_records').doc(`consent-${targetUid}-${Date.now()}`).set({
+        uid: targetUid,
         serviceConsentVersion: 'v1.0',
         serviceConsentAccepted: true,
         marketingConsent: Boolean(marketingConsent),
         timestamp: now,
       });
 
-      await createNotification({
-        userId: uid,
-        title: 'Welcome to EliteDrive',
-        body: 'Your account is active. Complete KYC in your dashboard before vehicle pickup.',
-      });
+      if (!upgradingOtpAccount) {
+        await createNotification({
+          userId: targetUid,
+          title: 'Welcome to EliteDrive',
+          body: 'Your account is active. Complete Document Verification in your dashboard before vehicle pickup.',
+        });
+      }
 
-      const token = signSessionToken({ uid, email: normalizedEmail, role: 'customer', tokenVersion: 1 });
+      const tokenVersion = await getTokenVersion(targetUid);
+      const token = signSessionToken({ uid: targetUid, email: normalizedEmail, role: 'customer', tokenVersion });
       res.json({ token, profile });
     } catch (err: any) {
       console.error('Register error:', err);
@@ -1731,9 +1878,219 @@ async function startServer() {
     }
   });
 
-  app.post('/api/auth/sync-google', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/auth/sync-email', requireAuth, async (req: AuthRequest, res) => {
     try {
       const uid = req.authUser!.uid;
+      const email = String(req.authUser!.email || '').trim().toLowerCase();
+      let profile = req.authUser!.profile;
+      const {
+        mode = 'login',
+        portal = 'customer',
+        name,
+        phone,
+        serviceConsentAccepted,
+        marketingConsent,
+        whatsappConsent,
+        phoneVerificationToken,
+      } = req.body || {};
+
+      const now = new Date().toISOString();
+      const rolesList = await loadRolesList();
+      const matchedRole = rolesList.find(
+        (r) => (profile.roleId && r.id === profile.roleId) || r.slug === profile.role || r.id === profile.role
+      );
+
+      // Portal isolation & role checks (never auto-elevate role; reject cross-portal misuse cleanly)
+      if (portal === 'master' && !canAccessMasterConsole(profile)) {
+        return res.status(403).json({
+          error: 'Access denied: Master Admin platform privileges are required for this portal.',
+        });
+      }
+      if (portal === 'admin' && !canAccessAdminConsole(profile, rolesList)) {
+        return res.status(403).json({
+          error:
+            profile.role === 'master_admin'
+              ? 'Master Admin accounts must sign in at the Platform Master Admin Portal (/master-admin).'
+              : 'Access denied: This account does not have Admin Console privileges.',
+        });
+      }
+      if (portal === 'staff' && (profile.role === 'customer' || profile.role === 'master_admin')) {
+        return res.status(403).json({
+          error: 'Access denied: Only branch operations staff may enter the Staff Operations Portal.',
+        });
+      }
+      if (portal === 'customer' && mode === 'register' && profile.role !== 'customer') {
+        return res.status(403).json({
+          error: 'This email belongs to a staff or administrator account. Please sign in at the staff/admin portal.',
+        });
+      }
+
+      if (mode === 'register' && serviceConsentAccepted === false) {
+        return res.status(400).json({ error: 'You must accept the Rental Terms and Privacy Policy to register.' });
+      }
+
+      const normPhone = normalizeIndianPhone(String(phone || ''));
+      const formattedPhone = normPhone.length >= 10 ? `+${normPhone}` : String(phone || '').trim();
+      const phoneTokenCheck = phoneVerificationToken
+        ? verifyPhoneVerificationToken(String(phoneVerificationToken), normPhone)
+        : { valid: false };
+
+      if (mode === 'register' && normPhone.length >= 10) {
+        const existingPhoneUser = await findUserByNormalizedPhone(normPhone);
+        if (existingPhoneUser && existingPhoneUser.uid !== uid) {
+          const existingEmail = existingPhoneUser.email || existingPhoneUser.profile.email || '';
+          if (existingPhoneUser.profile.role !== 'customer' || existingEmail) {
+            return res.status(409).json({
+              error: 'An account with this mobile number already exists. Please sign in with Mobile OTP or Email.',
+            });
+          }
+          // Link the verified/matching phone-only OTP customer profile cleanly to this Firebase email login
+          await db.collection('firebase_auth_links').doc(uid).set(
+            {
+              firebaseUid: uid,
+              canonicalUid: existingPhoneUser.uid,
+              email,
+              phone: formattedPhone,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+          const mergedDisplayName = String(name || '').trim() || existingPhoneUser.profile.displayName || profile.displayName;
+          const upgradedProfile: UserProfile = {
+            ...existingPhoneUser.profile,
+            displayName: mergedDisplayName,
+            email,
+            phone: formattedPhone,
+            lastLoginAt: now,
+            updatedAt: now,
+          };
+          await db.collection('users').doc(existingPhoneUser.uid).set(upgradedProfile, { merge: true });
+          await db.collection('users').doc(existingPhoneUser.uid).collection('private').doc('info').set(
+            {
+              uid: existingPhoneUser.uid,
+              email,
+              phone: formattedPhone,
+              ...(phoneTokenCheck.valid ? { phoneVerified: true, phoneVerifiedAt: now } : {}),
+              marketingConsent: Boolean(marketingConsent),
+              whatsappConsent: whatsappConsent !== false,
+              serviceConsentVersion: 'v1.0',
+              serviceConsentAt: now,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+          // Remove redundant newly-created shell doc if requireAuth created a transient shell on uid
+          if (uid !== existingPhoneUser.uid && profile.uid === uid && profile.role === 'customer') {
+            await db.collection('users').doc(uid).collection('private').doc('info').delete().catch(() => undefined);
+            await db.collection('auth_credentials').doc(uid).delete().catch(() => undefined);
+            await db.collection('users').doc(uid).delete().catch(() => undefined);
+          }
+          await db.collection('consent_records').doc(`consent-${existingPhoneUser.uid}-${Date.now()}`).set({
+            uid: existingPhoneUser.uid,
+            serviceConsentVersion: 'v1.0',
+            serviceConsentAccepted: true,
+            marketingConsent: Boolean(marketingConsent),
+            timestamp: now,
+          });
+          await createNotification({
+            userId: existingPhoneUser.uid,
+            title: 'Welcome to EliteDrive',
+            body: 'Your account is active. Complete Document Verification in your dashboard before vehicle pickup.',
+          });
+          const tokenVersion = await getTokenVersion(existingPhoneUser.uid);
+          const token = signSessionToken({
+            uid: existingPhoneUser.uid,
+            email,
+            role: 'customer',
+            tokenVersion,
+          });
+          return res.json({ profile: upgradedProfile, token });
+        }
+      }
+
+      const cleanName = String(name || '').trim();
+      const userPatch: Record<string, any> = {
+        lastLoginAt: now,
+        updatedAt: now,
+      };
+      if (cleanName && (mode === 'register' || !profile.displayName || profile.displayName === 'Customer')) {
+        userPatch.displayName = cleanName;
+        profile.displayName = cleanName;
+      }
+      if (email && !profile.email) {
+        userPatch.email = email;
+        profile.email = email;
+      }
+      if (formattedPhone && (mode === 'register' || !profile.phone)) {
+        userPatch.phone = formattedPhone;
+        profile.phone = formattedPhone;
+      }
+      await db.collection('users').doc(profile.uid).update(userPatch);
+
+      if (mode === 'register') {
+        await db.collection('users').doc(profile.uid).collection('private').doc('info').set(
+          {
+            uid: profile.uid,
+            email,
+            ...(formattedPhone ? { phone: formattedPhone } : {}),
+            ...(phoneTokenCheck.valid ? { phoneVerified: true, phoneVerifiedAt: now } : {}),
+            marketingConsent: Boolean(marketingConsent),
+            whatsappConsent: whatsappConsent !== false,
+            serviceConsentVersion: 'v1.0',
+            serviceConsentAt: now,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+        await db.collection('consent_records').doc(`consent-${profile.uid}-${Date.now()}`).set({
+          uid: profile.uid,
+          serviceConsentVersion: 'v1.0',
+          serviceConsentAccepted: true,
+          marketingConsent: Boolean(marketingConsent),
+          timestamp: now,
+        });
+        await createNotification({
+          userId: profile.uid,
+          title: 'Welcome to EliteDrive',
+          body: 'Your account is active. Complete Document Verification in your dashboard before vehicle pickup.',
+        });
+      }
+
+      profile.permissions = resolveUserPermissions(profile, rolesList);
+      if (matchedRole && !profile.roleName) profile.roleName = matchedRole.name;
+      if (matchedRole && !profile.branchScope) profile.branchScope = matchedRole.branchScope;
+      profile.lastLoginAt = now;
+
+      if (profile.role !== 'customer') {
+        await writeStaffLoginHistory({
+          uid: profile.uid,
+          email,
+          displayName: profile.displayName,
+          role: profile.role,
+          branchId: profile.branchId,
+          portal: (portal as any) || 'admin',
+          outcome: 'success',
+          ipAddress: req.ip || 'unknown',
+          userAgent: String(req.headers['user-agent'] || '').slice(0, 180),
+        });
+      }
+
+      const tokenVersion = await getTokenVersion(profile.uid);
+      const token = signSessionToken({
+        uid: profile.uid,
+        email: email || profile.email || '',
+        role: profile.role,
+        tokenVersion,
+      });
+      res.json({ profile, token });
+    } catch (err: any) {
+      console.error('Email sync error:', err);
+      res.status(500).json({ error: 'Unable to synchronize email account.' });
+    }
+  });
+
+  app.post('/api/auth/sync-google', requireAuth, async (req: AuthRequest, res) => {
+    try {
       const email = String(req.authUser!.email || '').trim().toLowerCase();
       let profile = req.authUser!.profile;
       const now = new Date().toISOString();
@@ -1746,25 +2103,26 @@ async function startServer() {
       }
 
       if (email) {
-        const existingCreds = await db.collection('auth_credentials').where('email', '==', email).get();
-        const otherCred = existingCreds.docs.find((d) => d.id !== uid);
-        if (otherCred) {
-          const existingUid = otherCred.id;
-          const existingSnap = await db.collection('users').doc(existingUid).get();
-          if (existingSnap.exists) {
-            const existingUser = existingSnap.data() as UserProfile;
-            if (existingUser.role !== 'customer') {
-              return res.status(403).json({
-                error: 'Google Sign-In cannot access Staff, Owner, or Admin accounts. Use the staff/admin portal login.',
-              });
-            }
-            // Merge display name cleanly and sign session under canonical customer UID
-            if (!existingUser.displayName && profile.displayName) {
-              await db.collection('users').doc(existingUid).update({ displayName: profile.displayName, updatedAt: now });
-              existingUser.displayName = profile.displayName;
-            }
-            profile = existingUser;
+        const existingEmailMatch = await findUserByEmailNormalized(email);
+        if (existingEmailMatch && existingEmailMatch.uid !== profile.uid) {
+          if (existingEmailMatch.profile.role !== 'customer') {
+            return res.status(403).json({
+              error: 'Google Sign-In cannot access Staff, Owner, or Admin accounts. Use the staff/admin portal login.',
+            });
           }
+          if (existingEmailMatch.profile.accountStatus === 'suspended') {
+            return res.status(403).json({
+              error: 'Your account is suspended or deactivated. Contact EliteDrive compliance team.',
+            });
+          }
+          if (!existingEmailMatch.profile.displayName && profile.displayName) {
+            await db.collection('users').doc(existingEmailMatch.uid).update({
+              displayName: profile.displayName,
+              updatedAt: now,
+            });
+            existingEmailMatch.profile.displayName = profile.displayName;
+          }
+          profile = existingEmailMatch.profile;
         }
       }
 
@@ -1773,6 +2131,12 @@ async function startServer() {
         lastLoginAt: now,
         updatedAt: now,
       });
+      if (email) {
+        await db.collection('users').doc(profile.uid).collection('private').doc('info').set(
+          { email, updatedAt: now },
+          { merge: true }
+        );
+      }
       profile.lastLoginAt = now;
 
       const tokenVersion = await getTokenVersion(profile.uid);
@@ -1792,22 +2156,56 @@ async function startServer() {
   app.post('/api/auth/sync-phone', requireAuth, async (req: AuthRequest, res) => {
     try {
       const uid = req.authUser!.uid;
-      const profile = req.authUser!.profile;
+      let profile = req.authUser!.profile;
       const phone = req.authUser!.phoneNumber || String(req.body?.phone || '');
       const normalized = normalizeIndianPhone(phone);
       const displayName = String(req.body?.displayName || '').trim();
       const now = new Date().toISOString();
 
-      if (displayName && (!profile.displayName || profile.displayName === 'Customer')) {
-        await db.collection('users').doc(uid).update({ displayName, updatedAt: now, lastLoginAt: now });
-        profile.displayName = displayName;
-      } else {
-        await db.collection('users').doc(uid).update({ lastLoginAt: now });
+      if (profile.role !== 'customer') {
+        return res.status(403).json({
+          error: 'Mobile OTP sign-in is exclusively for Customer accounts. Staff and administrators must sign in with email and password.',
+        });
       }
 
+      if (normalized.length >= 10) {
+        const phoneMatch = await findUserByNormalizedPhone(normalized);
+        if (phoneMatch && phoneMatch.uid !== uid) {
+          if (phoneMatch.profile.role !== 'customer') {
+            return res.status(403).json({
+              error: 'Mobile OTP sign-in cannot access Staff, Owner, or Admin accounts.',
+            });
+          }
+          profile = phoneMatch.profile;
+          await db.collection('firebase_auth_links').doc(uid).set(
+            {
+              firebaseUid: uid,
+              canonicalUid: profile.uid,
+              phone: `+${normalized}`,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      const formattedPhone = normalized ? `+${normalized}` : profile.phone || '';
+      const nextDisplayName =
+        displayName && (!profile.displayName || profile.displayName === 'Customer')
+          ? displayName
+          : profile.displayName;
+      await db.collection('users').doc(profile.uid).update({
+        ...(formattedPhone ? { phone: formattedPhone } : {}),
+        ...(nextDisplayName !== profile.displayName ? { displayName: nextDisplayName } : {}),
+        lastLoginAt: now,
+        updatedAt: now,
+      });
+      profile.displayName = nextDisplayName;
+      if (formattedPhone) profile.phone = formattedPhone;
+
       if (normalized) {
-        await db.collection('users').doc(uid).collection('private').doc('info').set(
-          { phone: `+${normalized}`, updatedAt: now },
+        await db.collection('users').doc(profile.uid).collection('private').doc('info').set(
+          { phone: `+${normalized}`, phoneVerified: true, phoneVerifiedAt: now, updatedAt: now },
           { merge: true }
         );
         await writeOtpLog({
@@ -1815,17 +2213,17 @@ async function startServer() {
           purpose: 'login',
           channel: 'firebase_phone',
           status: 'verified',
-          userId: uid,
+          userId: profile.uid,
           isDemoMode: false,
           detail: 'Verified via Firebase Phone Authentication.',
         });
       }
 
-      const tokenVersion = await getTokenVersion(uid);
+      const tokenVersion = await getTokenVersion(profile.uid);
       const token = signSessionToken({
-        uid,
-        email: req.authUser!.email || '',
-        role: profile.role,
+        uid: profile.uid,
+        email: req.authUser!.email || profile.email || '',
+        role: 'customer',
         tokenVersion,
       });
       res.json({ profile, token });
@@ -1853,43 +2251,65 @@ async function startServer() {
 
   app.post('/api/auth/password-reset', rateLimit(10, 60000), async (req, res) => {
     try {
-      const { email, newPassword } = req.body;
+      const { email, challengeId, phone, code, newPassword } = req.body || {};
       const normalizedEmail = String(email || '').trim().toLowerCase();
-      if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
-
-      const credSnap = await db
-        .collection('auth_credentials')
-        .where('email', '==', normalizedEmail)
-        .limit(1)
-        .get();
-
-      if (credSnap.empty) {
-        return res.json({
-          success: true,
-          message: 'If an account matches that email, password reset instructions have been processed.',
-        });
+      if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        return res.status(400).json({ error: 'Please enter a valid email address.' });
       }
 
-      if (newPassword && String(newPassword).length >= 6) {
-        const credDoc = credSnap.docs[0];
-        await credDoc.ref.update({
-          passwordHash: hashPassword(String(newPassword)),
-          updatedAt: new Date().toISOString(),
+      // Direct server password update STRICTLY requires verified mobile OTP ownership proof
+      if (newPassword || challengeId || code) {
+        if (!challengeId || !phone || !code) {
+          return res.status(400).json({
+            error: 'Password reset via server requires verified mobile OTP verification. Otherwise use the reset email link.',
+          });
+        }
+        if (!newPassword || String(newPassword).length < 6) {
+          return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+        }
+
+        const verified = await verifyWhatsAppOtp({
+          challengeId: String(challengeId),
+          phone: String(phone),
+          code: String(code),
+          purpose: 'password_recovery',
         });
-        return res.json({ success: true, message: 'Password updated successfully. You may now log in.' });
+        if (!verified.ok) {
+          return res.status(verified.statusCode).json({ error: verified.message });
+        }
+
+        const emailUser = await findUserByEmailNormalized(normalizedEmail);
+        const phoneUser = await findUserByNormalizedPhone(verified.phone);
+        if (!emailUser || !phoneUser || emailUser.uid !== phoneUser.uid || emailUser.profile.role !== 'customer') {
+          return res.status(403).json({
+            error: 'Verified mobile number does not match this customer account.',
+          });
+        }
+
+        await db.collection('auth_credentials').doc(emailUser.uid).set(
+          {
+            uid: emailUser.uid,
+            email: normalizedEmail,
+            passwordHash: hashPassword(String(newPassword)),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+        await revokeAllUserSessions(emailUser.uid);
+        return res.json({ success: true, message: 'Password updated successfully. Please sign in with your new password.' });
       }
 
-      res.json({
+      // Non-enumerating fallback notice when used alongside Firebase sendPasswordResetEmail
+      return res.json({
         success: true,
-        resetReady: true,
-        message: 'Account verified. Enter a new password to complete your reset.',
+        message: 'If an account exists for this email address, password reset instructions have been sent.',
       });
     } catch (err) {
       res.status(500).json({ error: 'Unable to process password reset.' });
     }
   });
 
-  // --- WHATSAPP OTP AUTHENTICATION ENDPOINTS ---
+  // --- MOBILE OTP AUTHENTICATION ENDPOINTS ---
   app.post('/api/auth/otp/send', rateLimit(20, 60000), async (req, res) => {
     try {
       const { phone, purpose, email } = req.body as { phone?: string; purpose?: OtpPurpose; email?: string };
@@ -1899,28 +2319,19 @@ async function startServer() {
         ? (purpose as OtpPurpose)
         : 'verification';
 
-      let matchedUserId: string | undefined;
-      let matchedEmail: string | undefined = email;
       const normPhone = normalizeIndianPhone(String(phone || ''));
-
-      if (normPhone) {
-        const usersSnap = await db.collection('users').get();
-        for (const u of usersSnap.docs) {
-          const pSnap = await u.ref.collection('private').doc('info').get();
-          const pData = pSnap.data();
-          if (pData && normalizeIndianPhone(String(pData.phone || '')) === normPhone) {
-            matchedUserId = u.id;
-            matchedEmail = matchedEmail || String(pData.email || '');
-            break;
-          }
-        }
+      const matchedUser = normPhone ? await findUserByNormalizedPhone(normPhone) : null;
+      if (validPurpose === 'login' && matchedUser && matchedUser.profile.role !== 'customer') {
+        return res.status(403).json({
+          error: 'Mobile OTP sign-in is exclusively for Customer accounts. Staff and administrators must sign in with email and password.',
+        });
       }
 
       const result = await sendWhatsAppOtp({
         phone: String(phone || ''),
         purpose: validPurpose,
-        userId: matchedUserId,
-        email: matchedEmail,
+        userId: matchedUser?.uid,
+        email: email || matchedUser?.email,
         ip: req.ip || 'unknown',
       });
 
@@ -1936,7 +2347,6 @@ async function startServer() {
         expiresInSeconds: result.expiresInSeconds,
         cooldownSeconds: result.cooldownSeconds,
         deliveryChannel: result.deliveryChannel,
-        isDemoOtpEligible: Boolean(result.isDemoOtpEligible),
         message: result.message,
       });
     } catch (err) {
@@ -1971,26 +2381,96 @@ async function startServer() {
         return res.status(verified.statusCode).json({ error: verified.message });
       }
 
-      if (validPurpose === 'login' && verified.userId) {
-        const userSnap = await db.collection('users').doc(verified.userId).get();
-        const privSnap = await db.collection('users').doc(verified.userId).collection('private').doc('info').get();
-        if (userSnap.exists) {
-          const profile = userSnap.data() as UserProfile;
-          const tokenVersion = await getTokenVersion(verified.userId);
-          const token = signSessionToken({
-            uid: verified.userId,
-            email: String(privSnap.data()?.email || ''),
-            role: profile.role,
-            tokenVersion,
-          });
-          return res.json({ verified: true, token, profile, message: verified.message });
+      if (validPurpose === 'login') {
+        const resolved = await resolveOrCreatePhoneCustomer({ phone: verified.phone, consentVersion: 'v1.0' });
+        if (resolved.ok === false || 'error' in resolved) {
+          const failure = resolved as { statusCode: number; error: string };
+          return res.status(failure.statusCode).json({ error: failure.error });
         }
+        const tokenVersion = await getTokenVersion(resolved.uid);
+        const token = signSessionToken({
+          uid: resolved.uid,
+          email: resolved.email || resolved.profile.email || '',
+          role: 'customer',
+          tokenVersion,
+        });
+        return res.json({
+          verified: true,
+          token,
+          profile: resolved.profile,
+          isExistingCustomer: resolved.isExistingCustomer,
+          message: verified.message,
+        });
       }
 
-      if (validPurpose === 'password_recovery' && verified.userId && newPassword && newPassword.length >= 6) {
-        await db.collection('auth_credentials').doc(verified.userId).update({
-          passwordHash: hashPassword(newPassword),
-          updatedAt: new Date().toISOString(),
+      if (validPurpose === 'registration') {
+        const existingPhone = await findUserByNormalizedPhone(verified.phone);
+        if (existingPhone && (existingPhone.profile.role !== 'customer' || existingPhone.email || existingPhone.profile.email)) {
+          return res.status(409).json({
+            error: 'This mobile number is already linked to a registered account. Please sign in with Mobile OTP.',
+          });
+        }
+        const phoneVerificationToken = signPhoneVerificationToken(verified.phone, 'registration');
+        return res.json({
+          verified: true,
+          phone: `+${verified.phone}`,
+          phoneVerificationToken,
+          message: verified.message,
+        });
+      }
+
+      if (validPurpose === 'verification') {
+        const phoneVerificationToken = signPhoneVerificationToken(verified.phone, 'verification');
+        const matched = verified.userId ? { uid: verified.userId } : await findUserByNormalizedPhone(verified.phone);
+        if (matched?.uid) {
+          const now = new Date().toISOString();
+          await db.collection('users').doc(matched.uid).collection('private').doc('info').set(
+            {
+              uid: matched.uid,
+              phone: `+${verified.phone}`,
+              phoneVerified: true,
+              phoneVerifiedAt: now,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+        }
+        return res.json({
+          verified: true,
+          phone: `+${verified.phone}`,
+          phoneVerificationToken,
+          message: verified.message,
+        });
+      }
+
+      if (validPurpose === 'password_recovery') {
+        const matched = verified.userId ? { uid: verified.userId } : await findUserByNormalizedPhone(verified.phone);
+        if (!matched?.uid) {
+          return res.status(404).json({ error: 'No registered account matches this mobile number.' });
+        }
+        const uSnap = await db.collection('users').doc(matched.uid).get();
+        const uProfile = uSnap.data() as UserProfile | undefined;
+        if (!uProfile || uProfile.role !== 'customer') {
+          return res.status(403).json({
+            error: 'Mobile password recovery is only available for Customer accounts.',
+          });
+        }
+        if (newPassword && String(newPassword).length >= 6) {
+          await db.collection('auth_credentials').doc(matched.uid).set(
+            {
+              uid: matched.uid,
+              passwordHash: hashPassword(String(newPassword)),
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+          await revokeAllUserSessions(matched.uid);
+          return res.json({ verified: true, message: 'Password updated successfully. Please sign in.' });
+        }
+        return res.json({
+          verified: true,
+          phoneVerificationToken: signPhoneVerificationToken(verified.phone, 'password_recovery'),
+          message: verified.message,
         });
       }
 
@@ -2032,6 +2512,7 @@ async function startServer() {
         returnAddress,
         returnLat,
         returnLng,
+        isOneWay,
         pickupBranchId,
         insurancePackageId,
         roadsideRequested,
@@ -2154,6 +2635,7 @@ async function startServer() {
         pickupLng: resolvedPickupLng,
         returnLat: resolvedReturnLat,
         returnLng: resolvedReturnLng,
+        isOneWay: Boolean(isOneWay),
         pickupBranch: hub,
         allBranches: effectiveBranches,
         vehicle,
@@ -2180,7 +2662,7 @@ async function startServer() {
         startDate,
         endDate,
         deliveryCharge: geo.deliveryCharge || 0,
-        oneWayCharge: 0,
+        oneWayCharge: geo.oneWayCharge || 0,
         insurancePackage,
         roadsideRequested: Boolean(roadsideRequested),
         driverRequested: Boolean(driverRequested),
@@ -2217,6 +2699,7 @@ async function startServer() {
             prelim.baseRentalAmount +
             prelim.weekendSurcharge +
             prelim.deliveryCharge +
+            prelim.oneWayCharge +
             prelim.insuranceCharge +
             prelim.roadsideCharge +
             prelim.driverCharge,
@@ -2238,7 +2721,7 @@ async function startServer() {
         startDate,
         endDate,
         deliveryCharge: geo.deliveryCharge || 0,
-        oneWayCharge: 0,
+        oneWayCharge: geo.oneWayCharge || 0,
         insurancePackage,
         roadsideRequested: Boolean(roadsideRequested),
         driverRequested: Boolean(driverRequested),
@@ -4168,7 +4651,7 @@ async function startServer() {
           actorUid: actor.uid,
           actorName: actor.displayName,
           actorRole: actor.role,
-          module: 'KYC Verification',
+          module: 'Document Verification',
           action: 'INSPECT_CUSTOMER_DOCUMENT_FILE',
           targetType: 'customer_document',
           targetId: meta.id,
@@ -7716,6 +8199,68 @@ async function startServer() {
     }
   );
 
+  app.get(
+    '/api/admin/users/:uid/activity',
+    requireAuth,
+    requirePermission(['view_customers', 'manage_staff', 'edit_customers']),
+    async (req: AuthRequest, res) => {
+      try {
+        const targetUid = req.params.uid;
+        const userSnap = await db.collection('users').doc(targetUid).get();
+        if (!userSnap.exists) return res.status(404).json({ error: 'User not found.' });
+        const targetProfile = userSnap.data() as UserProfile;
+        if (targetProfile.role === 'master_admin') {
+          return res.status(403).json({ error: 'Platform Admin accounts are outside business scope.' });
+        }
+        const [pSnap, bookingsSnap, kycSnap, docsSnap, auditActorSnap, auditTargetSnap] = await Promise.all([
+          userSnap.ref.collection('private').doc('info').get(),
+          db.collection('bookings').where('userId', '==', targetUid).get(),
+          db.collection('kyc_verifications').where('userId', '==', targetUid).get(),
+          db.collection('customer_documents').where('userId', '==', targetUid).get(),
+          db.collection('audit_logs').where('actorUid', '==', targetUid).get(),
+          db.collection('audit_logs').where('targetId', '==', targetUid).get(),
+        ]);
+        const pData = pSnap.data() || {};
+        const mergedAuditMap = new Map<string, any>();
+        for (const d of [...auditActorSnap.docs, ...auditTargetSnap.docs]) {
+          mergedAuditMap.set(d.id, d.data());
+        }
+        const auditLogs = Array.from(mergedAuditMap.values())
+          .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+          .slice(0, 50);
+        const bookings = bookingsSnap.docs
+          .map((d) => d.data() as Booking)
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        const documents = docsSnap.docs.map((d) => {
+          const docData = d.data() as CustomerDocumentRecord;
+          return {
+            id: docData.id,
+            docType: docData.docType,
+            label: docData.label,
+            status: docData.status,
+            maskedNumber: docData.maskedNumber,
+            rejectionReason: docData.rejectionReason,
+            uploadedAt: docData.uploadedAt,
+            updatedAt: docData.updatedAt,
+          };
+        });
+        res.json({
+          user: {
+            ...targetProfile,
+            email: targetProfile.email || pData.email || '',
+            phone: targetProfile.phone || pData.phone || '',
+          },
+          bookings,
+          kycRecords: kycSnap.docs.map((d) => d.data()),
+          documents,
+          auditLogs,
+        });
+      } catch {
+        res.status(500).json({ error: 'Failed to load user activity history.' });
+      }
+    }
+  );
+
   // --- MULTI-BRANCH MANAGEMENT CRUD + DELETE IMPACT PREVIEW ---
   app.get(
     '/api/admin/branches',
@@ -8881,26 +9426,18 @@ async function startServer() {
         });
       }
 
-      let matchedUserId: string | undefined;
-      let matchedEmail: string | undefined;
-      const usersSnap = await db.collection('users').get();
-      for (const u of usersSnap.docs) {
-        const uData = u.data() as Partial<UserProfile>;
-        const pSnap = await u.ref.collection('private').doc('info').get();
-        const pData = pSnap.data();
-        const candidatePhone = pData?.phone || uData.phone || '';
-        if (candidatePhone && normalizeIndianPhone(String(candidatePhone)) === normPhone) {
-          matchedUserId = u.id;
-          matchedEmail = String(pData?.email || uData.email || '');
-          break;
-        }
+      const matched = await findUserByNormalizedPhone(normPhone);
+      if (matched && matched.profile.role !== 'customer') {
+        return res.status(403).json({
+          error: 'AI Booking mobile verification is exclusively for Customer accounts.',
+        });
       }
 
       const result = await sendWhatsAppOtp({
         phone: phoneRaw,
         purpose: 'ai_booking',
-        userId: matchedUserId,
-        email: matchedEmail,
+        userId: matched?.uid,
+        email: matched?.email,
         ip: req.ip || 'unknown',
       });
 
@@ -8917,7 +9454,6 @@ async function startServer() {
         expiresInSeconds: result.expiresInSeconds,
         cooldownSeconds: result.cooldownSeconds,
         deliveryChannel: result.deliveryChannel,
-        isDemoOtpEligible: Boolean(result.isDemoOtpEligible),
         message: result.message,
       });
     } catch (err) {
@@ -8945,100 +9481,28 @@ async function startServer() {
         return res.status(verified.statusCode).json({ error: verified.message });
       }
 
-      const normPhone = verified.phone;
-      const now = new Date().toISOString();
-      let uid = verified.userId || '';
-      let existingCustomer = false;
-
-      if (!uid) {
-        const usersSnap = await db.collection('users').get();
-        for (const u of usersSnap.docs) {
-          const uData = u.data() as Partial<UserProfile>;
-          const pSnap = await u.ref.collection('private').doc('info').get();
-          const pData = pSnap.data();
-          const candidatePhone = pData?.phone || uData.phone || '';
-          if (candidatePhone && normalizeIndianPhone(String(candidatePhone)) === normPhone) {
-            uid = u.id;
-            break;
-          }
-        }
+      const resolved = await resolveOrCreatePhoneCustomer({
+        phone: verified.phone,
+        consentVersion: 'v2025.1',
+      });
+      if (resolved.ok === false || 'error' in resolved) {
+        const failure = resolved as { statusCode: number; error: string };
+        return res.status(failure.statusCode).json({ error: failure.error });
       }
 
-      let profile: UserProfile | null = null;
-      if (uid) {
-        const uSnap = await db.collection('users').doc(uid).get();
-        if (uSnap.exists) {
-          profile = uSnap.data() as UserProfile;
-          existingCustomer = true;
-          await db.collection('users').doc(uid).update({
-            phone: `+${normPhone}`,
-            lastLoginAt: now,
-            updatedAt: now,
-          });
-          await db.collection('users').doc(uid).collection('private').doc('info').set(
-            {
-              uid,
-              phone: `+${normPhone}`,
-              phoneVerified: true,
-              phoneVerifiedAt: now,
-              updatedAt: now,
-            },
-            { merge: true }
-          );
-          profile.phone = `+${normPhone}`;
-        }
-      }
-
-      if (!profile) {
-        uid = `cust-otp-${normPhone}`;
-        const existingByDeterministicId = await db.collection('users').doc(uid).get();
-        if (existingByDeterministicId.exists) {
-          profile = existingByDeterministicId.data() as UserProfile;
-          existingCustomer = true;
-        } else {
-          profile = {
-            uid,
-            displayName: '',
-            phone: `+${normPhone}`,
-            role: 'customer',
-            accountStatus: 'active',
-            kycStatus: 'Not Started',
-            createdAt: now,
-            updatedAt: now,
-            lastLoginAt: now,
-          };
-          await db.collection('users').doc(uid).set(profile);
-          await db.collection('users').doc(uid).collection('private').doc('info').set({
-            uid,
-            email: '',
-            phone: `+${normPhone}`,
-            phoneVerified: true,
-            phoneVerifiedAt: now,
-            savedAddresses: [],
-            favouriteVehicleIds: [],
-            marketingConsent: false,
-            whatsappConsent: true,
-            whatsappOptOut: false,
-            serviceConsentVersion: 'v2025.1',
-            serviceConsentAt: now,
-            updatedAt: now,
-          });
-        }
-      }
-
-      const tokenVersion = await getTokenVersion(profile.uid);
+      const tokenVersion = await getTokenVersion(resolved.uid);
       const token = signSessionToken({
-        uid: profile.uid,
-        email: profile.email || '',
-        role: profile.role,
+        uid: resolved.uid,
+        email: resolved.email || resolved.profile.email || '',
+        role: 'customer',
         tokenVersion,
       });
 
       return res.json({
         verified: true,
         token,
-        profile,
-        isExistingCustomer: existingCustomer,
+        profile: resolved.profile,
+        isExistingCustomer: resolved.isExistingCustomer,
         message: verified.message,
       });
     } catch (err) {
@@ -9124,6 +9588,7 @@ async function startServer() {
         auditLogsSnap,
         cmsPages,
         liveFirebaseProbe,
+        migrationJobsSnap,
       ] = await Promise.all([
         db.collection('platform_tenants').get(),
         db.collection('users').get(),
@@ -9146,6 +9611,7 @@ async function startServer() {
         db.collection('audit_logs').orderBy('timestamp', 'desc').limit(150).get(),
         seedAndLoadCmsPages(),
         probeLiveFirebaseAdmin().catch(() => null),
+        db.collection('migration_jobs').orderBy('startedAt', 'desc').limit(5).get().catch(() => ({ docs: [] } as any)),
       ]);
 
       const users: Array<UserProfile & { email?: string; phone?: string }> = [];
@@ -9175,6 +9641,7 @@ async function startServer() {
       for (const d of checksSnap.docs) checksMap[d.id] = d.data();
       const integrations = buildIntegrationsStatus(waConfig, checksMap, authOtpConfig);
       const fbStatus = getFirebaseBackendStatus();
+      const latestMigration = (migrationJobsSnap?.docs?.[0]?.data?.() || null) as any;
 
       res.json({
         summary: {
@@ -9188,7 +9655,7 @@ async function startServer() {
           totalBranches: branches.length,
           totalBookings: bookings.length,
           verifiedRevenueInr: verifiedRevenue,
-          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          environmentMode: process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'DEMO',
           geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
           mapsKeyConfigured: Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY),
         },
@@ -9207,9 +9674,48 @@ async function startServer() {
           authDomain: firebaseConfigJson.authDomain,
           storageBucket: firebaseConfigJson.storageBucket,
           appId: firebaseConfigJson.appId,
-          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          environmentMode: process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'DEMO',
           backendStatus: fbStatus,
           liveProbe: liveFirebaseProbe,
+          lastSuccessfulConnectionAt: (liveFirebaseProbe as any)?.checkedAt || ((liveFirebaseProbe as any)?.ok ? new Date().toISOString() : null),
+          lastMigrationJob: latestMigration
+            ? {
+                id: latestMigration.id,
+                mode: latestMigration.mode,
+                validationPassed: Boolean(latestMigration.validationPassed),
+                firebaseWriteSucceeded: Boolean(latestMigration.firebaseWriteSucceeded),
+                totalMigrated: Number(latestMigration.totalMigrated || 0),
+                completedAt: latestMigration.completedAt || latestMigration.startedAt,
+              }
+            : null,
+          services: {
+            firestore: {
+              status: (liveFirebaseProbe as any)?.ok
+                ? 'connected'
+                : fbStatus.liveReady
+                  ? 'configured'
+                  : 'pending',
+              label: (liveFirebaseProbe as any)?.ok ? 'Live Firestore Connected' : fbStatus.mode,
+              detail: (liveFirebaseProbe as any)?.ok
+                ? `Database ${firebaseConfigJson.firestoreDatabaseId || '(default)'} verified`
+                : 'Using local fallback / check Admin credentials',
+            },
+            auth: {
+              status: firebaseConfigJson.authDomain && firebaseConfigJson.apiKey ? 'configured' : 'pending',
+              label: 'Firebase Authentication',
+              detail: firebaseConfigJson.authDomain || 'Auth domain not configured',
+            },
+            storage: {
+              status: firebaseConfigJson.storageBucket ? 'configured' : 'pending',
+              label: 'Cloud Storage Bucket',
+              detail: firebaseConfigJson.storageBucket || 'No storage bucket configured',
+            },
+            cloudFunctions: {
+              status: firebaseConfigJson.projectId ? 'configured' : 'pending',
+              label: 'Cloud Functions Workspace',
+              detail: `Project ${firebaseConfigJson.projectId || 'unassigned'}`,
+            },
+          },
         },
         whatsapp: {
           config: waConfig,
@@ -9248,6 +9754,60 @@ async function startServer() {
       res.json({ users });
     } catch {
       res.status(500).json({ error: 'Failed to load platform users.' });
+    }
+  });
+
+  app.get('/api/master/users/:uid/activity', requireAuth, requireMasterAdmin, async (req, res) => {
+    try {
+      const targetUid = req.params.uid;
+      const userSnap = await db.collection('users').doc(targetUid).get();
+      if (!userSnap.exists) return res.status(404).json({ error: 'User not found.' });
+      const targetProfile = userSnap.data() as UserProfile;
+      const [pSnap, bookingsSnap, kycSnap, docsSnap, auditActorSnap, auditTargetSnap] = await Promise.all([
+        userSnap.ref.collection('private').doc('info').get(),
+        db.collection('bookings').where('userId', '==', targetUid).get(),
+        db.collection('kyc_verifications').where('userId', '==', targetUid).get(),
+        db.collection('customer_documents').where('userId', '==', targetUid).get(),
+        db.collection('audit_logs').where('actorUid', '==', targetUid).get(),
+        db.collection('audit_logs').where('targetId', '==', targetUid).get(),
+      ]);
+      const pData = pSnap.data() || {};
+      const mergedAuditMap = new Map<string, any>();
+      for (const d of [...auditActorSnap.docs, ...auditTargetSnap.docs]) {
+        mergedAuditMap.set(d.id, d.data());
+      }
+      const auditLogs = Array.from(mergedAuditMap.values())
+        .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+        .slice(0, 50);
+      const bookings = bookingsSnap.docs
+        .map((d) => d.data() as Booking)
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      const documents = docsSnap.docs.map((d) => {
+        const docData = d.data() as CustomerDocumentRecord;
+        return {
+          id: docData.id,
+          docType: docData.docType,
+          label: docData.label,
+          status: docData.status,
+          maskedNumber: docData.maskedNumber,
+          rejectionReason: docData.rejectionReason,
+          uploadedAt: docData.uploadedAt,
+          updatedAt: docData.updatedAt,
+        };
+      });
+      res.json({
+        user: {
+          ...targetProfile,
+          email: targetProfile.email || pData.email || '',
+          phone: targetProfile.phone || pData.phone || '',
+        },
+        bookings,
+        kycRecords: kycSnap.docs.map((d) => d.data()),
+        documents,
+        auditLogs,
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to load user activity history.' });
     }
   });
 
@@ -9773,6 +10333,20 @@ async function startServer() {
           preview,
         });
       }
+      const now = new Date().toISOString();
+      const staffSnap = await db.collection('users').get();
+      for (const uDoc of staffSnap.docs) {
+        const u = uDoc.data() as UserProfile;
+        if (u.role === 'customer') continue;
+        const nextBranchIds = Array.isArray(u.branchIds) ? u.branchIds.filter((id) => id !== preview.branchId) : [];
+        if (u.branchId === preview.branchId || (Array.isArray(u.branchIds) && u.branchIds.includes(preview.branchId))) {
+          await uDoc.ref.update({
+            branchId: u.branchId === preview.branchId ? nextBranchIds[0] || 'branch-central-hub' : u.branchId,
+            branchIds: nextBranchIds.length > 0 ? nextBranchIds : ['branch-central-hub'],
+            updatedAt: now,
+          });
+        }
+      }
       await db.collection('branches').doc(preview.branchId).delete();
       await writeAuditLog({
         actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Branch Management',
@@ -10021,15 +10595,81 @@ async function startServer() {
     }
   });
 
+  app.post('/api/master/cms', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const body = req.body || {};
+      const label = String(body.label || '').trim();
+      if (!label) return res.status(400).json({ error: 'Page label is required.' });
+      const rawSlug = String(body.key || body.routeSlug || label)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+      if (!rawSlug) return res.status(400).json({ error: 'Valid page slug key is required.' });
+      const existingPages = await seedAndLoadCmsPages();
+      if (existingPages.some((p) => p.key === rawSlug)) {
+        return res.status(409).json({ error: `A CMS page with key '${rawSlug}' already exists.` });
+      }
+      const now = new Date().toISOString();
+      const routeSlug = rawSlug.replace(/_/g, '-');
+      const incoming = body.content || {};
+      const enTitle = String(incoming?.en?.title || label).trim();
+      const enBody = String(incoming?.en?.body || '').trim();
+      const created: CmsPageRecord = {
+        key: rawSlug,
+        label,
+        description: String(body.description || `Custom storefront page for ${label}.`).trim(),
+        published: body.published !== false,
+        sortOrder: existingPages.length + 1,
+        isCustom: true,
+        routeSlug,
+        content: {
+          en: {
+            title: enTitle,
+            subtitle: String(incoming?.en?.subtitle || '').trim(),
+            body: enBody,
+            ctaLabel: String(incoming?.en?.ctaLabel || '').trim() || undefined,
+            ctaLink: String(incoming?.en?.ctaLink || '').trim() || undefined,
+          },
+          hi: {
+            title: String(incoming?.hi?.title || enTitle).trim(),
+            subtitle: String(incoming?.hi?.subtitle || incoming?.en?.subtitle || '').trim(),
+            body: String(incoming?.hi?.body || enBody).trim(),
+          },
+          mr: {
+            title: String(incoming?.mr?.title || enTitle).trim(),
+            subtitle: String(incoming?.mr?.subtitle || incoming?.en?.subtitle || '').trim(),
+            body: String(incoming?.mr?.body || enBody).trim(),
+          },
+        },
+        updatedByUid: actor.uid,
+        updatedByName: actor.displayName,
+        updatedAt: now,
+        publishedAt: body.published !== false ? now : null,
+      };
+      await db.collection('cms_pages').doc(rawSlug).set(created);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
+        action: 'MASTER_CREATE_CMS', targetType: 'cms_page', targetId: rawSlug, details: `Created custom CMS page "${label}".`,
+      });
+      res.status(201).json({ page: created });
+    } catch {
+      res.status(500).json({ error: 'Failed to create CMS page.' });
+    }
+  });
+
   app.put('/api/master/cms/:key', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
     try {
       const actor = req.authUser!.profile;
       const key = req.params.key as CmsAreaKey;
       const def = CMS_AREA_DEFINITIONS.find((d) => d.key === key);
-      if (!def) return res.status(404).json({ error: `Unknown CMS area: ${key}` });
       await seedAndLoadCmsPages();
       const ref = db.collection('cms_pages').doc(key);
       const existingSnap = await ref.get();
+      if (!existingSnap.exists && !def) {
+        return res.status(404).json({ error: `Unknown CMS area: ${key}` });
+      }
       const existing = existingSnap.data() as CmsPageRecord;
       const now = new Date().toISOString();
       const body = req.body || {};
@@ -10037,12 +10677,12 @@ async function startServer() {
       const nextPublished = typeof body.published === 'boolean' ? body.published : existing.published;
       const next: CmsPageRecord = {
         ...existing,
-        key: def.key,
-        label: body.label ? String(body.label).trim() : existing.label || def.label,
-        description: body.description ? String(body.description).trim() : existing.description || def.description,
+        key: def ? def.key : key,
+        label: body.label ? String(body.label).trim() : existing.label || def?.label || key,
+        description: body.description ? String(body.description).trim() : existing.description || def?.description || '',
         published: nextPublished,
         publishedAt: nextPublished ? (existing.publishedAt || now) : null,
-        sortOrder: existing.sortOrder ?? def.sortOrder,
+        sortOrder: existing.sortOrder ?? def?.sortOrder ?? 99,
         content: {
           en: { ...(existing.content?.en || { title: '', body: '' }), ...(incomingContent.en || {}) },
           hi: { ...(existing.content?.hi || { title: '', body: '' }), ...(incomingContent.hi || {}) },
@@ -10056,11 +10696,33 @@ async function startServer() {
       if (next.published) await syncCmsAreaToSettings(next);
       await writeAuditLog({
         actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
-        action: 'MASTER_UPDATE_CMS', targetType: 'cms_page', targetId: key, details: `Updated CMS area "${def.label}" (published=${next.published}).`,
+        action: 'MASTER_UPDATE_CMS', targetType: 'cms_page', targetId: key, details: `Updated CMS area "${next.label}" (published=${next.published}).`,
       });
       res.json({ page: next });
     } catch {
       res.status(500).json({ error: 'Failed to update CMS area.' });
+    }
+  });
+
+  app.delete('/api/master/cms/:key', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const key = req.params.key;
+      if (CMS_AREA_DEFINITIONS.some((d) => d.key === key)) {
+        return res.status(400).json({ error: 'Built-in system CMS pages cannot be deleted; unpublish instead.' });
+      }
+      const ref = db.collection('cms_pages').doc(key);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Custom CMS page not found.' });
+      const data = snap.data() as CmsPageRecord;
+      await ref.delete();
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
+        action: 'MASTER_DELETE_CMS', targetType: 'cms_page', targetId: key, details: `Deleted custom CMS page "${data.label}".`,
+      });
+      res.json({ success: true, key });
+    } catch {
+      res.status(500).json({ error: 'Failed to delete custom CMS page.' });
     }
   });
 
@@ -10136,7 +10798,28 @@ async function startServer() {
 
   app.get('/api/master/firebase-environment', requireAuth, requireMasterAdmin, async (_req, res) => {
     try {
-      const liveProbe = await probeLiveFirebaseAdmin().catch(() => null);
+      const [liveProbe, migrationJobsSnap, googleProviderCheck] = await Promise.all([
+        probeLiveFirebaseAdmin().catch(() => null),
+        db.collection('migration_jobs').orderBy('startedAt', 'desc').limit(1).get().catch(() => ({ docs: [] } as any)),
+        fetch(`https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${firebaseConfigJson.apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            providerId: 'google.com',
+            continueUri: process.env.APP_URL || 'http://localhost:3000',
+          }),
+        })
+          .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
+          .catch(() => ({ ok: false, body: {} })),
+      ]);
+      const fbStatus = getFirebaseBackendStatus();
+      const latestMigration = (migrationJobsSnap?.docs?.[0]?.data?.() || null) as any;
+      const oAuthClientConfigured = Boolean((firebaseConfigJson as any).oAuthClientId);
+      const googleProviderEnabled = Boolean(googleProviderCheck?.ok);
+      const googleProviderDetail = googleProviderEnabled
+        ? 'Google Sign-In provider enabled'
+        : String(googleProviderCheck?.body?.error?.message || 'Enable Google provider in Firebase Authentication Console');
+
       res.json({
         firebaseEnv: {
           projectId: firebaseConfigJson.projectId,
@@ -10144,9 +10827,62 @@ async function startServer() {
           authDomain: firebaseConfigJson.authDomain,
           storageBucket: firebaseConfigJson.storageBucket,
           appId: firebaseConfigJson.appId,
-          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-          backendStatus: getFirebaseBackendStatus(),
+          environmentMode: process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'DEMO',
+          backendStatus: fbStatus,
           liveProbe,
+          authDiagnostics: {
+            emailPasswordEnabled: true,
+            googleProviderEnabled,
+            googleProviderDetail,
+            oAuthClientIdConfigured: oAuthClientConfigured,
+            recaptchaSiteKeyConfigured: Boolean(
+              process.env.VITE_RECAPTCHA_SITE_KEY || (firebaseConfigJson as any).recaptchaSiteKey
+            ),
+            customSessionSecretConfigured: Boolean(process.env.SESSION_SECRET),
+            customOtpHmacSecretConfigured: Boolean(process.env.OTP_HMAC_SECRET),
+            serviceAccountConfigured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON),
+          },
+          lastSuccessfulConnectionAt: (liveProbe as any)?.checkedAt || ((liveProbe as any)?.ok ? new Date().toISOString() : null),
+          lastMigrationJob: latestMigration
+            ? {
+                id: latestMigration.id,
+                mode: latestMigration.mode,
+                validationPassed: Boolean(latestMigration.validationPassed),
+                firebaseWriteSucceeded: Boolean(latestMigration.firebaseWriteSucceeded),
+                totalMigrated: Number(latestMigration.totalMigrated || 0),
+                completedAt: latestMigration.completedAt || latestMigration.startedAt,
+              }
+            : null,
+          services: {
+            firestore: {
+              status: (liveProbe as any)?.ok
+                ? 'connected'
+                : fbStatus.liveReady
+                  ? 'configured'
+                  : 'pending',
+              label: (liveProbe as any)?.ok ? 'Live Firestore Connected' : fbStatus.mode,
+              detail: (liveProbe as any)?.ok
+                ? `Database ${firebaseConfigJson.firestoreDatabaseId || '(default)'} verified`
+                : 'Using local fallback / check Admin credentials',
+            },
+            auth: {
+              status: googleProviderEnabled ? 'connected' : firebaseConfigJson.authDomain ? 'configured' : 'pending',
+              label: 'Firebase Authentication',
+              detail: googleProviderEnabled
+                ? `Email/Password + Google active (${firebaseConfigJson.authDomain})`
+                : `Email/Password active; ${googleProviderDetail}`,
+            },
+            storage: {
+              status: firebaseConfigJson.storageBucket ? 'configured' : 'pending',
+              label: 'Cloud Storage Bucket',
+              detail: firebaseConfigJson.storageBucket || 'No storage bucket configured',
+            },
+            cloudFunctions: {
+              status: firebaseConfigJson.projectId ? 'configured' : 'pending',
+              label: 'Cloud Functions Workspace',
+              detail: `Project ${firebaseConfigJson.projectId || 'unassigned'}`,
+            },
+          },
         },
       });
     } catch {

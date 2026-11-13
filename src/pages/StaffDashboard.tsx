@@ -314,7 +314,7 @@ export const StaffDashboard: React.FC = () => {
               <p className="text-xl font-semibold text-white">{data?.bookings.length || 0}</p>
             </div>
             <div>
-              <p className="text-white/55">Pending KYC</p>
+              <p className="text-white/55">Pending Documents</p>
               <p className="text-xl font-semibold text-gold">
                 {(data?.kycQueue || []).filter((k) => ['Pending', 'Under Review'].includes(k.status)).length}
               </p>
@@ -375,7 +375,7 @@ export const StaffDashboard: React.FC = () => {
                 tab === 'kyc' ? 'border-gold text-gold' : 'border-transparent text-white/65 hover:text-white'
               }`}
             >
-              KYC Verification Queue ({data?.kycQueue.length || 0})
+              Document Verification Queue ({data?.kycQueue.length || 0})
             </button>
           )}
           <button
@@ -443,7 +443,7 @@ export const StaffDashboard: React.FC = () => {
                             </p>
                           )}
                           <p>
-                            Customer KYC Snapshot:{' '}
+                            Document Verification:{' '}
                             <strong className={kycVerified ? 'text-emerald-700' : 'text-amber-700'}>
                               {bk.kycStatusSnapshot}
                             </strong>
@@ -523,7 +523,7 @@ export const StaffDashboard: React.FC = () => {
                             !kycVerified && (
                               <p className="text-[11px] text-amber-700 inline-flex items-center gap-1">
                                 <AlertTriangle className="w-3 h-3 shrink-0" />
-                                KYC must be Verified before key handover.
+                                Documents must be Verified before key handover.
                               </p>
                             )}
                         </div>
@@ -538,7 +538,7 @@ export const StaffDashboard: React.FC = () => {
               <div className="grid md:grid-cols-2 gap-4">
                 {(data?.kycQueue || []).length === 0 ? (
                   <div className="md:col-span-2 p-10 bg-white border border-black/10 rounded-xl text-center text-sm text-slate-muted">
-                    No KYC verifications in queue for your branch scope.
+                    No document verification requests in queue for your branch scope.
                   </div>
                 ) : (
                   (data?.kycQueue || []).map((k) => (
@@ -575,7 +575,7 @@ export const StaffDashboard: React.FC = () => {
                               className="px-3.5 py-1.5 bg-obsidian text-white font-semibold rounded-lg inline-flex items-center gap-1 cursor-pointer"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5 text-gold" />
-                              Verify KYC
+                              Verify Documents
                             </button>
                             <button
                               type="button"
@@ -596,7 +596,7 @@ export const StaffDashboard: React.FC = () => {
                           </div>
                         </>
                       ) : (
-                        <p className="text-[11px] text-slate-muted">Read-only KYC queue access (review_kyc required to approve/reject).</p>
+                        <p className="text-[11px] text-slate-muted">Read-only document queue access (review permission required to approve/reject).</p>
                       )}
                     </div>
                   ))

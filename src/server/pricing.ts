@@ -29,11 +29,12 @@ export function validateSingleCityLocation(params: {
   pickupLng: number;
   returnLat: number;
   returnLng: number;
+  isOneWay?: boolean;
   hub: Branch;
   vehicle: Vehicle;
   settings?: Partial<CompanySettings>;
 }) {
-  const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, hub, vehicle, settings } = params;
+  const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, isOneWay, hub, vehicle, settings } = params;
   const isCentralHub = hub.id === 'branch-central-hub';
   const operatingCityName = hub.cityName || settings?.operatingCityName || 'the configured service area';
   const hubLat = Number(isCentralHub ? (settings?.hubLat ?? hub.lat) : (hub.lat ?? settings?.hubLat));
@@ -94,13 +95,19 @@ export function validateSingleCityLocation(params: {
     deliveryCharge = Math.round(baseDeliveryFee + pickupDistanceKm * perKmDeliveryFee);
   }
 
+  const isDifferentReturn =
+    Boolean(isOneWay) || haversineKm(pickupLat, pickupLng, returnLat, returnLng) > 0.5;
+  const oneWayCharge = isDifferentReturn
+    ? Math.max(0, Math.round(Number(settings?.differentReturnLocationFee ?? 0)))
+    : 0;
+
   return {
     serviceable: true,
     distanceKm: pickupDistanceKm,
     returnDistanceKm,
     maxRadiusKm,
     deliveryCharge,
-    oneWayCharge: 0,
+    oneWayCharge,
   };
 }
 

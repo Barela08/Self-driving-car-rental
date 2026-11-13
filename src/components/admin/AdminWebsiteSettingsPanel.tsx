@@ -196,6 +196,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
   const [serviceRadiusKm, setServiceRadiusKm] = useState('35');
   const [baseDeliveryFee, setBaseDeliveryFee] = useState('299');
   const [perKmDeliveryFee, setPerKmDeliveryFee] = useState('25');
+  const [differentReturnLocationFee, setDifferentReturnLocationFee] = useState('499');
   const [googleMapsUrl, setGoogleMapsUrl] = useState('');
   const [officeImages, setOfficeImages] = useState<string[]>(['hero']);
 
@@ -263,6 +264,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
     setServiceRadiusKm(String(settings.serviceRadiusKm ?? 35));
     setBaseDeliveryFee(String(settings.baseDeliveryFee ?? 299));
     setPerKmDeliveryFee(String(settings.perKmDeliveryFee ?? 25));
+    setDifferentReturnLocationFee(String(settings.differentReturnLocationFee ?? 499));
     setGoogleMapsUrl(settings.googleMapsUrl || '');
     setOfficeImages(settings.officeImages?.length ? settings.officeImages : ['hero']);
 
@@ -309,7 +311,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
         : [
             { title: 'Select Car & Schedule', description: 'Compare real-time unit availability, transparent daily tariffs, and refundable deposits.' },
             { title: 'Verify Pickup or Delivery', description: 'Collect from our flagship lounge or schedule doorstep handover within our service radius.' },
-            { title: 'Complete Digital KYC & UPI', description: 'Upload Driving Licence & Govt ID once and settle via verified UPI with instant UTR tracking.' },
+            { title: 'Complete Document Verification & UPI', description: 'Upload Driving Licence & Aadhaar once and settle via verified UPI with instant UTR tracking.' },
             { title: 'Drive & Return Seamless', description: 'Complete guided digital handover checklist with 24x7 concierge support throughout your trip.' },
           ]
     );
@@ -485,6 +487,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
           serviceRadiusKm: Math.max(1, Number(serviceRadiusKm)),
           baseDeliveryFee: Math.max(0, Number(baseDeliveryFee)),
           perKmDeliveryFee: Math.max(0, Number(perKmDeliveryFee)),
+          differentReturnLocationFee: Math.max(0, Number(differentReturnLocationFee || 0)),
           googleMapsUrl: googleMapsUrl.trim(),
           officeImages,
           socialProfiles: socialProfiles.map((p, idx) => ({
@@ -1407,7 +1410,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                       <label className="block font-semibold text-slate-muted mb-1">Service Radius (km)</label>
                       <input type="number" min={1} value={serviceRadiusKm} onChange={(e) => setServiceRadiusKm(e.target.value)} className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono" />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2 sm:col-span-2">
                       <div>
                         <label className="block font-semibold text-slate-muted mb-1">Base Delivery (₹)</label>
                         <input type="number" min={0} value={baseDeliveryFee} onChange={(e) => setBaseDeliveryFee(e.target.value)} className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono" />
@@ -1415,6 +1418,10 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                       <div>
                         <label className="block font-semibold text-slate-muted mb-1">Per KM (₹)</label>
                         <input type="number" min={0} value={perKmDeliveryFee} onChange={(e) => setPerKmDeliveryFee(e.target.value)} className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono" />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-muted mb-1">Different Return Fee (₹)</label>
+                        <input type="number" min={0} value={differentReturnLocationFee} onChange={(e) => setDifferentReturnLocationFee(e.target.value)} className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono" />
                       </div>
                     </div>
                     <div className="sm:col-span-2">
