@@ -13,6 +13,7 @@ import type {
 } from '../types.ts';
 
 import { normalizeIndianPhone } from './whatsapp.ts';
+import { sendAdminAlertEmail } from './email.ts';
 
 export interface AuthUserContext {
   uid: string;
@@ -770,6 +771,11 @@ export async function writeAdminNotification(params: {
       ...params,
       read: false,
       createdAt: new Date().toISOString(),
+    });
+    void sendAdminAlertEmail({
+      title: params.title,
+      message: params.message,
+      type: params.type,
     });
   } catch (err) {
     console.error('Failed to write admin notification:', err);

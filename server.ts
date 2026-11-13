@@ -90,6 +90,11 @@ import {
   sendTripStatusNotification,
   verifyLiveMetaConnection,
 } from './src/server/whatsapp.ts';
+import {
+  getResendFromEmail,
+  isResendConfigured,
+  sendNotificationEmail,
+} from './src/server/email.ts';
 import type {
   AdminPermission,
   Booking,
@@ -670,6 +675,24 @@ function buildIntegrationsStatus(
       lastCheckedAt: checksMap.cloud_functions?.checkedAt || now,
       lastError: checksMap.cloud_functions?.lastError || null,
     },
+    {
+      key: 'resend_email',
+      name: 'Resend Transactional Email Delivery',
+      category: 'Email Notifications',
+      status: isResendConfigured() ? 'Connected' : 'Configuration Required',
+      configured: isResendConfigured(),
+      description: isResendConfigured()
+        ? `Dispatches customer & admin email updates via Resend (${getResendFromEmail()}).`
+        : 'Set RESEND_API_KEY in server environment to enable transactional email updates.',
+      requiredEnvVars: ['RESEND_API_KEY'],
+      presentEnvVars: [
+        ...(isResendConfigured() ? ['RESEND_API_KEY'] : []),
+        ...(process.env.RESEND_FROM_EMAIL ? ['RESEND_FROM_EMAIL'] : []),
+        ...(process.env.ADMIN_NOTIFICATION_EMAIL ? ['ADMIN_NOTIFICATION_EMAIL'] : []),
+      ],
+      lastCheckedAt: checksMap.resend_email?.checkedAt || now,
+      lastError: isResendConfigured() ? null : 'Missing RESEND_API_KEY in runtime environment.',
+    },
   ];
 }
 
@@ -762,6 +785,14 @@ async function createNotification(params: {
     read: false,
     createdAt: new Date().toISOString(),
   });
+  if (isResendConfigured()) {
+    void sendNotificationEmail({
+      userId: params.userId,
+      title: params.title,
+      body: params.body,
+      category: params.category,
+    }).catch(() => undefined);
+  }
 }
 
 async function startServer() {
@@ -961,16 +992,35 @@ async function startServer() {
         startDate,
         endDate,
         branchId,
-      }).map(({
-        totalUnits: _totalUnits,
-        eligibleUnits: _eligible,
-        occupiedUnits: _occ,
-        holdUnits: _hold,
-        maintenanceUnits: _maint,
-        unitIds: _unitIds,
-        availableVehicleIds: _availIds,
-        ...publicSummary
-      }) => publicSummary);
+      }).map((raw) => {
+        const isAvailable = raw.availableUnits > 0;
+        const availabilityStatus = isAvailable
+          ? ('Available' as const)
+          : raw.eligibleUnits === 0
+            ? ('Temporarily Unavailable' as const)
+            : ('Sold Out' as const);
+        const statusLabel = isAvailable
+          ? 'Available'
+          : raw.eligibleUnits === 0
+            ? 'Currently Unavailable — Contact Support'
+            : 'Booked';
+        return {
+          modelKey: raw.modelKey,
+          brand: raw.brand,
+          model: raw.model,
+          name: raw.name,
+          category: raw.category,
+          transmission: raw.transmission,
+          fuelType: raw.fuelType,
+          seats: raw.seats,
+          branchId: raw.branchId,
+          representativeVehicleId: raw.representativeVehicleId,
+          isAvailable,
+          availabilityStatus,
+          statusLabel,
+          nextAvailableDate: raw.nextAvailableDate,
+        };
+      });
 
       res.json({ startDate, endDate, branchId: branchId || 'all', summaries });
     } catch (err) {
@@ -1015,19 +1065,32 @@ async function startServer() {
       });
       const rawSummary = summaries.find((s) => s.modelKey === mk && s.branchId === vehicle.branchId) || summaries[0] || null;
       const summary = rawSummary
-        ? (() => {
-            const {
-              totalUnits: _totalUnits,
-              eligibleUnits: _eligible,
-              occupiedUnits: _occ,
-              holdUnits: _hold,
-              maintenanceUnits: _maint,
-              unitIds: _unitIds,
-              availableVehicleIds: _availIds,
-              ...pub
-            } = rawSummary;
-            return pub;
-          })()
+        ? {
+            modelKey: rawSummary.modelKey,
+            brand: rawSummary.brand,
+            model: rawSummary.model,
+            name: rawSummary.name,
+            category: rawSummary.category,
+            transmission: rawSummary.transmission,
+            fuelType: rawSummary.fuelType,
+            seats: rawSummary.seats,
+            branchId: rawSummary.branchId,
+            representativeVehicleId: rawSummary.representativeVehicleId,
+            isAvailable: rawSummary.availableUnits > 0,
+            availabilityStatus:
+              rawSummary.availableUnits > 0
+                ? ('Available' as const)
+                : rawSummary.eligibleUnits === 0
+                  ? ('Temporarily Unavailable' as const)
+                  : ('Sold Out' as const),
+            statusLabel:
+              rawSummary.availableUnits > 0
+                ? 'Available'
+                : rawSummary.eligibleUnits === 0
+                  ? 'Currently Unavailable — Contact Support'
+                  : 'Booked',
+            nextAvailableDate: rawSummary.nextAvailableDate,
+          }
         : null;
 
       // Public sanitized schedule windows (no customer PII)
@@ -1359,7 +1422,7 @@ async function startServer() {
       const defaultLng = hub.id === 'branch-central-hub' ? (settings.hubLng ?? hub.lng) : hub.lng;
 
       const result = validateMultiBranchLocation({
-        pickupMode: (pickupMode || 'branch') as PickupMode,
+        pickupMode: (pickupMode || 'delivery') as PickupMode,
         pickupLat: Number(pickupLat ?? defaultLat),
         pickupLng: Number(pickupLng ?? defaultLng),
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
@@ -1479,7 +1542,7 @@ async function startServer() {
       const defaultLng = hub.id === 'branch-central-hub' ? (settings.hubLng ?? hub.lng) : hub.lng;
 
       const geo = validateMultiBranchLocation({
-        pickupMode: (pickupMode || 'branch') as PickupMode,
+        pickupMode: (pickupMode || 'delivery') as PickupMode,
         pickupLat: Number(pickupLat ?? defaultLat),
         pickupLng: Number(pickupLng ?? defaultLng),
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
@@ -2691,7 +2754,7 @@ async function startServer() {
       const resolvedReturnLng = Number(returnLng ?? resolvedPickupLng);
 
       const geo = validateMultiBranchLocation({
-        pickupMode: (pickupMode || 'branch') as PickupMode,
+        pickupMode: (pickupMode || 'delivery') as PickupMode,
         pickupLat: resolvedPickupLat,
         pickupLng: resolvedPickupLng,
         returnLat: resolvedReturnLat,
@@ -2897,7 +2960,7 @@ async function startServer() {
             returnBranchId: hub.id,
             returnBranchName: resolvedBranchName,
             bookingMode: primaryUnit.instantBooking ? 'instant' : 'approval',
-            pickupMode: (pickupMode || 'branch') as PickupMode,
+            pickupMode: (pickupMode || 'delivery') as PickupMode,
             pickupAddress: cleanPickupAddress,
             pickupLat: resolvedPickupLat,
             pickupLng: resolvedPickupLng,
@@ -10488,6 +10551,25 @@ async function startServer() {
       } else if (provider === 'cloud_functions') {
         ok = true;
         message = 'Express server webhook & background hold-expiry hooks active.';
+      } else if (provider === 'resend_email') {
+        const key = (process.env.RESEND_API_KEY || '').trim();
+        if (!key) {
+          ok = false;
+          message = 'RESEND_API_KEY is not configured in the server environment.';
+        } else {
+          try {
+            const resp = await fetch('https://api.resend.com/domains', {
+              headers: { Authorization: `Bearer ${key}` },
+            });
+            ok = resp.ok;
+            message = resp.ok
+              ? `Resend API key verified; transactional email delivery active (${getResendFromEmail()}).`
+              : `Resend API verification returned HTTP ${resp.status}.`;
+          } catch (e: any) {
+            ok = false;
+            message = e?.message || 'Unable to reach Resend API.';
+          }
+        }
       } else {
         return res.status(404).json({ error: `Unknown integration provider: ${provider}` });
       }

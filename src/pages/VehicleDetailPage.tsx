@@ -98,11 +98,17 @@ export const VehicleDetailPage: React.FC = () => {
 
   const galleryImages = vehicle.images.length ? vehicle.images : ['verna'];
   const specEntries = Object.entries(vehicle.specifications || {});
-  const availableUnits = availabilitySummary ? availabilitySummary.availableUnits : vehicle.status === 'Available' ? 1 : 0;
-  const availabilityStatus =
-    availabilitySummary?.statusLabel ||
-    availabilitySummary?.availabilityStatus ||
-    (availableUnits > 0 ? t('fleet.available') : t('fleet.soldOut'));
+  const isAvailable = availabilitySummary
+    ? availabilitySummary.isAvailable !== false &&
+      availabilitySummary.availableUnits !== 0 &&
+      availabilitySummary.availabilityStatus !== 'Sold Out' &&
+      availabilitySummary.availabilityStatus !== 'Temporarily Unavailable'
+    : vehicle.status === 'Available';
+  const availabilityStatus = isAvailable
+    ? t('fleet.available')
+    : availabilitySummary?.availabilityStatus === 'Temporarily Unavailable'
+      ? 'Currently Unavailable'
+      : t('fleet.soldOut');
   const nextAvailFormatted = availabilitySummary?.nextAvailableDate
     ? new Date(availabilitySummary.nextAvailableDate).toLocaleString('en-IN', {
         day: '2-digit',
@@ -112,7 +118,7 @@ export const VehicleDetailPage: React.FC = () => {
         minute: '2-digit',
       })
     : '';
-  const canBookWindow = availableUnits > 0 && new Date(endDate).getTime() > new Date(startDate).getTime();
+  const canBookWindow = isAvailable && new Date(endDate).getTime() > new Date(startDate).getTime();
 
   return (
     <div className="min-h-screen bg-obsidian text-ivory pt-24 pb-24 lg:pb-16">
@@ -234,12 +240,9 @@ export const VehicleDetailPage: React.FC = () => {
                   <p className="text-ivory/65 mt-0.5">{vehicle.cancellationPolicy}</p>
                 </div>
                 <div>
-                  <p className="font-semibold text-white">Pickup & Delivery Eligibility</p>
+                  <p className="font-semibold text-white">Pickup & Delivery Service</p>
                   <p className="text-ivory/65 mt-0.5">
-                    {hubName}{operatingCity ? ` (${operatingCity})` : ''} ·{' '}
-                    {vehicle.deliveryEligible
-                      ? `Doorstep delivery within ${settings?.serviceRadiusKm || 35} km zone`
-                      : 'Lounge self-pickup only'}
+                    {hubName}{operatingCity ? ` (${operatingCity})` : ''} · Doorstep pickup & delivery within {settings?.serviceRadiusKm || 35} km zone
                   </p>
                 </div>
                 <div>
@@ -346,11 +349,7 @@ export const VehicleDetailPage: React.FC = () => {
                   </span>
                   <span
                     className={`font-semibold text-xs ${
-                      availableUnits > 2
-                        ? 'text-emerald-400'
-                        : availableUnits > 0
-                          ? 'text-amber-300'
-                          : 'text-red-400'
+                      isAvailable ? 'text-emerald-400' : 'text-red-400'
                     }`}
                   >
                     {availabilityStatus}
@@ -399,11 +398,7 @@ export const VehicleDetailPage: React.FC = () => {
                   <span className="text-ivory/60">Availability Status</span>
                   <span
                     className={`font-semibold ${
-                      availableUnits > 2
-                        ? 'text-emerald-400'
-                        : availableUnits > 0
-                          ? 'text-amber-300'
-                          : 'text-red-400'
+                      isAvailable ? 'text-emerald-400' : 'text-red-400'
                     }`}
                   >
                     {availabilityStatus}
@@ -454,16 +449,16 @@ export const VehicleDetailPage: React.FC = () => {
                 </div>
               </div>
 
-              {availableUnits <= 0 && (
+              {!isAvailable && (
                 <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/30 text-xs text-red-300 space-y-1">
                   <p className="font-semibold">
-                    {availabilityStatus === 'Temporarily Unavailable'
+                    {availabilitySummary?.availabilityStatus === 'Temporarily Unavailable'
                       ? 'Currently Unavailable — Contact Support'
-                      : 'All units are reserved for your selected pickup/return window.'}
+                      : 'Booked for your selected pickup/return window.'}
                   </p>
                   {nextAvailFormatted && (
                     <p className="font-mono text-[11px]">
-                      {t('fleet.nextAvailable')}: {nextAvailFormatted}
+                      {t('fleet.bookedUntil')}: {nextAvailFormatted}
                     </p>
                   )}
                 </div>
@@ -483,10 +478,10 @@ export const VehicleDetailPage: React.FC = () => {
               >
                 {canBookWindow
                   ? 'Select Location & Proceed to Checkout'
-                  : availableUnits <= 0
+                  : !isAvailable
                     ? nextAvailFormatted
-                      ? `Sold Out (Next: ${nextAvailFormatted})`
-                      : 'Currently Unavailable'
+                      ? `Booked (${t('fleet.bookedUntil')}: ${nextAvailFormatted})`
+                      : 'Booked / Currently Unavailable'
                     : 'Select Valid Rental Dates'}
               </button>
             </div>
@@ -502,7 +497,7 @@ export const VehicleDetailPage: React.FC = () => {
             <span className="text-xs font-normal text-ivory/60">{t('fleet.perDay')}</span>
           </p>
           <p className="text-[11px] text-ivory/60">
-            {availableUnits > 0 ? availabilityStatus : t('fleet.soldOut')}
+            {availabilityStatus}
           </p>
         </div>
         <button
@@ -523,7 +518,7 @@ export const VehicleDetailPage: React.FC = () => {
           initialPickupAddress={initialPickupAddress}
           initialPickupLat={initialPickupLat}
           initialPickupLng={initialPickupLng}
-          availableUnits={availableUnits}
+          availableUnits={isAvailable ? 1 : 0}
           onClose={() => setBookingOpen(false)}
         />
       )}

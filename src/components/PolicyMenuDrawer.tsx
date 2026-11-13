@@ -15,6 +15,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SUPPORTED_LANGUAGES } from '../lib/i18n';
@@ -25,6 +26,7 @@ interface PolicyMenuDrawerProps {
 }
 
 export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClose }) => {
+  const { profile, logout } = useAuth();
   const { settings, cmsPages, getPublishedCms } = useCatalog();
   const { language, setLanguage, t } = useLanguage();
 
@@ -105,9 +107,46 @@ export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClos
               <Link to="/#offers" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-ivory">
                 {t('nav.offers')}
               </Link>
-              <Link to="/login" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-gold font-semibold">
-                {t('nav.loginRegister')}
-              </Link>
+              {profile ? (
+                <>
+                  <Link
+                    to={profile.role === 'customer' ? '/profile' : '/dashboard'}
+                    onClick={onClose}
+                    className="px-3 py-2 rounded-lg bg-gold text-obsidian font-semibold"
+                  >
+                    {t('nav.profile')}
+                  </Link>
+                  <Link
+                    to={
+                      profile.role === 'master_admin'
+                        ? '/dashboard/master-admin'
+                        : ['operations_staff', 'support_staff'].includes(profile.role)
+                          ? '/dashboard/staff'
+                          : profile.role === 'customer'
+                            ? '/dashboard'
+                            : '/dashboard/admin'
+                    }
+                    onClick={onClose}
+                    className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-ivory"
+                  >
+                    {profile.role === 'customer' ? t('nav.myBookings') : t('nav.dashboard')}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      void logout();
+                    }}
+                    className="px-3 py-2 rounded-lg bg-navy-deep hover:border-red-400/40 border border-white/10 text-red-300 text-left font-medium cursor-pointer"
+                  >
+                    {t('nav.signOut')}
+                  </button>
+                </>
+              ) : (
+                <Link to="/login" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-gold font-semibold">
+                  {t('nav.loginRegister')}
+                </Link>
+              )}
             </div>
           </div>
 

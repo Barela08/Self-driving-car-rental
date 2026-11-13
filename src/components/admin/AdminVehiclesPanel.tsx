@@ -1050,6 +1050,10 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
               const priv = privateMap[v.id];
               const openMaintCount = maintCountByVehicle[v.id] || 0;
               const regNo = v.registrationNumber || priv?.registrationNumber || v.documents?.rcNumber || 'UNREGISTERED';
+              const modelKey = deriveModelKey(v);
+              const modelQty = vehicles.filter(
+                (item) => !item.archived && deriveModelKey(item) === modelKey && item.branchId === v.branchId
+              ).length;
               return (
                 <div
                   key={v.id}
@@ -1067,6 +1071,9 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
                       </div>
                       <div className="absolute top-3 right-3 px-2.5 py-1 rounded bg-white/95 text-ink text-[11px] font-mono font-semibold">
                         {regNo}
+                      </div>
+                      <div className="absolute bottom-2 right-3 px-2 py-0.5 rounded bg-obsidian/90 text-gold text-[10px] font-mono font-semibold">
+                        Model Qty: {modelQty}
                       </div>
                       {v.unitCode && (
                         <div className="absolute bottom-2 left-3 px-2 py-0.5 rounded bg-black/75 text-white/90 text-[10px] font-mono">
@@ -1418,7 +1425,7 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
               {!editingId ? (
                 <div className="p-4 rounded-xl bg-alabaster border border-gold/40 grid sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block font-semibold text-ink mb-1">Total Number of Cars (1–20)</label>
+                    <label className="block font-semibold text-ink mb-1">Vehicle Quantity (1–20)</label>
                     <input
                       type="number"
                       min={1}
@@ -1446,7 +1453,7 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
                   <div className="grid sm:grid-cols-3 gap-3 items-end">
                     <div>
                       <label className="block font-semibold text-ink mb-1">
-                        Total Number of Cars (Model Quantity)
+                        Vehicle Quantity (Admin Only)
                       </label>
                       <input
                         type="number"

@@ -170,7 +170,7 @@ export const VehiclesPage: React.FC = () => {
       if (car.pricePerDay > maxPrice) return false;
       if (instantOnly && !car.instantBooking) return false;
       if (deliveryOnly && !car.deliveryEligible) return false;
-      if (availableOnly && summary && summary.availableUnits <= 0) return false;
+      if (availableOnly && summary && (summary.isAvailable === false || summary.availableUnits === 0 || summary.availabilityStatus === 'Sold Out')) return false;
       return true;
     });
   }, [
@@ -516,13 +516,13 @@ export const VehiclesPage: React.FC = () => {
             ) : (
               <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {modelCards.map(({ car, summary }) => {
-                  const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
-                  const statusText = summary
-                    ? summary.statusLabel || summary.availabilityStatus
-                    : car.status === 'Available'
-                      ? t('fleet.available')
-                      : t('fleet.soldOut');
-                  const isSoldOut = availCount === 0;
+                  const isSoldOut = summary
+                    ? summary.isAvailable === false ||
+                      summary.availableUnits === 0 ||
+                      summary.availabilityStatus === 'Sold Out' ||
+                      summary.availabilityStatus === 'Temporarily Unavailable'
+                    : car.status !== 'Available';
+                  const statusText = isSoldOut ? t('fleet.soldOut') : t('fleet.available');
                   const nextAvail = formatAvailableDate(summary?.nextAvailableDate);
 
                   const detailParams = new URLSearchParams({
@@ -556,12 +556,8 @@ export const VehiclesPage: React.FC = () => {
                               {car.category}{operatingCity ? ` · ${operatingCity}` : ''}
                             </span>
                             <span
-                              className={`font-medium ${
-                                isSoldOut
-                                  ? 'text-red-400'
-                                  : availCount <= 2
-                                    ? 'text-amber-300'
-                                    : 'text-emerald-400'
+                              className={`font-semibold ${
+                                isSoldOut ? 'text-red-400' : 'text-emerald-400'
                               }`}
                             >
                               {statusText}
@@ -585,7 +581,7 @@ export const VehiclesPage: React.FC = () => {
                           {isSoldOut && (
                             <p className="text-[11px] text-red-400 font-medium mt-2">
                               {nextAvail
-                                ? `${t('fleet.nextAvailable')}: ${nextAvail}`
+                                ? `${t('fleet.bookedUntil')}: ${nextAvail}`
                                 : 'Currently Unavailable'}
                             </p>
                           )}

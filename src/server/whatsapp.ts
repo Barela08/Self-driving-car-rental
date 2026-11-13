@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from './db.ts';
+import { sendNotificationEmail } from './email.ts';
 import type {
   Booking,
   EmployeeNotificationSetting,
@@ -120,28 +121,22 @@ export async function sendFallbackNotification(params: {
 
     const resolvedEmail = params.recipientEmail || (privSnap.data()?.email as string | undefined);
     if (resolvedEmail) {
-      const mailId = `mail-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
-      await db.collection('email_fallbacks').doc(mailId).set({
-        id: mailId,
+      await sendNotificationEmail({
         userId: params.userId,
-        toEmail: resolvedEmail,
-        subject: params.title,
+        recipientEmail: resolvedEmail,
+        title: params.title,
         body: params.body,
-        status: 'Queued',
-        createdAt: now,
-      });
+        category: params.category,
+      }).catch(() => undefined);
       channels.push('Email');
     }
   } else if (params.recipientEmail) {
-    const mailId = `mail-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
-    await db.collection('email_fallbacks').doc(mailId).set({
-      id: mailId,
-      toEmail: params.recipientEmail,
-      subject: params.title,
+    await sendNotificationEmail({
+      recipientEmail: params.recipientEmail,
+      title: params.title,
       body: params.body,
-      status: 'Queued',
-      createdAt: now,
-    });
+      category: params.category,
+    }).catch(() => undefined);
     channels.push('Email');
   } else {
     channels.push('Admin Console Alert');

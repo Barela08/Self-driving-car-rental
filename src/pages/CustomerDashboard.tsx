@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { type ConfirmationResult, type RecaptchaVerifier } from 'firebase/auth';
 import { toast } from 'sonner';
 import {
@@ -68,17 +68,23 @@ interface DashboardPayload {
   reviews?: CustomerReview[];
 }
 
-export const CustomerDashboard: React.FC = () => {
+export const CustomerDashboard: React.FC<{ initialTab?: TabKey }> = ({ initialTab }) => {
   const { profile, firebaseUser, loading: authLoading, logout, logoutAllDevices, refreshProfile, loginWithFirebasePhone } = useAuth();
   const { branches, activeBranches, vehicles, settings, authOtpConfig, isPreviewMode } = useCatalog();
   const { language, setLanguage, t } = useLanguage();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const operatingCity = settings?.operatingCityName || activeBranches[0]?.cityName || '';
   const hasBranches = activeBranches.length > 0;
   const centralHub = (hasBranches ? activeBranches[0] : null) || branches.find((b) => b.id === 'branch-central-hub') || null;
 
-  const [tab, setTab] = useState<TabKey>('bookings');
+  const queryTab = searchParams.get('tab') as TabKey | null;
+  const [tab, setTab] = useState<TabKey>(initialTab || queryTab || 'bookings');
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+    else if (queryTab) setTab(queryTab);
+  }, [initialTab, queryTab]);
   const [bookingScope, setBookingScope] = useState<BookingScope>('all');
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -544,7 +550,7 @@ export const CustomerDashboard: React.FC = () => {
     { key: 'payments', label: t('dashboard.payments') },
     { key: 'subscriptions', label: 'Subscriptions' },
     { key: 'support', label: `${t('dashboard.support')} & SOS` },
-    { key: 'account', label: t('dashboard.settings') },
+    { key: 'account', label: t('nav.profile') },
   ];
 
   const chosenKycBranch = hasBranches

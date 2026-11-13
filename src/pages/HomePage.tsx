@@ -211,8 +211,8 @@ export const HomePage: React.FC = () => {
           description: 'Browse real-time vehicle availability with transparent tariffs and refundable security deposits.',
         },
         {
-          title: '02. Choose Pickup or Delivery',
-          description: 'Collect at our flagship operations lounge or pin doorstep delivery verified via Google Maps.',
+          title: '02. Select Pickup & Return Location',
+          description: 'Pin your pickup address or doorstep delivery spot verified live via Google Maps.',
         },
         {
           title: '03. Verify Documents & Settle via UPI',
@@ -591,13 +591,22 @@ export const HomePage: React.FC = () => {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {featuredVehicles.map((car) => {
                 const summary = summaryByVehicleId.get(car.id);
-                const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
-                const isSoldOut = availCount <= 0;
-                const statusLabel = summary?.statusLabel
-                  ? summary.statusLabel
-                  : isSoldOut
-                    ? t('fleet.soldOut')
-                    : t('fleet.available');
+                const isSoldOut = summary
+                  ? summary.isAvailable === false ||
+                    summary.availableUnits === 0 ||
+                    summary.availabilityStatus === 'Sold Out' ||
+                    summary.availabilityStatus === 'Temporarily Unavailable'
+                  : car.status !== 'Available';
+                const statusLabel = isSoldOut ? t('fleet.soldOut') : t('fleet.available');
+                const bookedUntilText =
+                  isSoldOut && summary?.nextAvailableDate
+                    ? new Date(summary.nextAvailableDate).toLocaleString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : '';
 
                 const detailParams = new URLSearchParams({
                   start: pickupDate,
@@ -631,8 +640,8 @@ export const HomePage: React.FC = () => {
                           {car.category} · {car.transmission} · {car.seats} Seats
                         </span>
                         <span
-                          className={`font-medium ${
-                            isSoldOut ? 'text-red-400' : availCount <= 2 ? 'text-amber-300' : 'text-emerald-400'
+                          className={`font-semibold ${
+                            isSoldOut ? 'text-red-400' : 'text-emerald-400'
                           }`}
                         >
                           {statusLabel}
@@ -651,6 +660,13 @@ export const HomePage: React.FC = () => {
                           {car.rating}
                         </span>
                       </div>
+                      {isSoldOut && (
+                        <p className="text-[11px] text-red-400 font-medium mt-2">
+                          {bookedUntilText
+                            ? `${t('fleet.bookedUntil')}: ${bookedUntilText}`
+                            : t('fleet.soldOut')}
+                        </p>
+                      )}
                     </div>
 
                     <div className="pt-3 border-t border-white/10 flex items-baseline justify-between gap-2">
@@ -835,7 +851,7 @@ export const HomePage: React.FC = () => {
                 {
                   num: '02',
                   title: 'Verified Doorstep Handover',
-                  desc: `Free lounge collection or exact-distance delivery within ${serviceRadiusKm} km via Google Maps.`,
+                  desc: `Exact-distance delivery and GPS pickup within ${serviceRadiusKm} km via Google Maps.`,
                 },
                 {
                   num: '03',
@@ -902,8 +918,8 @@ export const HomePage: React.FC = () => {
             </p>
             <h2 className="font-display text-3xl font-semibold text-white">{officeName}</h2>
             <p className="text-sm text-ivory/75 leading-relaxed">
-              Collect directly from our concierge lounge with zero delivery charges or drop a verified Google Maps pin anywhere inside our{' '}
-              <strong className="text-white">{serviceRadiusKm} km</strong> doorstep delivery zone{operatingCity ? ` in ${operatingCity}` : ''}.
+              Drop a verified Google Maps pin anywhere inside our{' '}
+              <strong className="text-white">{serviceRadiusKm} km</strong> doorstep delivery zone{operatingCity ? ` in ${operatingCity}` : ''} for seamless vehicle handover.
             </p>
             <div className="grid sm:grid-cols-2 gap-4 text-xs pt-2">
               <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-1.5">

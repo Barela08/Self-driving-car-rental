@@ -198,10 +198,10 @@ export async function sendWhatsAppOtp(params: {
   const ipDigest = hashIp(params.ip);
 
   const isNonProd = process.env.NODE_ENV !== 'production';
-  const isAuthorizedTestPhone = authOtpConfig.authorizedTestPhones
-    .map((p) => normalizeIndianPhone(p))
-    .includes(normalizedPhone);
-  const demoEligible = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && isAuthorizedTestPhone);
+  const externalWhatsAppReady = Boolean(
+    authOtpConfig.whatsappOtpEnabled && waConfig.connectionStatus === 'Connected'
+  );
+  const demoEligible = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && !externalWhatsAppReady);
 
   // Per-number & per-IP rate limiting + cooldown check
   const allChallengesSnap = await db.collection('whatsapp_otp_challenges').get();
@@ -217,7 +217,11 @@ export async function sendWhatsAppOtp(params: {
     }
   }
 
-  if (recentForIpCount >= MAX_OTP_PER_IP) {
+  const maxPerIp = isNonProd ? 60 : MAX_OTP_PER_IP;
+  const maxPerPurpose = isNonProd ? 20 : MAX_OTP_PER_NUMBER_PER_PURPOSE;
+  const maxPerTotal = isNonProd ? 40 : MAX_OTP_PER_NUMBER_TOTAL;
+
+  if (recentForIpCount >= maxPerIp) {
     return {
       ok: false,
       statusCode: 429,
@@ -227,8 +231,8 @@ export async function sendWhatsAppOtp(params: {
 
   const recentForPurpose = recentForPhone.filter((ch) => ch.purpose === params.purpose);
   if (
-    recentForPurpose.length >= MAX_OTP_PER_NUMBER_PER_PURPOSE ||
-    recentForPhone.length >= MAX_OTP_PER_NUMBER_TOTAL
+    recentForPurpose.length >= maxPerPurpose ||
+    recentForPhone.length >= maxPerTotal
   ) {
     return {
       ok: false,
@@ -256,13 +260,8 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  const externalWhatsAppReady = Boolean(
-    authOtpConfig.whatsappOtpEnabled && waConfig.connectionStatus === 'Connected'
-  );
-  const testingChallengeFallback = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && !externalWhatsAppReady);
-
   // Reject unavailable channels in production (or when non-prod testing fallback is disabled) BEFORE writing challenges
-  if (!demoEligible && !testingChallengeFallback && !externalWhatsAppReady) {
+  if (!demoEligible && !externalWhatsAppReady) {
     await writeOtpLog({
       phone: normalizedPhone,
       purpose: params.purpose,
@@ -285,7 +284,7 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Generate OTP — NEVER use fixed OTP unless demoEligible (non-prod + enabled + authorized test phone)
+  // Generate OTP — fixed 555555 ONLY when demoEligible (non-prod + enabled + SMS/WhatsApp unavailable); never in production
   let code = '555555';
   if (!demoEligible) {
     do {
@@ -322,8 +321,8 @@ export async function sendWhatsAppOtp(params: {
 
   await db.collection('whatsapp_otp_challenges').doc(challengeId).set(challengeDoc);
 
-  // Non-production testing path (authorized test phones get fixed 555555; non-authorized phones get random OTP so Enter OTP UI opens without permitting 555555)
-  if (demoEligible || testingChallengeFallback) {
+  // Non-production testing path: issue server challenge without claiming SMS delivery
+  if (demoEligible) {
     await writeOtpLog({
       phone: normalizedPhone,
       purpose: params.purpose,
@@ -331,10 +330,8 @@ export async function sendWhatsAppOtp(params: {
       status: 'sent',
       challengeId,
       ...(params.userId ? { userId: params.userId } : {}),
-      isDemoMode: demoEligible,
-      detail: demoEligible
-        ? 'Test-number verification challenge issued (non-production).'
-        : 'Testing OTP screen challenge issued (non-authorized number; fixed test code rejected).',
+      isDemoMode: true,
+      detail: 'Testing OTP verification challenge issued (non-production).',
     });
 
     return {
@@ -344,7 +341,7 @@ export async function sendWhatsAppOtp(params: {
       expiresInSeconds: expirySeconds,
       cooldownSeconds: configuredCooldownSec,
       deliveryChannel: 'mobile',
-      isDemoOtpEligible: demoEligible,
+      isDemoOtpEligible: true,
       message: `Verification step is ready for +${normalizedPhone}. Enter your 6-digit verification code to continue.`,
     };
   }
@@ -452,8 +449,7 @@ export async function verifyWhatsAppOtp(params: {
   if (challenge.isDemoMode) {
     const cfg = await getAuthOtpConfig();
     const isNonProd = process.env.NODE_ENV !== 'production';
-    const isAuthorizedPhone = cfg.authorizedTestPhones.map(normalizeIndianPhone).includes(normalizedPhone);
-    if (!isNonProd || !cfg.demoOtpEnabled || !isAuthorizedPhone) {
+    if (!isNonProd || !cfg.demoOtpEnabled) {
       await ref.update({ used: true });
       await writeOtpLog({
         phone: normalizedPhone,
@@ -463,7 +459,7 @@ export async function verifyWhatsAppOtp(params: {
         challengeId: challenge.id,
         userId: challenge.userId,
         isDemoMode: true,
-        detail: 'Verification rejected: test phone authorization changed.',
+        detail: 'Verification rejected: testing mode disabled or production runtime.',
       });
       return {
         ok: false,

@@ -7,8 +7,6 @@ import {
   CreditCard,
   Eye,
   FileCheck2,
-  Minus,
-  Plus,
   Shield,
   Tag,
   UserCheck,
@@ -71,9 +69,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const [startDate, setStartDate] = useState(initialStartDate);
   const [endDate, setEndDate] = useState(initialEndDate);
-  const [liveAvailableUnits, setLiveAvailableUnits] = useState<number>(Math.max(0, availableUnits));
+  const [isAvailable, setIsAvailable] = useState<boolean>(availableUnits > 0);
   const [nextAvailableDate, setNextAvailableDate] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState<number>(1);
+  const quantity = 1;
   const [returnChoice, setReturnChoice] = useState<'same' | 'different'>('same');
   const [editingReturnMap, setEditingReturnMap] = useState(false);
 
@@ -82,7 +80,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const startingPickupLng = Number.isFinite(initialPickupLng) ? Number(initialPickupLng) : hubLng;
 
   const [location, setLocation] = useState<LocationSelection>({
-    pickupMode: initialPickupAddress.trim() ? 'delivery' : 'branch',
+    pickupMode: 'delivery',
     pickupBranchId: hub?.id || 'branch-central-hub',
     returnBranchId: hub?.id || 'branch-central-hub',
     isOneWay: false,
@@ -147,11 +145,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         )}&endDate=${encodeURIComponent(new Date(e).toISOString())}`
       );
       if (res.summary) {
-        const free = Math.max(0, res.summary.availableUnits);
-        setLiveAvailableUnits(free);
+        const free =
+          res.summary.isAvailable !== false &&
+          res.summary.availableUnits !== 0 &&
+          res.summary.availabilityStatus !== 'Sold Out' &&
+          res.summary.availabilityStatus !== 'Temporarily Unavailable';
+        setIsAvailable(free);
         setNextAvailableDate(res.summary.nextAvailableDate);
-        setQuantity((prev) => Math.max(1, Math.min(prev, Math.max(1, free))));
-        if (free > 0) setConflictMessage(null);
+        if (free) setConflictMessage(null);
       }
     } catch {
       // Retain previous summary
@@ -300,8 +301,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       toast.error('Please upload Driving Licence (Front & Back) and Aadhaar Card before confirming booking.');
       return;
     }
-    if (liveAvailableUnits < quantity) {
-      toast.error('Requested vehicle quantity is no longer available for these dates.');
+    if (!isAvailable) {
+      toast.error('This vehicle is booked for the selected dates.');
       await refreshLiveAvailability();
       return;
     }
@@ -406,7 +407,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <p className="text-xs text-gold font-medium">
               {operatingCity ? `${operatingCity} Self-Drive Fleet · ` : 'Self-Drive Fleet · '}
               {vehicle.instantBooking ? 'Instant Confirm Eligible' : 'Concierge Approval'} ·{' '}
-              {liveAvailableUnits > 0 ? 'Available for Dates' : 'Currently Unavailable'}
+              {isAvailable ? 'Available for Dates' : 'Booked'}
             </p>
             <h2 className="font-display text-xl sm:text-2xl font-semibold mt-0.5">{vehicle.name}</h2>
           </div>
@@ -433,22 +434,29 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
-            {(conflictMessage || liveAvailableUnits <= 0) && (
+            {(conflictMessage || !isAvailable) && (
               <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-500/35 text-red-200 text-xs space-y-1">
                 <p className="font-semibold flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
-                  {conflictMessage || 'No units remain available for the selected dates.'}
+                  {conflictMessage || 'Booked for the selected dates.'}
                 </p>
                 {nextAvailableDate && (
                   <p className="font-mono text-[11px] text-red-200/80">
-                    Next Available From: {new Date(nextAvailableDate).toLocaleString('en-IN')}
+                    Booked until:{' '}
+                    {new Date(nextAvailableDate).toLocaleString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </p>
                 )}
               </div>
             )}
 
-            {/* Dates & Quantity */}
-            <div className="grid sm:grid-cols-3 gap-3">
+            {/* Dates */}
+            <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-ivory/70 mb-1">
                   Pickup Date & Time
@@ -470,34 +478,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   onChange={(e) => setEndDate(e.target.value)}
                   className="w-full px-3 py-2 text-xs sm:text-sm bg-obsidian border border-white/15 rounded-lg text-white focus:outline-none focus:border-gold"
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ivory/70 mb-1">
-                  Vehicles Needed
-                </label>
-                <div className="flex items-center justify-between border border-white/15 rounded-lg px-2 py-1.5 bg-obsidian">
-                  <button
-                    type="button"
-                    disabled={quantity <= 1}
-                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                    className="p-1.5 rounded bg-navy-deep border border-white/15 text-white hover:border-gold disabled:opacity-40 cursor-pointer"
-                    aria-label="Decrease quantity"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="font-mono tabular-nums text-sm font-bold text-gold">
-                    {quantity} vehicle{quantity > 1 ? 's' : ''}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={quantity >= Math.max(1, liveAvailableUnits)}
-                    onClick={() => setQuantity((q) => Math.min(Math.max(1, liveAvailableUnits), q + 1))}
-                    className="p-1.5 rounded bg-navy-deep border border-white/15 text-white hover:border-gold disabled:opacity-40 cursor-pointer"
-                    aria-label="Increase quantity"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -790,8 +770,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <div className="space-y-2 text-xs border-t border-white/10 pt-3">
                   <div className="flex justify-between">
                     <span className="text-ivory/65">
-                      Base Rental ({pricing.quantity || quantity}x unit{quantity > 1 ? 's' : ''} · {pricing.durationDays}d ·{' '}
-                      {pricing.includedKmAllowance} km incl.)
+                      Base Rental ({pricing.durationDays}d · {pricing.includedKmAllowance} km incl.)
                     </span>
                     <span className="font-mono tabular-nums font-medium text-white">
                       {formatINR(pricing.baseRentalAmount)}
@@ -823,7 +802,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   )}
                   {pricing.insuranceCharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-ivory/65">Protection Plan ({pricing.quantity || quantity}x)</span>
+                      <span className="text-ivory/65">Protection Plan</span>
                       <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.insuranceCharge)}
                       </span>
@@ -859,7 +838,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </div>
                   <div className="flex justify-between pt-2 border-t border-white/10">
                     <span className="text-ivory/65">
-                      Refundable Security Deposit ({pricing.quantity || quantity}x)
+                      Refundable Security Deposit
                     </span>
                     <span className="font-mono tabular-nums font-semibold text-white">
                       {formatINR(pricing.securityDeposit)}
@@ -1020,7 +999,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   !location.serviceable ||
                   !pricing ||
                   isPreviewMode ||
-                  liveAvailableUnits < quantity ||
+                  !isAvailable ||
                   (Boolean(firebaseUser) && !mandatoryKycUploaded) ||
                   !allRequiredConsentsChecked
                 }
@@ -1030,8 +1009,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <CreditCard className="w-4 h-4" />
                 {isPreviewMode
                   ? 'Booking Disabled in Preview Mode'
-                  : liveAvailableUnits < quantity
-                    ? 'Unavailable for Selected Dates'
+                  : !isAvailable
+                    ? 'Booked for Selected Dates'
                     : Boolean(firebaseUser) && !mandatoryKycUploaded
                       ? 'Upload Mandatory Documents First'
                       : !allRequiredConsentsChecked

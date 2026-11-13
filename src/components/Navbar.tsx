@@ -114,15 +114,33 @@ export const Navbar: React.FC = () => {
                 Preview Mode
               </span>
             ) : profile ? (
-              <div className="hidden md:flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={handlePrimaryAction}
-                  className="px-3.5 py-2 text-xs font-semibold bg-gold hover:bg-gold-bright text-obsidian rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                >
-                  <User className="w-3.5 h-3.5" />
-                  <span>{profile.displayName.split(' ')[0]}</span>
-                </button>
+              <div className="hidden md:flex items-center gap-2">
+                {profile.role === 'customer' ? (
+                  <>
+                    <Link
+                      to="/dashboard"
+                      className="px-3 py-2 text-xs font-semibold border border-white/15 bg-navy-deep hover:border-gold text-ivory rounded-lg transition-colors whitespace-nowrap shrink-0"
+                    >
+                      {t('nav.myBookings')}
+                    </Link>
+                    <Link
+                      to="/profile"
+                      className="px-3.5 py-2 text-xs font-semibold bg-gold hover:bg-gold-bright text-obsidian rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>{t('nav.profile')}</span>
+                    </Link>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handlePrimaryAction}
+                    className="px-3.5 py-2 text-xs font-semibold bg-gold hover:bg-gold-bright text-obsidian rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <User className="w-3.5 h-3.5" />
+                    <span>{profile.displayName.split(' ')[0]}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void logout()}

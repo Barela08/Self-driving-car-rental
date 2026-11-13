@@ -84,14 +84,6 @@ export function validateSingleCityLocation(params: {
 
   let deliveryCharge = 0;
   if (pickupMode === 'delivery') {
-    if (!vehicle.deliveryEligible) {
-      return {
-        serviceable: false,
-        distanceKm: pickupDistanceKm,
-        maxRadiusKm,
-        reason: `${vehicle.name} is available for branch pickup only at ${hub.name}.`,
-      };
-    }
     deliveryCharge = Math.round(baseDeliveryFee + pickupDistanceKm * perKmDeliveryFee);
   }
 

@@ -100,6 +100,7 @@ const AppShell: React.FC<{ quotaExceeded: boolean }> = ({ quotaExceeded }) => {
           <Route path="/staff" element={<AuthPortalPage portal="staff" />} />
           <Route path="/master-admin" element={<AuthPortalPage portal="master" />} />
           <Route path="/dashboard" element={<CustomerDashboard />} />
+          <Route path="/profile" element={<CustomerDashboard initialTab="account" />} />
           <Route path="/dashboard/admin" element={<AdminDashboard />} />
           <Route
             path="/dashboard/admin/payment-settings"

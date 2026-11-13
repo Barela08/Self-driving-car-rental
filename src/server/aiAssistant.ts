@@ -115,7 +115,7 @@ export interface AiVehicleCard {
   seats: number;
   pricePerDay: number;
   securityDeposit: number;
-  availableUnits: number;
+  isAvailable: boolean;
   availabilityLabel: string;
   nextAvailableDate?: string | null;
   imageKey: string;
@@ -278,6 +278,15 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
         if (args.minSeats && rep.seats < Number(args.minSeats)) continue;
         if (args.maxPricePerDay && rep.pricePerDay > Number(args.maxPricePerDay)) continue;
 
+        const isFree = s.availableUnits > 0;
+        const formattedNext = s.nextAvailableDate
+          ? new Date(s.nextAvailableDate).toLocaleString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : null;
         matches.push({
           id: rep.id,
           name: rep.name,
@@ -287,14 +296,18 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
           seats: rep.seats,
           pricePerDay: rep.pricePerDay,
           securityDeposit: rep.securityDeposit,
-          availableUnits: s.availableUnits,
-          availabilityLabel: s.statusLabel,
+          isAvailable: isFree,
+          availabilityLabel: isFree
+            ? 'Available'
+            : formattedNext
+              ? `Booked until ${formattedNext}`
+              : 'Booked',
           nextAvailableDate: s.nextAvailableDate || null,
           imageKey: rep.images[0] || 'verna',
         });
       }
 
-      matches.sort((a, b) => b.availableUnits - a.availableUnits || a.pricePerDay - b.pricePerDay);
+      matches.sort((a, b) => Number(b.isAvailable) - Number(a.isAvailable) || a.pricePerDay - b.pricePerDay);
       recommendedVehicles.splice(0, recommendedVehicles.length, ...matches.slice(0, 4));
       return {
         window: { startDate: startIso, endDate: endIso },
@@ -415,7 +428,7 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
       if (!reqData.userId || !reqData.userProfile) {
         return {
           signedIn: false,
-          message: 'Guest customer inside AI Concierge. Can start Step 1 Mobile OTP verification directly inside the Guided Booking flow without leaving this screen.',
+          message: 'Guest visitor. Suggest browsing cars on the fleet page or signing in only if they want to complete checkout.',
         };
       }
       const userBookings = allBookings
@@ -448,10 +461,11 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
     cfg.systemInstructions,
     `Company: ${settings.companyName || 'EliteDrive'}${settings.operatingCityName ? ` in ${settings.operatingCityName}` : ''}.`,
     `Active branch count: ${activeBranches.length}. ${activeBranches.length === 0 ? 'Operate as single-city central hub without branch selectors.' : ''}`,
-    `Booking location rule: Never prefill or assume any default pickup city. Ask the customer for their Pickup Location first, and later ask "Where would you like to return the car?" with two options: Same as Pickup Location or Choose a Different Return Location.`,
-    `Booking assistance via chat: ${cfg.bookingEnabled ? 'Enabled — customers can complete booking directly inside the AI Concierge Guided Booking tab (Mobile OTP verification, Full Name, Select Car, Upload DL Front/Back & Aadhaar Documents, Travel Dates, Pickup Location, Return Location choice, Fare Summary & Consents, Manual UPI QR/UTR) without logging in beforehand.' : 'Informational only'}.`,
-    `Customer verification status: ${reqData.userProfile ? `${reqData.userProfile.displayName || 'Verified Mobile User'} (Document Verification: ${reqData.userProfile.kycStatus})` : 'Guest (not yet OTP-verified)'}.`,
-    `CRITICAL: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output. Never reveal total internal fleet size (totalUnits).`,
+    `Booking location rule: Customers enter their Pickup Location via map or address search, and choose Same as Pickup Location or a Different Return Location at checkout.`,
+    reqData.userId && reqData.userProfile
+      ? `Customer account status: ALREADY LOGGED IN as ${reqData.userProfile.displayName || 'Customer'} (KYC status: ${reqData.userProfile.kycStatus}). CRITICAL: Never ask this customer to log in, sign in, or register. Direct them straight to select a vehicle or view their bookings/profile.`
+      : `Customer account status: Guest visitor (not signed in yet). Do not mention any 8-step Guided Booking wizard; guide them to open a vehicle page to reserve.`,
+    `CRITICAL INVENTORY CONFIDENTIALITY: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output. NEVER reveal fleet unit counts or how many cars of a model exist (neither totalUnits nor availableUnits). Only state whether a car is Available or Booked (and when Booked, mention until when it is booked using nextAvailableDate).`,
   ].join('\n');
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -551,20 +565,20 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
 
     if (lang === 'hi') {
       finalReplyText = topCars.length
-        ? `${policyRes.companyName} (${policyRes.operatingCity}) में अभी ये प्रमुख कारें उपलब्ध हैं:\n${topCars
-            .map((v) => `• ${v.name} — ₹${v.pricePerDay}/दिन (${v.availableUnits} यूनिट उपलब्ध)`)
+        ? `${policyRes.companyName} (${policyRes.operatingCity}) में कारों की लाइव स्थिति:\n${topCars
+            .map((v) => `• ${v.name} — ₹${v.pricePerDay}/दिन (${v.availabilityLabel})`)
             .join('\n')}\nबुकिंग के लिए नीचे किसी भी वाहन को चुनें या तारीख़ बताएं।`
         : `${policyRes.companyName} में अपनी यात्रा की तारीख़ चुनने के लिए Explore Fleet देखें।`;
     } else if (lang === 'mr') {
       finalReplyText = topCars.length
-        ? `${policyRes.companyName} (${policyRes.operatingCity}) मध्ये सध्या खालील गाड्या उपलब्ध आहेत:\n${topCars
-            .map((v) => `• ${v.name} — ₹${v.pricePerDay}/दिवस (${v.availableUnits} युनिट्स उपलब्ध)`)
+        ? `${policyRes.companyName} (${policyRes.operatingCity}) मधील गाड्यांची थेट स्थिती:\n${topCars
+            .map((v) => `• ${v.name} — ₹${v.pricePerDay}/दिवस (${v.availabilityLabel})`)
             .join('\n')}\nआरक्षणासाठी खालील गाडी निवडा किंवा प्रवासाच्या तारखा कळवा.`
         : `${policyRes.companyName} मधील सर्व उपलब्ध गाड्या पाहण्यासाठी Explore Fleet पहा.`;
     } else {
       finalReplyText = topCars.length
         ? `Here is live fleet availability at ${policyRes.companyName} (${policyRes.operatingCity}):\n${topCars
-            .map((v) => `• ${v.name} (${v.category}, ${v.transmission}) — ₹${v.pricePerDay}/day · ${v.availableUnits} unit(s) free`)
+            .map((v) => `• ${v.name} (${v.category}, ${v.transmission}) — ₹${v.pricePerDay}/day · ${v.availabilityLabel}`)
             .join('\n')}\nSelect any vehicle card below to book via Manual UPI & digital KYC.`
         : `All current fleet schedules are updated live in Explore Fleet.`;
     }

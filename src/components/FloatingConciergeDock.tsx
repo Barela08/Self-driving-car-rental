@@ -5,18 +5,16 @@ import {
   ArrowUpRight,
   Bot,
   Car,
-  MessageSquare,
   Send,
   Sparkles,
-  Wand2,
   X,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { resolveVehicleImage } from '../lib/mediaAssets';
 import { LanguageSwitcher } from './LanguageSwitcher';
-import { AiBookingWizard } from './AiBookingWizard';
 
 interface AiVehicleCard {
   id: string;
@@ -27,7 +25,7 @@ interface AiVehicleCard {
   seats: number;
   pricePerDay: number;
   securityDeposit: number;
-  availableUnits: number;
+  isAvailable?: boolean;
   availabilityLabel: string;
   nextAvailableDate?: string | null;
   imageKey: string;
@@ -74,14 +72,11 @@ const WhatsAppGlyph: React.FC<{ className?: string }> = ({ className = 'w-6 h-6'
 );
 
 export const FloatingConciergeDock: React.FC = () => {
+  const { profile } = useAuth();
   const { settings, aiPublicConfig } = useCatalog();
   const { language, t } = useLanguage();
 
   const [aiOpen, setAiOpen] = useState(false);
-  const [activeMode, setActiveMode] = useState<'wizard' | 'chat'>(() =>
-    aiPublicConfig.bookingEnabled !== false ? 'wizard' : 'chat'
-  );
-  const [preselectedVehicleId, setPreselectedVehicleId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -89,21 +84,24 @@ export const FloatingConciergeDock: React.FC = () => {
 
   useEffect(() => {
     if (messages.length === 0) {
+      const signedInGreeting = profile
+        ? `Hello ${profile.displayName?.split(' ')[0] || 'there'}! ${t('ai.greeting')}`
+        : t('ai.greeting');
       setMessages([
         {
           id: 'greeting',
           role: 'assistant',
-          text: t('ai.greeting'),
+          text: signedInGreeting,
         },
       ]);
     }
-  }, [language, messages.length, t]);
+  }, [language, messages.length, profile, t]);
 
   useEffect(() => {
-    if (scrollRef.current && activeMode === 'chat') {
+    if (scrollRef.current && aiOpen) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, aiOpen, activeMode]);
+  }, [messages, aiOpen]);
 
   const rawWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
   const isValidWhatsapp = rawWhatsapp.length >= 10 && rawWhatsapp.length <= 15;
@@ -136,6 +134,10 @@ export const FloatingConciergeDock: React.FC = () => {
         }),
       });
 
+      const filteredActions = profile
+        ? (res.suggestedActions || []).filter((a) => !a.to.startsWith('/login') && !a.to.startsWith('/register'))
+        : res.suggestedActions;
+
       setMessages((prev) => [
         ...prev,
         {
@@ -144,7 +146,7 @@ export const FloatingConciergeDock: React.FC = () => {
           text: res.reply,
           vehicles: res.recommendedVehicles,
           quote: res.quoteSummary,
-          actions: res.suggestedActions,
+          actions: filteredActions,
         },
       ]);
     } catch (err: any) {
@@ -153,7 +155,7 @@ export const FloatingConciergeDock: React.FC = () => {
         {
           id: `err-${Date.now()}`,
           role: 'assistant',
-          text: err.message || 'Unable to reach AI Booking Concierge right now. Please try again.',
+          text: err.message || 'Unable to reach AI Concierge right now. Please try again.',
         },
       ]);
     } finally {
@@ -179,28 +181,17 @@ export const FloatingConciergeDock: React.FC = () => {
         : 'Active offers & KYC rules',
   ];
 
-  const handleBookFromChat = (vehicleId: string) => {
-    setPreselectedVehicleId(vehicleId);
-    setActiveMode('wizard');
-  };
-
-  const handleSwitchToChatWithCar = (vehicleName: string) => {
-    setActiveMode('chat');
-    void sendMessage(`Tell me full availability, pricing, and deposit for ${vehicleName}`);
-  };
-
   if (!aiPublicConfig.enabled && !whatsappUrl) {
     return null;
   }
 
   const dockContent = (
     <>
-      {/* Fixed AI Booking Concierge Drawer (anchored above the bottom-right button stack without shifting buttons) */}
       {aiPublicConfig.enabled && aiOpen && (
         <div
           role="dialog"
           aria-label={t('ai.title')}
-          className="fixed z-[46] right-[calc(1rem+env(safe-area-inset-right))] sm:right-[calc(1.5rem+env(safe-area-inset-right))] bottom-[calc(8.25rem+env(safe-area-inset-bottom))] sm:bottom-[calc(9.5rem+env(safe-area-inset-bottom))] w-[calc(100vw-2rem)] sm:w-[680px] lg:w-[760px] max-w-[calc(100vw-2rem)] h-[min(640px,calc(100dvh-9.5rem-env(safe-area-inset-bottom)))] sm:h-[min(640px,calc(100dvh-11rem-env(safe-area-inset-bottom)))] bg-obsidian border border-gold/35 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-ivory"
+          className="fixed z-[46] right-[calc(1rem+env(safe-area-inset-right))] sm:right-[calc(1.5rem+env(safe-area-inset-right))] bottom-[calc(8.25rem+env(safe-area-inset-bottom))] sm:bottom-[calc(9.5rem+env(safe-area-inset-bottom))] w-[calc(100vw-2rem)] sm:w-[540px] lg:w-[620px] max-w-[calc(100vw-2rem)] h-[min(580px,calc(100dvh-9.5rem-env(safe-area-inset-bottom)))] sm:h-[min(600px,calc(100dvh-11rem-env(safe-area-inset-bottom)))] bg-obsidian border border-gold/35 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-ivory"
         >
           {/* Drawer Header */}
           <div className="px-4 py-3 bg-navy-deep border-b border-white/10 flex flex-wrap items-center justify-between gap-2 shrink-0">
@@ -227,67 +218,29 @@ export const FloatingConciergeDock: React.FC = () => {
             </div>
           </div>
 
-          {/* Dual Mode Bar: Guided 8-Step Booking vs AI Chat */}
-          {aiPublicConfig.bookingEnabled !== false && (
-            <div className="px-4 py-2 bg-obsidian border-b border-white/10 flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setActiveMode('wizard')}
-                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                  activeMode === 'wizard'
-                    ? 'bg-gold text-obsidian'
-                    : 'bg-navy-deep text-ivory/75 hover:text-white border border-white/10'
-                }`}
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>{t('ai.modeWizard')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveMode('chat')}
-                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                  activeMode === 'chat'
-                    ? 'bg-gold text-obsidian'
-                    : 'bg-navy-deep text-ivory/75 hover:text-white border border-white/10'
-                }`}
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>{t('ai.modeChat')}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Mode 1: Guided 8-Step Login-Free Booking Wizard (kept mounted to preserve form progress) */}
-          <div className={activeMode === 'wizard' && aiPublicConfig.bookingEnabled !== false ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
-            <AiBookingWizard
-              preselectedVehicleId={preselectedVehicleId}
-              onCloseDrawer={() => setAiOpen(false)}
-              onSwitchToChatWithCar={handleSwitchToChatWithCar}
-            />
-          </div>
-
-          {/* Mode 2: Gemini Tool-Grounded Concierge Chat */}
-          {activeMode === 'chat' && (
-            <div className="flex flex-col flex-1 min-h-0">
-              <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-                {messages.map((msg) => (
+          {/* Direct AI Chat Concierge */}
+          <div className="flex flex-col flex-1 min-h-0">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                >
                   <div
-                    key={msg.id}
-                    className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                    className={`max-w-[88%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line ${
+                      msg.role === 'user'
+                        ? 'bg-gold text-obsidian font-medium'
+                        : 'bg-navy-deep border border-white/10 text-ivory/90'
+                    }`}
                   >
-                    <div
-                      className={`max-w-[88%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line ${
-                        msg.role === 'user'
-                          ? 'bg-gold text-obsidian font-medium'
-                          : 'bg-navy-deep border border-white/10 text-ivory/90'
-                      }`}
-                    >
-                      {msg.text}
-                    </div>
+                    {msg.text}
+                  </div>
 
-                    {msg.vehicles && msg.vehicles.length > 0 && (
-                      <div className="mt-2 w-full grid sm:grid-cols-2 gap-2">
-                        {msg.vehicles.slice(0, 4).map((v) => (
+                  {msg.vehicles && msg.vehicles.length > 0 && (
+                    <div className="mt-2 w-full grid sm:grid-cols-2 gap-2">
+                      {msg.vehicles.slice(0, 4).map((v) => {
+                        const isAvail = v.isAvailable !== false && !v.availabilityLabel.toLowerCase().includes('booked');
+                        return (
                           <div
                             key={v.id}
                             className="flex flex-col justify-between gap-2 p-2.5 rounded-xl bg-charcoal border border-white/10"
@@ -304,121 +257,114 @@ export const FloatingConciergeDock: React.FC = () => {
                                 <p className="text-[11px] text-ivory/65 truncate">
                                   {v.category} · {v.transmission} · {v.seats}S
                                 </p>
-                                <div className="flex items-center justify-between mt-0.5 text-[11px]">
+                                <div className="flex items-center justify-between gap-1 mt-0.5 text-[11px]">
                                   <span className="font-mono font-semibold text-gold tabular-nums">
                                     ₹{v.pricePerDay.toLocaleString('en-IN')}/day
                                   </span>
-                                  <span className="text-ivory/75">{v.availabilityLabel}</span>
+                                  <span className={`font-medium truncate ${isAvail ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {v.availabilityLabel}
+                                  </span>
                                 </div>
                               </div>
                             </div>
 
                             <div className="flex items-center gap-1.5">
-                              {aiPublicConfig.bookingEnabled !== false && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleBookFromChat(v.id)}
-                                  className="flex-1 py-1 px-2 rounded-md bg-gold text-obsidian text-[11px] font-semibold hover:bg-gold-bright cursor-pointer"
-                                >
-                                  Book in Wizard
-                                </button>
-                              )}
                               <Link
                                 to={`/vehicles/${v.id}`}
                                 onClick={() => setAiOpen(false)}
-                                className="px-2 py-1 rounded-md border border-white/15 text-[11px] text-ivory/80 hover:border-gold"
+                                className="flex-1 py-1.5 px-2.5 rounded-md bg-gold text-obsidian text-[11px] font-semibold hover:bg-gold-bright text-center"
                               >
-                                Details
+                                {isAvail ? 'Book Now' : 'View Dates'}
                               </Link>
                             </div>
                           </div>
-                        ))}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {msg.quote && (
+                    <div className="mt-2 w-full p-3 rounded-xl bg-navy-deep border border-gold/30 text-xs space-y-1">
+                      <div className="flex items-center justify-between font-semibold text-white">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Car className="w-3.5 h-3.5 text-gold" />
+                          {msg.quote.vehicleName}
+                        </span>
+                        <span className="font-mono text-gold tabular-nums">
+                          ₹{msg.quote.totalPayable.toLocaleString('en-IN')}
+                        </span>
                       </div>
-                    )}
+                      <p className="text-[11px] text-ivory/65">
+                        {msg.quote.durationDays} days · Deposit ₹{msg.quote.securityDeposit.toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                  )}
 
-                    {msg.quote && (
-                      <div className="mt-2 w-full p-3 rounded-xl bg-navy-deep border border-gold/30 text-xs space-y-1">
-                        <div className="flex items-center justify-between font-semibold text-white">
-                          <span className="inline-flex items-center gap-1.5">
-                            <Car className="w-3.5 h-3.5 text-gold" />
-                            {msg.quote.vehicleName}
-                          </span>
-                          <span className="font-mono text-gold tabular-nums">
-                            ₹{msg.quote.totalPayable.toLocaleString('en-IN')}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-ivory/65">
-                          {msg.quote.durationDays} days · Deposit ₹{msg.quote.securityDeposit.toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                    )}
+                  {msg.actions && msg.actions.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {msg.actions.map((act, idx) => (
+                        <Link
+                          key={idx}
+                          to={act.to}
+                          onClick={() => setAiOpen(false)}
+                          className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-gold hover:text-obsidian border border-white/10 text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
+                        >
+                          {act.label}
+                          <ArrowUpRight className="w-3 h-3" />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
 
-                    {msg.actions && msg.actions.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {msg.actions.map((act, idx) => (
-                          <Link
-                            key={idx}
-                            to={act.to}
-                            onClick={() => setAiOpen(false)}
-                            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-gold hover:text-obsidian border border-white/10 text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
-                          >
-                            {act.label}
-                            <ArrowUpRight className="w-3 h-3" />
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {sending && (
-                  <div className="flex items-center gap-2 text-xs text-ivory/60 px-2">
-                    <Bot className="w-3.5 h-3.5 text-gold" />
-                    <span>Checking live fleet inventory...</span>
-                  </div>
-                )}
-              </div>
-
-              {messages.length <= 2 && (
-                <div className="px-3 pb-2 flex flex-wrap gap-1.5">
-                  {quickPrompts.map((q, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => void sendMessage(q)}
-                      className="text-[11px] px-2.5 py-1 rounded-lg bg-navy-deep border border-white/10 hover:border-gold/40 text-ivory/80 hover:text-white cursor-pointer"
-                    >
-                      {q}
-                    </button>
-                  ))}
+              {sending && (
+                <div className="flex items-center gap-2 text-xs text-ivory/60 px-2">
+                  <Bot className="w-3.5 h-3.5 text-gold" />
+                  <span>Checking live fleet inventory...</span>
                 </div>
               )}
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void sendMessage();
-                }}
-                className="p-3 border-t border-white/10 bg-navy-deep flex items-center gap-2"
-              >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={t('ai.placeholder')}
-                  className="flex-1 bg-obsidian border border-white/15 focus:border-gold rounded-xl px-3 py-2 text-xs text-white placeholder:text-ivory/40 outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={sending || !input.trim()}
-                  aria-label={t('ai.send')}
-                  className="p-2.5 rounded-xl bg-gold hover:bg-gold-bright text-obsidian disabled:opacity-50 cursor-pointer shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
             </div>
-          )}
+
+            {messages.length <= 2 && (
+              <div className="px-3 pb-2 flex flex-wrap gap-1.5">
+                {quickPrompts.map((q, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => void sendMessage(q)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-navy-deep border border-white/10 hover:border-gold/40 text-ivory/80 hover:text-white cursor-pointer"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void sendMessage();
+              }}
+              className="p-3 border-t border-white/10 bg-navy-deep flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t('ai.placeholder')}
+                className="flex-1 bg-obsidian border border-white/15 focus:border-gold rounded-xl px-3 py-2 text-xs text-white placeholder:text-ivory/40 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={sending || !input.trim()}
+                aria-label={t('ai.send')}
+                className="p-2.5 rounded-xl bg-gold hover:bg-gold-bright text-obsidian disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

@@ -512,6 +512,7 @@ export interface VehicleAvailabilitySummary {
   totalUnits: number;
   eligibleUnits: number;
   availableUnits: number;
+  isAvailable?: boolean;
   availableVehicleIds: string[];
   occupiedUnits: number;
   holdUnits: number;
@@ -522,6 +523,23 @@ export interface VehicleAvailabilitySummary {
     | 'Only 2 Remaining'
     | 'Sold Out'
     | 'Temporarily Unavailable';
+  statusLabel: string;
+  nextAvailableDate: string | null;
+}
+
+export interface PublicVehicleAvailabilitySummary {
+  modelKey: string;
+  brand: string;
+  model: string;
+  name: string;
+  category: VehicleCategory;
+  transmission: 'Manual' | 'Automatic';
+  fuelType: 'Petrol' | 'Diesel' | 'Electric' | 'Hybrid' | 'CNG';
+  seats: number;
+  branchId: string;
+  representativeVehicleId: string;
+  isAvailable: boolean;
+  availabilityStatus: 'Available' | 'Sold Out' | 'Temporarily Unavailable';
   statusLabel: string;
   nextAvailableDate: string | null;
 }
@@ -1454,6 +1472,7 @@ export interface IntegrationStatusItem {
     | 'notifications'
     | 'storage'
     | 'cloud_functions'
+    | 'resend_email'
     | 'manual_upi'
     | 'fcm_push';
   name: string;

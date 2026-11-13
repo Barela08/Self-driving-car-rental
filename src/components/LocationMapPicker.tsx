@@ -348,31 +348,12 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
     const chosen = activeBranches.find((b) => b.id === branchId);
     if (!chosen) return;
     setPanCommand({ lat: chosen.lat, lng: chosen.lng, zoom: 14 });
-    if (value.pickupMode === 'branch' && !isReturnOnly) {
-      setPendingPoint({
-        lat: chosen.lat,
-        lng: chosen.lng,
-        address: chosen.address,
-        city: chosen.cityName,
-      });
-      void validateAndSync({
-        ...value,
-        pickupBranchId: chosen.id,
-        returnBranchId: chosen.id,
-        pickupAddress: chosen.address,
-        pickupLat: chosen.lat,
-        pickupLng: chosen.lng,
-        returnAddress: chosen.address,
-        returnLat: chosen.lat,
-        returnLng: chosen.lng,
-      });
-    } else {
-      void validateAndSync({
-        ...value,
-        pickupBranchId: chosen.id,
-        returnBranchId: chosen.id,
-      });
-    }
+    void validateAndSync({
+      ...value,
+      pickupMode: 'delivery',
+      pickupBranchId: chosen.id,
+      returnBranchId: chosen.id,
+    });
   };
 
   const handleSwitchPinTab = (nextTab: 'pickup' | 'return') => {
@@ -396,40 +377,6 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
     }
   };
 
-  const handleModeChange = (nextMode: PickupMode) => {
-    if (nextMode === 'branch') {
-      setPendingPoint({ lat: hubLat, lng: hubLng, address: hubAddress, city: operatingCity });
-      setPanCommand({ lat: hubLat, lng: hubLng, zoom: 14 });
-      void validateAndSync({
-        ...value,
-        pickupMode: 'branch',
-        pickupAddress: hubAddress,
-        pickupLat: hubLat,
-        pickupLng: hubLng,
-        ...(isPickupOnly || sameReturn
-          ? {
-              returnAddress: hubAddress,
-              returnLat: hubLat,
-              returnLng: hubLng,
-              isOneWay: false,
-            }
-          : {}),
-      });
-    } else {
-      const pt = {
-        lat: value.pickupLat || hubLat,
-        lng: value.pickupLng || hubLng,
-        address: value.pickupAddress || hubAddress,
-      };
-      setPendingPoint(pt);
-      setPanCommand({ lat: pt.lat, lng: pt.lng, zoom: 15 });
-      void validateAndSync({
-        ...value,
-        pickupMode: 'delivery',
-      });
-    }
-  };
-
   const scheduleReverseGeocode = useCallback(
     (lat: number, lng: number) => {
       setPendingPoint((prev) => ({ ...prev, lat, lng }));
@@ -447,7 +394,6 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
   );
 
   const handleMapClick = (ev: MapMouseEvent) => {
-    if (!isReturnOnly && value.pickupMode !== 'delivery') return;
     const lat = ev.detail?.latLng?.lat;
     const lng = ev.detail?.latLng?.lng;
     if (typeof lat !== 'number' || typeof lng !== 'number') return;
@@ -456,7 +402,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
   };
 
   const handleMarkerDragEnd = async (ev: google.maps.MapMouseEvent) => {
-    if ((!isReturnOnly && value.pickupMode !== 'delivery') || !ev.latLng) return;
+    if (!ev.latLng) return;
     const lat = ev.latLng.lat();
     const lng = ev.latLng.lng();
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -572,7 +518,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
     setPanCommand(null);
   }, []);
 
-  const showInteractivePin = isReturnOnly || value.pickupMode === 'delivery';
+  const showInteractivePin = true;
   const locationMetaLine = [pendingPoint.locality, pendingPoint.city, pendingPoint.state, pendingPoint.postalCode]
     .filter(Boolean)
     .join(', ');
@@ -829,53 +775,18 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
                 : 'Confirm Location'}
           </button>
         </div>
-      ) : (
-        <div className="p-3.5 bg-obsidian border-t border-white/10 text-xs flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="font-semibold text-white">Self-Pickup at {hubName}</p>
-            <p className="text-ivory/65">{hubAddress}</p>
-          </div>
-          <span className="text-emerald-400 font-semibold">Zero Delivery Fee</span>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 
   return (
     <div className="space-y-3.5">
-      {/* Pickup Mode Switcher (hidden in Return-Only step) */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {!isReturnOnly ? (
-          <div className="inline-flex flex-wrap p-1 bg-obsidian border border-white/15 rounded-xl">
-            <button
-              type="button"
-              onClick={() => handleModeChange('delivery')}
-              disabled={!vehicle.deliveryEligible}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40 ${
-                value.pickupMode === 'delivery'
-                  ? 'bg-gold text-obsidian'
-                  : 'text-ivory/70 hover:text-white'
-              }`}
-            >
-              Custom Pickup / Delivery
-            </button>
-            <button
-              type="button"
-              onClick={() => handleModeChange('branch')}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
-                value.pickupMode === 'branch'
-                  ? 'bg-gold text-obsidian'
-                  : 'text-ivory/70 hover:text-white'
-              }`}
-            >
-              Self Pickup ({hubName} — Free)
-            </button>
-          </div>
-        ) : (
-          <div className="text-xs font-semibold text-gold">
-            Choose Drop / Return Location on Map
-          </div>
-        )}
+        <div className="text-xs font-semibold text-gold">
+          {isReturnOnly
+            ? 'Choose Drop / Return Location on Map'
+            : `Pin Pickup / Delivery Spot on Map (${operatingCity || hubName})`}
+        </div>
 
         <button
           type="button"
@@ -913,7 +824,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
       )}
 
       {/* Combined mode Pickup vs Return toggle tabs */}
-      {mode === 'combined' && value.pickupMode === 'delivery' && (
+      {mode === 'combined' && (
         <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-obsidian/70 border border-white/10">
           <div className="inline-flex p-1 bg-navy-deep border border-white/10 rounded-lg text-xs">
             <button
@@ -971,7 +882,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
             <p className="text-xs font-semibold text-white mt-1 leading-relaxed">
               {value.pickupAddress || 'No pickup address confirmed yet'}
             </p>
-            {value.pickupMode === 'delivery' && value.distanceKm !== undefined && (
+            {value.distanceKm !== undefined && (
               <p className="text-[11px] font-mono tabular-nums text-gold mt-1">
                 {value.distanceKm} km from {hubName}
               </p>
@@ -1013,10 +924,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
               <span>Checking service coverage and applicable fees...</span>
             ) : value.serviceable ? (
               <span className="font-medium">
-                {operatingCity || hubName} zone verified ·{' '}
-                {value.pickupMode === 'delivery'
-                  ? `Delivery fee ${formatINR(value.deliveryCharge)}`
-                  : 'Free hub self-pickup'}
+                {operatingCity || hubName} zone verified · Delivery fee {formatINR(value.deliveryCharge)}
                 {value.oneWayCharge > 0 ? ` · Return fee ${formatINR(value.oneWayCharge)}` : ''}
               </span>
             ) : (

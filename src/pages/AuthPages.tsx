@@ -134,7 +134,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       if (canAccessAdminConsole(profile)) {
         return <Navigate to="/dashboard/admin" replace />;
       }
-      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
       return <Navigate to={redirectTo} replace />;
     }
   }
@@ -202,13 +202,13 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       if (verified.channel === 'firebase' && verified.idToken) {
         const logged = await loginWithFirebasePhone(verified.idToken, undefined, phone.trim());
         if (logged) {
-          const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+          const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
           navigate(redirectTo);
         }
       } else if (verified.token && verified.profile) {
         setAuthenticatedSession(verified.token, verified.profile);
         toast.success(`Welcome, ${verified.profile.displayName || 'Customer'}`);
-        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
         navigate(redirectTo);
       } else {
         const msg = 'Verification succeeded, but account session could not be initialized. Please retry.';
@@ -285,7 +285,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     } else if (canAccessAdminConsole(loggedProfile)) {
       navigate('/dashboard/admin');
     } else {
-      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
       navigate(redirectTo);
     }
   };
@@ -329,7 +329,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       setPassword('');
       setConfirmPassword('');
       resetOtpUi();
-      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+      const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
       navigate(redirectTo);
     }
   };
@@ -395,7 +395,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       } else if (canAccessAdminConsole(logged)) {
         navigate('/dashboard/admin');
       } else {
-        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
+        const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/vehicles';
         navigate(redirectTo);
       }
     }

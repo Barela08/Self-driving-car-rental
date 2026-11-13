@@ -770,15 +770,6 @@ export function validateMultiBranchLocation(params: {
 
   let deliveryCharge = 0;
   if (pickupMode === 'delivery') {
-    if (!vehicle.deliveryEligible) {
-      return {
-        serviceable: false,
-        distanceKm: pickupDistanceKm,
-        returnDistanceKm,
-        maxRadiusKm,
-        reason: `${vehicle.name} is available for branch pickup only at ${pickupBranch.name}.`,
-      };
-    }
     deliveryCharge = Math.round(baseDeliveryFee + pickupDistanceKm * perKmDeliveryFee);
   }
 
