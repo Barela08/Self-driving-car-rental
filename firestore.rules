@@ -1,0 +1,257 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Reusable Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'custom'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'barelanilesh483@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Validation Helpers
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'accountStatus', 'kycStatus', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'role', 'branchId', 'accountStatus', 'kycStatus', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.role in ['customer', 'super_admin', 'fleet_manager', 'operations_staff', 'finance_staff', 'support_staff'] &&
+        (!('branchId' in data) || (data.branchId is string && data.branchId.size() <= 128)) &&
+        data.accountStatus in ['active', 'suspended', 'deletion_requested'] &&
+        data.kycStatus in ['Not Started', 'Pending', 'Under Review', 'Verified', 'Rejected', 'Resubmission Required', 'Expired'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidPrivateInfo(data) {
+      return data.keys().hasAll(['uid', 'email', 'marketingConsent', 'serviceConsentVersion', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent', 'serviceConsentVersion', 'serviceConsentAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == request.auth.uid &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 24)) &&
+        (!('savedAddresses' in data) || (data.savedAddresses is list && data.savedAddresses.size() <= 10)) &&
+        (!('favouriteVehicleIds' in data) || (data.favouriteVehicleIds is list && data.favouriteVehicleIds.size() <= 50)) &&
+        data.marketingConsent is bool &&
+        data.serviceConsentVersion is string && data.serviceConsentVersion.size() >= 1 && data.serviceConsentVersion.size() <= 32 &&
+        (!('serviceConsentAt' in data) || (data.serviceConsentAt is string && data.serviceConsentAt.size() <= 64)) &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll(['id', 'userId', 'subject', 'message', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'bookingId', 'category', 'subject', 'message', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userId == request.auth.uid &&
+        (!('bookingId' in data) || (data.bookingId is string && data.bookingId.size() <= 128)) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 60)) &&
+        data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 120 &&
+        data.message is string && data.message.size() >= 2 && data.message.size() <= 2000 &&
+        data.status in ['Open', 'In Review', 'Resolved', 'Closed'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidRoadsideRequest(data) {
+      return data.keys().hasAll(['id', 'userId', 'bookingId', 'issueType', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'bookingId', 'issueType', 'notes', 'lat', 'lng', 'locationShared', 'assignedStaffUid', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userId == request.auth.uid &&
+        isValidId(data.bookingId) &&
+        data.issueType is string && data.issueType.size() >= 2 && data.issueType.size() <= 80 &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        (!('lat' in data) || data.lat is number) &&
+        (!('lng' in data) || data.lng is number) &&
+        (!('locationShared' in data) || data.locationShared is bool) &&
+        (!('assignedStaffUid' in data) || (data.assignedStaffUid is string && data.assignedStaffUid.size() <= 128)) &&
+        data.status in ['Open', 'Dispatched', 'In Progress', 'Resolved'] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // 4. Collection Rules
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list, write: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if false;
+      allow create: if isValidId(userId) && isVerifiedUser() && isOwner(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == userId &&
+        incoming().role == 'customer' &&
+        incoming().accountStatus == 'active' &&
+        incoming().kycStatus == 'Not Started';
+      allow update: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) && (
+        isAdmin() ||
+        (isOwner(userId) &&
+          incoming().uid == existing().uid &&
+          incoming().role == existing().role &&
+          incoming().kycStatus == existing().kycStatus &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'accountStatus', 'updatedAt']) &&
+          incoming().accountStatus in ['active', 'deletion_requested'])
+      );
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin());
+        allow list: if false;
+        allow create: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isOwner(userId) &&
+          isValidPrivateInfo(incoming());
+        allow update: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isOwner(userId) &&
+          isValidPrivateInfo(incoming()) &&
+          incoming().uid == existing().uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent', 'serviceConsentVersion', 'serviceConsentAt', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    // Public Service Catalog (Browse without login)
+    match /cities/{cityId} {
+      allow get: if isValidId(cityId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /branches/{branchId} {
+      allow get: if isValidId(branchId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /vehicles/{vehicleId} {
+      allow get: if isValidId(vehicleId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /vehicle_private/{vehicleId} {
+      allow get: if isValidId(vehicleId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /insurance_packages/{packageId} {
+      allow get: if isValidId(packageId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /subscription_plans/{planId} {
+      allow get: if isValidId(planId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /company_settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    // Bookings & Operational Records (Mutations enforced server-side via Admin SDK)
+    match /bookings/{bookingId} {
+      allow get: if isValidId(bookingId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+
+      match /status_history/{historyId} {
+        allow get: if isValidId(bookingId) && isValidId(historyId) && isSignedIn() && (
+          get(/databases/$(database)/documents/bookings/$(bookingId)).data.userId == request.auth.uid || isAdmin()
+        );
+        allow list: if isValidId(bookingId) && isSignedIn() && resource.data.userId == request.auth.uid;
+        allow write: if false;
+      }
+    }
+
+    match /kyc_verifications/{kycId} {
+      allow get: if isValidId(kycId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /invoices/{invoiceId} {
+      allow get: if isValidId(invoiceId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /customer_subscriptions/{subId} {
+      allow get: if isValidId(subId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isValidId(notificationId) && isSignedIn() && existing().userId == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+        incoming().read is bool;
+      allow create, delete: if false;
+    }
+
+    match /support_tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(ticketId) && isVerifiedUser() &&
+        isValidSupportTicket(incoming()) &&
+        incoming().id == ticketId &&
+        incoming().status == 'Open';
+      allow update, delete: if isAdmin();
+    }
+
+    match /roadside_requests/{ticketId} {
+      allow get: if isValidId(ticketId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(ticketId) && isVerifiedUser() &&
+        isValidRoadsideRequest(incoming()) &&
+        incoming().id == ticketId &&
+        incoming().status == 'Open';
+      allow update, delete: if isAdmin();
+    }
+  }
+}

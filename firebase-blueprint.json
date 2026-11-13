@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public/operational user profile and role metadata",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "role": { "type": "string", "enum": ["customer", "super_admin", "fleet_manager", "operations_staff", "finance_staff", "support_staff"] },
+        "branchId": { "type": "string", "maxLength": 128 },
+        "accountStatus": { "type": "string", "enum": ["active", "suspended", "deletion_requested"] },
+        "kycStatus": { "type": "string", "enum": ["Not Started", "Pending", "Under Review", "Verified", "Rejected", "Resubmission Required", "Expired"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "accountStatus", "kycStatus", "createdAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated customer PII including email, phone, saved addresses, favorites, and consent records",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 24 },
+        "marketingConsent": { "type": "boolean" },
+        "serviceConsentVersion": { "type": "string", "maxLength": 32 },
+        "serviceConsentAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "marketingConsent", "serviceConsentVersion", "updatedAt"]
+    },
+    "City": {
+      "title": "City",
+      "description": "Admin-enabled serviceable city across India",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "state": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "serviceable": { "type": "boolean" }
+      },
+      "required": ["id", "name", "state", "lat", "lng", "serviceable"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Physical company branch with delivery radius and one-way configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "cityId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "address": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "openingHours": { "type": "string", "maxLength": 80 },
+        "deliveryRadiusKm": { "type": "number" },
+        "baseDeliveryFee": { "type": "number" },
+        "perKmDeliveryFee": { "type": "number" },
+        "oneWaySupported": { "type": "boolean" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "cityId", "name", "address", "lat", "lng", "deliveryRadiusKm", "active"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Company-owned self-drive rental vehicle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "brand": { "type": "string", "maxLength": 60 },
+        "model": { "type": "string", "maxLength": 60 },
+        "year": { "type": "number" },
+        "category": { "type": "string", "enum": ["Hatchback", "Sedan", "SUV", "MUV", "Luxury", "Premium", "Electric"] },
+        "transmission": { "type": "string", "enum": ["Manual", "Automatic"] },
+        "fuelType": { "type": "string", "enum": ["Petrol", "Diesel", "Electric", "Hybrid", "CNG"] },
+        "seats": { "type": "number" },
+        "pricePerDay": { "type": "number" },
+        "securityDeposit": { "type": "number" },
+        "includedKmPerDay": { "type": "number" },
+        "extraKmRate": { "type": "number" },
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "cityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "instantBooking": { "type": "boolean" },
+        "deliveryEligible": { "type": "boolean" },
+        "oneWayEligible": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Available", "Reserved", "Active Rental", "Maintenance", "Inspection", "Inactive"] }
+      },
+      "required": ["id", "name", "category", "transmission", "fuelType", "seats", "pricePerDay", "securityDeposit", "branchId", "cityId", "status"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Self-drive reservation record with lifecycle status and pricing breakdown",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "vehicleId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingMode": { "type": "string", "enum": ["instant", "approval"] },
+        "pickupMode": { "type": "string", "enum": ["branch", "delivery"] },
+        "status": {
+          "type": "string",
+          "enum": ["Draft", "Pending Payment", "Payment Verification", "Pending Approval", "Confirmed", "KYC Pending", "KYC Verified", "Ready for Pickup", "Active Rental", "Return Inspection", "Completed", "Cancelled", "Rejected", "Expired", "Payment Failed", "Refund Pending", "Refunded", "Disputed"]
+        },
+        "startDate": { "type": "string", "maxLength": 40 },
+        "endDate": { "type": "string", "maxLength": 40 },
+        "totalPayable": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["Pending", "Partial Paid", "Paid", "Failed", "Refund Pending", "Refunded"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "vehicleId", "branchId", "bookingMode", "pickupMode", "status", "startDate", "endDate", "totalPayable", "paymentStatus", "createdAt"]
+    },
+    "KycVerification": {
+      "title": "KycVerification",
+      "description": "Private customer KYC submission for online or branch appointment verification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mode": { "type": "string", "enum": ["online", "branch_appointment"] },
+        "licenseNumber": { "type": "string", "maxLength": 40 },
+        "idProofType": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["Not Started", "Pending", "Under Review", "Verified", "Rejected", "Resubmission Required", "Expired"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "mode", "status", "updatedAt"]
+    },
+    "RoadsideRequest": {
+      "title": "RoadsideRequest",
+      "description": "Roadside assistance breakdown ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "issueType": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "type": "string", "enum": ["Open", "Dispatched", "In Progress", "Resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "bookingId", "issueType", "status", "createdAt"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Customer support or account deletion ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["Open", "In Review", "Resolved", "Closed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "subject", "message", "status", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "body", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User role and non-PII status metadata"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated PII profile, saved addresses, and consent preferences"
+    },
+    "/cities/{cityId}": {
+      "schema": { "$ref": "#/entities/City" },
+      "description": "Admin-approved serviceable cities"
+    },
+    "/branches/{branchId}": {
+      "schema": { "$ref": "#/entities/Branch" },
+      "description": "Rental branch locations and coverage parameters"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": { "$ref": "#/entities/Vehicle" },
+      "description": "Public fleet catalog"
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Self-drive booking records"
+    },
+    "/kyc_verifications/{kycId}": {
+      "schema": { "$ref": "#/entities/KycVerification" },
+      "description": "Private customer KYC submissions"
+    },
+    "/roadside_requests/{ticketId}": {
+      "schema": { "$ref": "#/entities/RoadsideRequest" },
+      "description": "Roadside breakdown assistance tickets"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Customer support inquiries"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "User transactional and service notifications"
+    }
+  }
+}
