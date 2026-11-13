@@ -11,6 +11,7 @@ import { AuthPortalPage } from './pages/AuthPages';
 import { CustomerDashboard } from './pages/CustomerDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { StaffDashboard } from './pages/StaffDashboard';
+import { BookingPaymentPage } from './pages/BookingPaymentPage';
 
 export default function App() {
   const [quotaExceeded, setQuotaExceeded] = useState(false);
@@ -54,12 +55,14 @@ export default function App() {
                 <Route path="/" element={<HomePage />} />
                 <Route path="/vehicles" element={<VehiclesPage />} />
                 <Route path="/vehicles/:id" element={<VehicleDetailPage />} />
+                <Route path="/bookings/:id/pay" element={<BookingPaymentPage />} />
                 <Route path="/login" element={<AuthPortalPage portal="customer" />} />
                 <Route path="/register" element={<AuthPortalPage portal="customer" />} />
                 <Route path="/admin" element={<AuthPortalPage portal="admin" />} />
                 <Route path="/staff" element={<AuthPortalPage portal="staff" />} />
                 <Route path="/dashboard" element={<CustomerDashboard />} />
                 <Route path="/dashboard/admin" element={<AdminDashboard />} />
+                <Route path="/dashboard/admin/payment-settings" element={<AdminDashboard initialTab="payment_settings" />} />
                 <Route path="/dashboard/staff" element={<StaffDashboard />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

@@ -170,6 +170,118 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "title", "body", "read", "createdAt"]
+    },
+    "WhatsAppConfig": {
+      "title": "WhatsAppConfig",
+      "description": "Single-company WhatsApp Business Cloud API configuration and zero-budget safety caps (no secrets stored)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "connectionStatus": { "type": "string", "enum": ["Disconnected", "Pending Verification", "Connected"] },
+        "businessPhoneNumber": { "type": "string", "maxLength": 32 },
+        "phoneNumberId": { "type": "string", "maxLength": 64 },
+        "wabaId": { "type": "string", "maxLength": 64 },
+        "accountStatus": { "type": "string", "maxLength": 40 },
+        "qualityRating": { "type": "string", "maxLength": 32 },
+        "monthlyBudgetInr": { "type": "number" },
+        "currentMonthSpendInr": { "type": "number" },
+        "zeroBudgetEnforced": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "connectionStatus", "monthlyBudgetInr", "zeroBudgetEnforced", "updatedAt"]
+    },
+    "WhatsAppTemplate": {
+      "title": "WhatsAppTemplate",
+      "description": "Approved Meta WhatsApp Cloud API message template metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "type": "string", "enum": ["AUTHENTICATION", "UTILITY", "MARKETING", "SERVICE"] },
+        "language": { "type": "string", "maxLength": 16 },
+        "status": { "type": "string", "enum": ["Not Synced", "Pending", "Approved", "Rejected", "Paused"] }
+      },
+      "required": ["id", "name", "category", "status"]
+    },
+    "EmployeeNotificationSetting": {
+      "title": "EmployeeNotificationSetting",
+      "description": "Branch and department employee WhatsApp alert subscriptions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "phone": { "type": "string", "minLength": 8, "maxLength": 24 },
+        "branchId": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "enum": ["super_admin", "fleet_manager", "operations", "finance", "support"] },
+        "whatsappEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "phone", "branchId", "department", "whatsappEnabled", "updatedAt"]
+    },
+    "NotificationLog": {
+      "title": "NotificationLog",
+      "description": "Audit log of WhatsApp and fallback notifications (never stores tokens or plaintext OTPs)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "recipientId": { "type": "string", "maxLength": 128 },
+        "recipientPhone": { "type": "string", "maxLength": 32 },
+        "recipientType": { "type": "string", "enum": ["customer", "employee", "admin"] },
+        "messageCategory": { "type": "string", "enum": ["authentication", "utility", "marketing", "service"] },
+        "templateName": { "type": "string", "maxLength": 120 },
+        "deliveryStatus": { "type": "string", "enum": ["Queued", "Sent", "Delivered", "Read", "Failed", "Blocked (Zero Budget)", "Fallback Triggered"] },
+        "whatsappMessageId": { "type": "string", "maxLength": 160 },
+        "errorDetails": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "deliveredAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "recipientId", "recipientPhone", "recipientType", "messageCategory", "templateName", "deliveryStatus", "createdAt"]
+    },
+    "PaymentProof": {
+      "title": "PaymentProof",
+      "description": "Customer QR/UPI payment reference and screenshot proof awaiting finance verification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "amountSubmitted": { "type": "number" },
+        "utrReference": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "transactionRef": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["Pending Verification", "Approved", "Rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "amountSubmitted", "utrReference", "status", "createdAt"]
+    },
+    "PaymentAuditLog": {
+      "title": "PaymentAuditLog",
+      "description": "Immutable server-side ledger of UPI payment sessions, submissions, duplicate blocks, and approvals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "bookingReference": { "type": "string", "maxLength": 64 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 64 },
+        "details": { "type": "string", "maxLength": 500 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "actorUid", "action", "details", "timestamp"]
+    },
+    "WhatsAppOtpChallenge": {
+      "title": "WhatsAppOtpChallenge",
+      "description": "Server-only hashed OTP challenge record (strictly blocked from client reads/writes)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 24 },
+        "otpHash": { "type": "string", "maxLength": 128 },
+        "attempts": { "type": "number" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "used": { "type": "boolean" }
+      },
+      "required": ["id", "phone", "otpHash", "attempts", "expiresAt", "used"]
     }
   },
   "firestore": {
@@ -212,6 +324,34 @@
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/Notification" },
       "description": "User transactional and service notifications"
+    },
+    "/whatsapp_config/{configId}": {
+      "schema": { "$ref": "#/entities/WhatsAppConfig" },
+      "description": "Single-company WhatsApp Cloud API config and budget limits"
+    },
+    "/whatsapp_templates/{templateId}": {
+      "schema": { "$ref": "#/entities/WhatsAppTemplate" },
+      "description": "Meta WhatsApp template approval status tracker"
+    },
+    "/employee_notification_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/EmployeeNotificationSetting" },
+      "description": "Employee WhatsApp notification routing rules"
+    },
+    "/notification_logs/{logId}": {
+      "schema": { "$ref": "#/entities/NotificationLog" },
+      "description": "Immutable notification delivery & fallback audit logs"
+    },
+    "/payment_proofs/{proofId}": {
+      "schema": { "$ref": "#/entities/PaymentProof" },
+      "description": "Customer UPI/QR payment proof submissions"
+    },
+    "/payment_audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/PaymentAuditLog" },
+      "description": "Immutable payment verification, duplicate block, and settings audit logs"
+    },
+    "/whatsapp_otp_challenges/{challengeId}": {
+      "schema": { "$ref": "#/entities/WhatsAppOtpChallenge" },
+      "description": "Server-only hashed OTP challenges (no client access)"
     }
   }
 }

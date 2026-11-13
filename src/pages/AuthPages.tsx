@@ -1,20 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Lock, Mail, User, Phone, ArrowRight } from 'lucide-react';
+import { Lock, Mail, User, Phone, ArrowRight, MessageSquare, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { apiFetch } from '../lib/api';
+import { apiFetch, setSessionToken } from '../lib/api';
 
 interface AuthPortalProps {
   portal: 'customer' | 'admin' | 'staff';
 }
 
 export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
-  const { profile, loading, loginWithEmail, registerWithEmail, loginWithGoogle } = useAuth();
+  const { profile, loading, loginWithEmail, registerWithEmail, loginWithGoogle, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'reset' | 'otp_login'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -22,7 +22,23 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   const [newPassword, setNewPassword] = useState('');
   const [serviceConsent, setServiceConsent] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false); // Never pre-checked!
+  const [whatsappConsent, setWhatsappConsent] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  // WhatsApp OTP challenge state
+  const [otpChallengeId, setOtpChallengeId] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpMessage, setOtpMessage] = useState('');
+  const [otpCooldown, setOtpCooldown] = useState(0);
+  const [regOtpVerified, setRegOtpVerified] = useState(false);
+
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const id = window.setInterval(() => {
+      setOtpCooldown((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [otpCooldown]);
 
   if (!loading && profile) {
     if (portal === 'admin' && ['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) {
@@ -42,6 +58,94 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       return <Navigate to={redirectTo} replace />;
     }
   }
+
+  const handleRequestOtp = async (purpose: 'login' | 'registration' | 'password_recovery') => {
+    if (!phone.trim()) {
+      toast.error('Please enter your mobile number with country code (e.g. +91 98200 11223).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch<{
+        challengeId: string;
+        cooldownSeconds: number;
+        message: string;
+      }>('/api/auth/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phone.trim(), purpose, email: email.trim() || undefined }),
+      });
+      setOtpChallengeId(res.challengeId);
+      setOtpCooldown(res.cooldownSeconds || 60);
+      setOtpMessage(res.message);
+      toast.success(res.message);
+    } catch (err: any) {
+      toast.error(err.message || 'Unable to send WhatsApp OTP');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerifyOtpLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpChallengeId || otpCode.trim().length !== 6) {
+      toast.error('Request an OTP first and enter the 6-digit code.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ verified: boolean; token?: string; profile?: any; message: string }>(
+        '/api/auth/otp/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            challengeId: otpChallengeId,
+            phone: phone.trim(),
+            code: otpCode.trim(),
+            purpose: 'login',
+          }),
+        }
+      );
+      if (res.token && res.profile) {
+        setSessionToken(res.token);
+        await refreshProfile();
+        toast.success(`Login Successful — Welcome, ${res.profile.displayName}`);
+        navigate('/dashboard');
+      } else {
+        toast.info('OTP verified, but no registered account matched this mobile number yet.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'OTP verification failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerifyRegistrationOtp = async () => {
+    if (!otpChallengeId || otpCode.trim().length !== 6) {
+      toast.error('Enter the 6-digit OTP sent to your mobile.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          challengeId: otpChallengeId,
+          phone: phone.trim(),
+          code: otpCode.trim(),
+          purpose: 'registration',
+        }),
+      });
+      if (res.verified) {
+        setRegOtpVerified(true);
+        toast.success(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'OTP verification failed');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,11 +178,15 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       phone,
       serviceConsentAccepted: serviceConsent,
       marketingConsent,
-    });
+      whatsappConsent,
+    } as any);
     setBusy(false);
     if (ok) {
       setMode('login');
       setPassword('');
+      setRegOtpVerified(false);
+      setOtpChallengeId('');
+      setOtpCode('');
     }
   };
 
@@ -86,13 +194,29 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const res = await apiFetch<{ message: string }>('/api/auth/password-reset', {
-        method: 'POST',
-        body: JSON.stringify({ email, newPassword }),
-      });
-      toast.success(res.message);
+      if (otpChallengeId && otpCode.trim().length === 6) {
+        const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
+          method: 'POST',
+          body: JSON.stringify({
+            challengeId: otpChallengeId,
+            phone: phone.trim(),
+            code: otpCode.trim(),
+            purpose: 'password_recovery',
+            newPassword,
+          }),
+        });
+        toast.success(res.message);
+      } else {
+        const res = await apiFetch<{ message: string }>('/api/auth/password-reset', {
+          method: 'POST',
+          body: JSON.stringify({ email, newPassword }),
+        });
+        toast.success(res.message);
+      }
       setMode('login');
       setNewPassword('');
+      setOtpCode('');
+      setOtpChallengeId('');
     } catch (err: any) {
       toast.error(err.message || 'Password reset failed');
     } finally {
@@ -126,13 +250,13 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     <div className="min-h-[calc(100vh-4rem)] bg-alabaster flex items-center justify-center p-4 sm:p-8">
       <div className="w-full max-w-md bg-white border border-black/15 rounded-2xl overflow-hidden shadow-sm">
         <div className="p-6 bg-obsidian text-white border-b border-white/10">
-          <p className="text-xs text-gold font-medium">EliteDrive Mobility</p>
+          <p className="text-xs text-gold font-medium">EliteDrive Mobility · A Product of HackifyPro</p>
           <h1 className="font-display text-2xl font-semibold mt-1">{portalHeading}</h1>
         </div>
 
         <div className="p-6 space-y-5">
           {portal === 'customer' && (
-            <div className="grid grid-cols-2 p-1 bg-alabaster border border-black/10 rounded-lg">
+            <div className="grid grid-cols-3 p-1 bg-alabaster border border-black/10 rounded-lg">
               <button
                 type="button"
                 onClick={() => setMode('login')}
@@ -140,7 +264,21 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   mode === 'login' ? 'bg-obsidian text-white' : 'text-slate-muted hover:text-ink'
                 }`}
               >
-                Sign In
+                Password
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('otp_login');
+                  setOtpChallengeId('');
+                  setOtpCode('');
+                  setOtpMessage('');
+                }}
+                className={`py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  mode === 'otp_login' ? 'bg-obsidian text-white' : 'text-slate-muted hover:text-ink'
+                }`}
+              >
+                WhatsApp OTP
               </button>
               <button
                 type="button"
@@ -149,7 +287,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   mode === 'register' ? 'bg-obsidian text-white' : 'text-slate-muted hover:text-ink'
                 }`}
               >
-                Create Account
+                Register
               </button>
             </div>
           )}
@@ -242,6 +380,65 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
             </form>
           )}
 
+          {mode === 'otp_login' && portal === 'customer' && (
+            <form onSubmit={(e) => void handleVerifyOtpLogin(e)} className="space-y-4 text-xs">
+              <p className="text-slate-muted">
+                Receive a 6-digit single-use verification code via official EliteDrive WhatsApp Business. Valid for 5 minutes (max 5 attempts).
+              </p>
+              <div>
+                <label className="block font-semibold text-slate-muted mb-1">Registered Mobile Number (+91)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+91 98200 11223"
+                    className="flex-1 px-3 py-2 text-sm border border-black/15 rounded-lg font-mono focus:outline-none focus:border-gold"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || otpCooldown > 0}
+                    onClick={() => void handleRequestOtp('login')}
+                    className="px-3 py-2 bg-obsidian text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    {otpCooldown > 0 ? `Wait ${otpCooldown}s` : otpChallengeId ? 'Resend' : 'Send OTP'}
+                  </button>
+                </div>
+              </div>
+
+              {otpMessage && (
+                <p className="text-[11px] text-slate-muted bg-alabaster border border-black/10 rounded-lg p-2.5">
+                  {otpMessage}
+                </p>
+              )}
+
+              {otpChallengeId && (
+                <div>
+                  <label className="block font-semibold text-slate-muted mb-1">Enter 6-Digit WhatsApp OTP</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="6-digit code"
+                    className="w-full px-3 py-2.5 text-sm border border-black/15 rounded-lg font-mono tracking-widest focus:outline-none focus:border-gold"
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy || !otpChallengeId || otpCode.length !== 6}
+                className="w-full py-3 px-4 bg-obsidian text-white text-sm font-semibold rounded-xl hover:bg-graphite disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <MessageSquare className="w-4 h-4 text-gold" />
+                {busy ? 'Verifying...' : 'Verify & Sign In'}
+              </button>
+            </form>
+          )}
+
           {mode === 'register' && portal === 'customer' && (
             <form onSubmit={(e) => void handleRegister(e)} className="space-y-3.5">
               <div>
@@ -274,17 +471,51 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-muted mb-1">Mobile Number (+91)</label>
-                <div className="relative">
-                  <Phone className="w-4 h-4 text-slate-muted absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="tel"
-                    required
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+91 98200 11223"
-                    className="w-full pl-9 pr-3 py-2 text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
-                  />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Phone className="w-4 h-4 text-slate-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="tel"
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+91 98200 11223"
+                      className="w-full pl-9 pr-3 py-2 text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy || otpCooldown > 0 || regOtpVerified}
+                    onClick={() => void handleRequestOtp('registration')}
+                    className="px-3 py-2 border border-black/15 rounded-lg text-xs font-semibold hover:border-gold disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    {regOtpVerified ? 'Verified' : otpCooldown > 0 ? `${otpCooldown}s` : 'Send OTP'}
+                  </button>
                 </div>
+                {otpChallengeId && !regOtpVerified && (
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="6-digit OTP"
+                      className="flex-1 px-3 py-1.5 text-xs border border-black/15 rounded-lg font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleVerifyRegistrationOtp()}
+                      className="px-3 py-1.5 bg-obsidian text-white text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      Verify OTP
+                    </button>
+                  </div>
+                )}
+                {regOtpVerified && (
+                  <p className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5" /> WhatsApp number verified
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-muted mb-1">Password (min 6 characters)</label>
@@ -315,6 +546,16 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                   </span>
                 </label>
 
+                <label className="flex items-start gap-2 text-xs text-ink/85 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={whatsappConsent}
+                    onChange={(e) => setWhatsappConsent(e.target.checked)}
+                    className="mt-0.5 accent-obsidian"
+                  />
+                  <span>Receive transactional booking, payment, KYC, and trip updates on WhatsApp (reply STOP anytime).</span>
+                </label>
+
                 <label className="flex items-start gap-2 text-xs text-slate-muted cursor-pointer">
                   <input
                     type="checkbox"
@@ -337,8 +578,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
           )}
 
           {mode === 'reset' && (
-            <form onSubmit={(e) => void handlePasswordReset(e)} className="space-y-4">
-              <p className="text-xs text-slate-muted">Enter your registered email and a new password to reset access.</p>
+            <form onSubmit={(e) => void handlePasswordReset(e)} className="space-y-4 text-xs">
+              <p className="text-slate-muted">
+                Reset via registered email or verify your mobile with a 6-digit WhatsApp OTP.
+              </p>
               <input
                 type="email"
                 required
@@ -347,6 +590,33 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 placeholder="Registered email"
                 className="w-full px-3 py-2.5 text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
               />
+              <div className="flex gap-2">
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Optional WhatsApp mobile (+91...)"
+                  className="flex-1 px-3 py-2 border border-black/15 rounded-lg font-mono"
+                />
+                <button
+                  type="button"
+                  disabled={busy || otpCooldown > 0 || !phone.trim()}
+                  onClick={() => void handleRequestOtp('password_recovery')}
+                  className="px-3 py-2 border border-black/15 rounded-lg font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {otpCooldown > 0 ? `${otpCooldown}s` : 'Send OTP'}
+                </button>
+              </div>
+              {otpChallengeId && (
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Enter 6-digit WhatsApp OTP"
+                  className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono"
+                />
+              )}
               <input
                 type="password"
                 required

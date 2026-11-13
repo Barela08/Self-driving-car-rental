@@ -26,7 +26,14 @@ export type VehicleStatus =
 export type BookingMode = 'instant' | 'approval';
 export type PickupMode = 'branch' | 'delivery';
 export type PaymentMode = 'full' | 'advance_balance';
-export type PaymentStatus = 'Pending' | 'Partial Paid' | 'Paid' | 'Failed' | 'Refund Pending' | 'Refunded';
+export type PaymentStatus =
+  | 'Pending'
+  | 'Pending Verification'
+  | 'Partial Paid'
+  | 'Paid'
+  | 'Failed'
+  | 'Refund Pending'
+  | 'Refunded';
 
 export type BookingStatus =
   | 'Draft'
@@ -240,6 +247,12 @@ export interface Booking {
   handoverInspection?: HandoverInspection | null;
   returnInspection?: ReturnInspection | null;
   statusHistory?: BookingStatusHistory[];
+  activePaymentSession?: {
+    transactionRef: string;
+    exactAmount: number;
+    expiresAt: string;
+    createdAt: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -271,6 +284,9 @@ export interface UserPrivateInfo {
   savedAddresses?: SavedAddress[];
   favouriteVehicleIds?: string[];
   marketingConsent: boolean;
+  whatsappConsent?: boolean;
+  whatsappOptOut?: boolean;
+  fcmTokens?: string[];
   serviceConsentVersion: string;
   serviceConsentAt?: string;
   updatedAt: string;
@@ -454,6 +470,11 @@ export interface CompanySettings {
   roadsideEmergencyPhone: string;
   supportEmail: string;
   whatsappNumber: string;
+  upiEnabled?: boolean;
+  upiId?: string;
+  upiMerchantName?: string;
+  upiStaticQrImage?: string;
+  upiPaymentInstructions?: string;
   taxRatePercent: number;
   advancePaymentPercent: number;
   roadsideAddonPerDay: number;
@@ -467,3 +488,158 @@ export interface CompanySettings {
   faqs: { question: string; answer: string }[];
   testimonials: { name: string; role: string; city: string; quote: string }[];
 }
+
+export type NotificationEventKey =
+  | 'booking_received'
+  | 'booking_approved'
+  | 'booking_rejected'
+  | 'booking_cancelled'
+  | 'payment_proof_submitted'
+  | 'payment_verified'
+  | 'payment_rejected'
+  | 'kyc_submitted'
+  | 'kyc_approved'
+  | 'kyc_rejected'
+  | 'pickup_scheduled'
+  | 'pickup_completed'
+  | 'return_reminder'
+  | 'return_completed'
+  | 'refund_processed';
+
+export type EmployeeDepartment = 'super_admin' | 'fleet_manager' | 'operations' | 'finance' | 'support';
+
+export interface EmployeeNotificationSetting {
+  id: string;
+  name: string;
+  phone: string;
+  branchId: string; // 'all' or specific branch ID
+  department: EmployeeDepartment;
+  whatsappEnabled: boolean;
+  events: NotificationEventKey[];
+  updatedAt: string;
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  category: 'AUTHENTICATION' | 'UTILITY' | 'MARKETING' | 'SERVICE';
+  language: string;
+  status: 'Not Synced' | 'Pending' | 'Approved' | 'Rejected' | 'Paused';
+  lastSyncedAt?: string;
+}
+
+export interface WhatsAppConfig {
+  id: string;
+  connectionStatus: 'Disconnected' | 'Pending Verification' | 'Connected';
+  businessPhoneNumber: string;
+  phoneNumberId: string;
+  wabaId: string;
+  accountStatus: string;
+  qualityRating: string;
+  hasAccessTokenSecret: boolean;
+  hasAppSecret: boolean;
+  webhookVerifyTokenConfigured: boolean;
+  monthlyBudgetInr: number;
+  currentMonthSpendInr: number;
+  freeServiceConversationsUsed: number;
+  freeServiceAllowanceMonthly: number;
+  perUtilityCostInr: number;
+  perAuthCostInr: number;
+  perMarketingCostInr: number;
+  zeroBudgetEnforced: boolean;
+  otpExpirySeconds: number;
+  otpMaxAttempts: number;
+  otpCooldownSeconds: number;
+  customerEventFlags: Record<NotificationEventKey, boolean>;
+  lastVerifiedAt?: string | null;
+  lastError?: string | null;
+  updatedAt: string;
+}
+
+export interface NotificationLog {
+  id: string;
+  bookingId: string;
+  recipientId: string;
+  recipientPhone: string;
+  recipientType: 'customer' | 'employee' | 'admin';
+  messageCategory: 'authentication' | 'utility' | 'marketing' | 'service';
+  templateName: string;
+  deliveryStatus:
+    | 'Queued'
+    | 'Sent'
+    | 'Delivered'
+    | 'Read'
+    | 'Failed'
+    | 'Blocked (Zero Budget)'
+    | 'Fallback Triggered';
+  whatsappMessageId: string;
+  errorDetails: string;
+  fallbackChannel?: string;
+  estimatedCostInr?: number;
+  idempotencyKey?: string;
+  createdAt: string;
+  deliveredAt: string | null;
+}
+
+export interface PaymentProof {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  userId: string;
+  customerName: string;
+  amountSubmitted: number;
+  utrReference: string;
+  transactionRef?: string;
+  upiUri?: string;
+  expiresAt?: string;
+  screenshotStorageRef: string;
+  screenshotDataUrl?: string;
+  paymentMode: PaymentMode;
+  status: 'Pending Verification' | 'Approved' | 'Rejected';
+  reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentSessionData {
+  bookingId: string;
+  bookingReference: string;
+  transactionRef: string;
+  exactAmount: number;
+  currency: 'INR';
+  paymentMode: PaymentMode;
+  upiUri: string;
+  expiresAt: string;
+  isExpired: boolean;
+  createdAt: string;
+}
+
+export interface PaymentAuditLog {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  transactionRef?: string;
+  utrReference?: string;
+  actorUid: string;
+  actorRole: string;
+  action:
+    | 'PAYMENT_SESSION_CREATED'
+    | 'PAYMENT_SESSION_REFRESHED'
+    | 'PAYMENT_MODE_CHANGED'
+    | 'UPI_PROOF_SUBMITTED'
+    | 'PAYMENT_VERIFIED'
+    | 'PAYMENT_REJECTED'
+    | 'DUPLICATE_UTR_BLOCKED'
+    | 'PAYMENT_SETTINGS_UPDATED';
+  expectedAmount?: number;
+  submittedAmount?: number;
+  statusBefore?: string;
+  statusAfter?: string;
+  details: string;
+  timestamp: string;
+}
+
+export type OtpPurpose = 'registration' | 'login' | 'password_recovery' | 'verification';
+

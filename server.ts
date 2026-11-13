@@ -15,6 +15,20 @@ import {
   type AuthRequest,
 } from './src/server/auth.ts';
 import { calculatePricingBreakdown, validateLocationServiceability } from './src/server/pricing.ts';
+import { sendWhatsAppOtp, verifyWhatsAppOtp } from './src/server/otp.ts';
+import {
+  getWhatsAppConfig,
+  getWhatsAppSecrets,
+  normalizeIndianPhone,
+  processWhatsAppWebhook,
+  runPickupAndReturnReminders,
+  sendBookingApprovalNotification,
+  sendBookingNotification,
+  sendKycStatusNotification,
+  sendPaymentStatusNotification,
+  sendTripStatusNotification,
+  verifyLiveMetaConnection,
+} from './src/server/whatsapp.ts';
 import type {
   Booking,
   BookingStatus,
@@ -22,8 +36,14 @@ import type {
   City,
   CompanySettings,
   Coupon,
+  EmployeeNotificationSetting,
   InsurancePackage,
+  NotificationEventKey,
+  OtpPurpose,
+  PaymentAuditLog,
   PaymentMode,
+  PaymentProof,
+  PaymentSessionData,
   PickupMode,
   Role,
   SubscriptionPlan,
@@ -94,6 +114,32 @@ async function appendBookingHistory(params: {
     });
 }
 
+async function writePaymentAuditLog(entry: Omit<PaymentAuditLog, 'id' | 'timestamp'>) {
+  const id = `paud-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  await db.collection('payment_audit_logs').doc(id).set({
+    id,
+    ...entry,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function buildBookingUpiUri(params: {
+  upiId: string;
+  upiMerchantName: string;
+  amount: number;
+  transactionRef: string;
+  bookingReference: string;
+}): string {
+  const cleanAmount = Math.max(1, Math.round(Number(params.amount || 0) * 100) / 100).toFixed(2);
+  const note = `Booking ${params.bookingReference}`;
+  return `upi://pay?pa=${encodeURIComponent(params.upiId)}&pn=${encodeURIComponent(params.upiMerchantName)}&am=${cleanAmount}&tr=${encodeURIComponent(params.transactionRef)}&tn=${encodeURIComponent(note)}&cu=INR`;
+}
+
+function generatePaymentSessionRef(bookingReference: string): string {
+  const compact = bookingReference.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  return `EDPAY-${compact}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+}
+
 async function createNotification(params: {
   userId: string;
   title: string;
@@ -118,7 +164,38 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '2mb' }));
+  app.use(
+    express.json({
+      limit: '5mb',
+      verify: (req, _res, buf) => {
+        (req as any).rawBody = buf;
+      },
+    })
+  );
+
+  // --- OFFICIAL META WHATSAPP CLOUD API WEBHOOKS ---
+  app.get('/api/webhooks/whatsapp', async (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    const secrets = await getWhatsAppSecrets();
+    if (mode === 'subscribe' && token && token === secrets.verifyToken) {
+      return res.status(200).send(String(challenge || ''));
+    }
+    return res.status(403).send('Webhook verification failed');
+  });
+
+  app.post('/api/webhooks/whatsapp', async (req, res) => {
+    try {
+      const rawBody = (req as any).rawBody || JSON.stringify(req.body || {});
+      const sig = req.headers['x-hub-signature-256'] as string | undefined;
+      const result = await processWhatsAppWebhook({ rawBody, signatureHeader: sig, payload: req.body });
+      return res.status(result.statusCode).send(result.message);
+    } catch (err) {
+      console.error('WhatsApp webhook error:', err);
+      return res.status(500).send('Webhook error');
+    }
+  });
 
   // Ensure Firestore seed data exists before serving API traffic
   app.use('/api', async (_req, _res, next) => {
@@ -416,6 +493,9 @@ async function startServer() {
         savedAddresses: [],
         favouriteVehicleIds: [],
         marketingConsent: Boolean(marketingConsent),
+        whatsappConsent: req.body.whatsappConsent !== false,
+        whatsappOptOut: false,
+        fcmTokens: [],
         serviceConsentVersion: 'v1.0',
         serviceConsentAt: now,
         updatedAt: now,
@@ -567,6 +647,113 @@ async function startServer() {
       });
     } catch (err) {
       res.status(500).json({ error: 'Unable to process password reset.' });
+    }
+  });
+
+  // --- WHATSAPP OTP AUTHENTICATION ENDPOINTS ---
+  app.post('/api/auth/otp/send', rateLimit(20, 60000), async (req, res) => {
+    try {
+      const { phone, purpose, email } = req.body as { phone?: string; purpose?: OtpPurpose; email?: string };
+      const validPurpose: OtpPurpose = ['registration', 'login', 'password_recovery', 'verification'].includes(
+        String(purpose)
+      )
+        ? (purpose as OtpPurpose)
+        : 'verification';
+
+      let matchedUserId: string | undefined;
+      let matchedEmail: string | undefined = email;
+      const normPhone = normalizeIndianPhone(String(phone || ''));
+
+      if (normPhone) {
+        const usersSnap = await db.collection('users').get();
+        for (const u of usersSnap.docs) {
+          const pSnap = await u.ref.collection('private').doc('info').get();
+          const pData = pSnap.data();
+          if (pData && normalizeIndianPhone(String(pData.phone || '')) === normPhone) {
+            matchedUserId = u.id;
+            matchedEmail = matchedEmail || String(pData.email || '');
+            break;
+          }
+        }
+      }
+
+      const result = await sendWhatsAppOtp({
+        phone: String(phone || ''),
+        purpose: validPurpose,
+        userId: matchedUserId,
+        email: matchedEmail,
+        ip: req.ip || 'unknown',
+      });
+
+      if (!result.ok) {
+        return res.status(result.statusCode).json({ error: result.message, cooldownSeconds: result.cooldownSeconds });
+      }
+      return res.json({
+        challengeId: result.challengeId,
+        expiresInSeconds: result.expiresInSeconds,
+        cooldownSeconds: result.cooldownSeconds,
+        deliveryChannel: result.deliveryChannel,
+        message: result.message,
+      });
+    } catch (err) {
+      console.error('Send OTP error:', err);
+      res.status(500).json({ error: 'Unable to initiate OTP verification.' });
+    }
+  });
+
+  app.post('/api/auth/otp/verify', rateLimit(25, 60000), async (req, res) => {
+    try {
+      const { challengeId, phone, code, purpose, newPassword } = req.body as {
+        challengeId?: string;
+        phone?: string;
+        code?: string;
+        purpose?: OtpPurpose;
+        newPassword?: string;
+      };
+      const validPurpose: OtpPurpose = ['registration', 'login', 'password_recovery', 'verification'].includes(
+        String(purpose)
+      )
+        ? (purpose as OtpPurpose)
+        : 'verification';
+
+      const verified = await verifyWhatsAppOtp({
+        challengeId: String(challengeId || ''),
+        phone: String(phone || ''),
+        code: String(code || ''),
+        purpose: validPurpose,
+      });
+
+      if (!verified.ok) {
+        return res.status(verified.statusCode).json({ error: verified.message });
+      }
+
+      if (validPurpose === 'login' && verified.userId) {
+        const userSnap = await db.collection('users').doc(verified.userId).get();
+        const privSnap = await db.collection('users').doc(verified.userId).collection('private').doc('info').get();
+        if (userSnap.exists) {
+          const profile = userSnap.data() as UserProfile;
+          const tokenVersion = await getTokenVersion(verified.userId);
+          const token = signSessionToken({
+            uid: verified.userId,
+            email: String(privSnap.data()?.email || ''),
+            role: profile.role,
+            tokenVersion,
+          });
+          return res.json({ verified: true, token, profile, message: verified.message });
+        }
+      }
+
+      if (validPurpose === 'password_recovery' && verified.userId && newPassword && newPassword.length >= 6) {
+        await db.collection('auth_credentials').doc(verified.userId).update({
+          passwordHash: hashPassword(newPassword),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      return res.json({ verified: true, message: verified.message });
+    } catch (err) {
+      console.error('Verify OTP error:', err);
+      res.status(500).json({ error: 'OTP verification failed.' });
     }
   });
 
@@ -766,6 +953,15 @@ async function startServer() {
         reason: `Booking initiated (${bookingRecord.bookingMode} mode, ${bookingRecord.pickupMode} pickup).`,
       });
 
+      await createNotification({
+        userId: uid,
+        title: `Booking Received: ${bookingReference}`,
+        body: `Reservation for ${vehicle.name} received. Complete UPI QR payment proof to confirm.`,
+      });
+
+      // Notify customer + eligible branch employees + Super Admin after commit
+      void sendBookingNotification(bookingRecord).catch((e) => console.error('WhatsApp booking notify error:', e));
+
       res.json({ booking: bookingRecord });
     } catch (err: any) {
       if (err?.message === 'DOUBLE_BOOKING_CONFLICT') {
@@ -778,7 +974,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/payments/verify', requireAuth, async (req: AuthRequest, res) => {
+  app.post('/api/payments/verify', requireAuth, requireStaffRole(['super_admin', 'finance_staff']), async (req: AuthRequest, res) => {
     try {
       const uid = req.authUser!.uid;
       const profile = req.authUser!.profile;
@@ -789,9 +985,6 @@ async function startServer() {
       if (!bookingSnap.exists) return res.status(404).json({ error: 'Booking not found.' });
 
       const booking = bookingSnap.data() as Booking;
-      if (booking.userId !== uid && profile.role === 'customer') {
-        return res.status(403).json({ error: 'Unauthorized payment verification.' });
-      }
 
       // Idempotent check: already paid
       if (booking.paymentStatus === 'Paid' || booking.paymentStatus === 'Partial Paid') {
@@ -903,6 +1096,671 @@ async function startServer() {
     }
   });
 
+  // --- TRUSTED BACKEND BOOKING PAYMENT SESSION & DYNAMIC UPI URI ---
+  app.get('/api/bookings/:id/payment-session', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const bookingRef = db.collection('bookings').doc(req.params.id);
+      const snap = await bookingRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Booking not found.' });
+
+      const booking = snap.data() as Booking;
+      if (booking.userId !== uid && profile.role === 'customer') {
+        return res.status(403).json({ error: 'Unauthorized access to booking payment.' });
+      }
+
+      const [settingsSnap, vehSnap, proofsSnap, payAuditSnap] = await Promise.all([
+        db.collection('company_settings').doc('default').get(),
+        db.collection('vehicles').doc(booking.vehicleId).get(),
+        db.collection('payment_proofs').where('bookingId', '==', booking.id).get(),
+        db.collection('payment_audit_logs').where('bookingId', '==', booking.id).get(),
+      ]);
+
+      const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+      const upiEnabled = settings.upiEnabled !== false;
+      const upiId = settings.upiId || 'elitedrive@icici';
+      const upiMerchantName = settings.upiMerchantName || 'EliteDrive Mobility Pvt Ltd';
+      const exactAmount = Math.round(Number(booking.pricing.amountDueNow) * 100) / 100;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      let activeSession = booking.activePaymentSession || null;
+      const needsNewSession =
+        !activeSession ||
+        Math.abs(Number(activeSession.exactAmount) - exactAmount) > 0.01;
+
+      if (needsNewSession && ['Pending', 'Failed'].includes(booking.paymentStatus)) {
+        const transactionRef = generatePaymentSessionRef(booking.bookingReference);
+        const expiresAt = new Date(nowMs + 15 * 60 * 1000).toISOString();
+        activeSession = {
+          transactionRef,
+          exactAmount,
+          expiresAt,
+          createdAt: nowIso,
+        };
+        await bookingRef.update({ activePaymentSession: activeSession, updatedAt: nowIso });
+        await writePaymentAuditLog({
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+          transactionRef,
+          actorUid: uid,
+          actorRole: profile.role,
+          action: 'PAYMENT_SESSION_CREATED',
+          expectedAmount: exactAmount,
+          statusBefore: booking.paymentStatus,
+          statusAfter: booking.paymentStatus,
+          details: `Created UPI payment session ${transactionRef} for ₹${exactAmount} (${booking.pricing.paymentMode}).`,
+        });
+      }
+
+      const txRef = activeSession?.transactionRef || generatePaymentSessionRef(booking.bookingReference);
+      const expiresAt = activeSession?.expiresAt || new Date(nowMs + 15 * 60 * 1000).toISOString();
+      const isExpired = new Date(expiresAt).getTime() <= nowMs;
+      const upiUri = buildBookingUpiUri({
+        upiId,
+        upiMerchantName,
+        amount: exactAmount,
+        transactionRef: txRef,
+        bookingReference: booking.bookingReference,
+      });
+
+      const session: PaymentSessionData = {
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        transactionRef: txRef,
+        exactAmount,
+        currency: 'INR',
+        paymentMode: booking.pricing.paymentMode,
+        upiUri,
+        expiresAt,
+        isExpired,
+        createdAt: activeSession?.createdAt || nowIso,
+      };
+
+      const proofHistory = proofsSnap.docs
+        .map((d) => d.data() as PaymentProof)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      const paymentAuditTrail = payAuditSnap.docs
+        .map((d) => d.data() as PaymentAuditLog)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+      res.json({
+        booking,
+        vehicle: vehSnap.exists ? vehSnap.data() : null,
+        paymentSettings: {
+          upiEnabled,
+          upiId,
+          upiMerchantName,
+          upiStaticQrImage: settings.upiStaticQrImage || '',
+          upiPaymentInstructions:
+            settings.upiPaymentInstructions ||
+            '1. Scan the dynamic booking QR (amount is pre-filled) or tap Open UPI App on mobile.\n2. Confirm the payee name before paying.\n3. Enter your 12-digit UTR reference and attach your payment screenshot.\n4. Finance verifies your payment before confirming the reservation.',
+          advancePaymentPercent: settings.advancePaymentPercent || 30,
+        },
+        session,
+        proofHistory,
+        paymentAuditTrail,
+      });
+    } catch (err) {
+      console.error('Get payment session error:', err);
+      res.status(500).json({ error: 'Unable to load booking payment session.' });
+    }
+  });
+
+  app.post('/api/bookings/:id/payment-session/refresh', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const bookingRef = db.collection('bookings').doc(req.params.id);
+      const snap = await bookingRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Booking not found.' });
+
+      const booking = snap.data() as Booking;
+      if (booking.userId !== uid && profile.role === 'customer') {
+        return res.status(403).json({ error: 'Unauthorized.' });
+      }
+      if (!['Pending', 'Failed'].includes(booking.paymentStatus)) {
+        return res.status(400).json({ error: `Cannot refresh session when payment status is ${booking.paymentStatus}.` });
+      }
+
+      const settingsSnap = await db.collection('company_settings').doc('default').get();
+      const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+      const upiId = settings.upiId || 'elitedrive@icici';
+      const upiMerchantName = settings.upiMerchantName || 'EliteDrive Mobility Pvt Ltd';
+      const exactAmount = Math.round(Number(booking.pricing.amountDueNow) * 100) / 100;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const transactionRef = generatePaymentSessionRef(booking.bookingReference);
+      const expiresAt = new Date(nowMs + 15 * 60 * 1000).toISOString();
+
+      await bookingRef.update({
+        status: 'Pending Payment',
+        paymentStatus: 'Pending',
+        activePaymentSession: {
+          transactionRef,
+          exactAmount,
+          expiresAt,
+          createdAt: nowIso,
+        },
+        updatedAt: nowIso,
+      });
+
+      await writePaymentAuditLog({
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        transactionRef,
+        actorUid: uid,
+        actorRole: profile.role,
+        action: 'PAYMENT_SESSION_REFRESHED',
+        expectedAmount: exactAmount,
+        statusBefore: booking.paymentStatus,
+        statusAfter: 'Pending',
+        details: `Payment retry session ${transactionRef} issued for ₹${exactAmount}.`,
+      });
+
+      const session: PaymentSessionData = {
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        transactionRef,
+        exactAmount,
+        currency: 'INR',
+        paymentMode: booking.pricing.paymentMode,
+        upiUri: buildBookingUpiUri({
+          upiId,
+          upiMerchantName,
+          amount: exactAmount,
+          transactionRef,
+          bookingReference: booking.bookingReference,
+        }),
+        expiresAt,
+        isExpired: false,
+        createdAt: nowIso,
+      };
+
+      res.json({ session });
+    } catch (err) {
+      console.error('Refresh payment session error:', err);
+      res.status(500).json({ error: 'Failed to refresh payment session.' });
+    }
+  });
+
+  app.patch('/api/bookings/:id/payment-mode', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const { paymentMode } = req.body as { paymentMode?: PaymentMode };
+      if (paymentMode !== 'full' && paymentMode !== 'advance_balance') {
+        return res.status(400).json({ error: "Payment mode must be 'full' or 'advance_balance'." });
+      }
+
+      const bookingRef = db.collection('bookings').doc(req.params.id);
+      const snap = await bookingRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Booking not found.' });
+
+      const booking = snap.data() as Booking;
+      if (booking.userId !== uid && profile.role === 'customer') {
+        return res.status(403).json({ error: 'Unauthorized.' });
+      }
+      if (!['Pending', 'Failed'].includes(booking.paymentStatus)) {
+        return res.status(400).json({ error: 'Payment schedule cannot be modified after proof submission.' });
+      }
+
+      const settingsSnap = await db.collection('company_settings').doc('default').get();
+      const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+      const advancePercent = Number(settings.advancePaymentPercent || 30);
+      const totalPayable = booking.pricing.totalPayable;
+      const amountDueNow =
+        paymentMode === 'advance_balance' ? Math.round((totalPayable * advancePercent) / 100) : totalPayable;
+      const balanceDueAtPickup = Math.max(0, totalPayable - amountDueNow);
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const transactionRef = generatePaymentSessionRef(booking.bookingReference);
+      const expiresAt = new Date(nowMs + 15 * 60 * 1000).toISOString();
+
+      await bookingRef.update({
+        pricing: {
+          ...booking.pricing,
+          paymentMode,
+          amountDueNow,
+          balanceDueAtPickup,
+        },
+        activePaymentSession: {
+          transactionRef,
+          exactAmount: amountDueNow,
+          expiresAt,
+          createdAt: nowIso,
+        },
+        updatedAt: nowIso,
+      });
+
+      await writePaymentAuditLog({
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        transactionRef,
+        actorUid: uid,
+        actorRole: profile.role,
+        action: 'PAYMENT_MODE_CHANGED',
+        expectedAmount: amountDueNow,
+        statusBefore: booking.pricing.paymentMode,
+        statusAfter: paymentMode,
+        details: `Switched payment mode to ${paymentMode}; new amount due ₹${amountDueNow}.`,
+      });
+
+      const updatedBooking = (await bookingRef.get()).data() as Booking;
+      res.json({ booking: updatedBooking });
+    } catch (err) {
+      console.error('Switch payment mode error:', err);
+      res.status(500).json({ error: 'Failed to update payment mode.' });
+    }
+  });
+
+  // --- QR & UPI PAYMENT PROOF SUBMISSION (Never auto-confirmed as paid) ---
+  app.post('/api/bookings/:id/payment-proof', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const bookingRef = db.collection('bookings').doc(req.params.id);
+      const snap = await bookingRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Booking not found.' });
+
+      const booking = snap.data() as Booking;
+      if (booking.userId !== uid && profile.role === 'customer') {
+        return res.status(403).json({ error: 'Unauthorized.' });
+      }
+      if (booking.paymentStatus === 'Paid' || booking.paymentStatus === 'Partial Paid') {
+        return res.status(400).json({ error: 'Payment for this booking is already verified.' });
+      }
+      if (booking.paymentStatus === 'Pending Verification') {
+        return res.status(409).json({
+          error: 'A payment proof is already awaiting Finance verification for this booking.',
+        });
+      }
+
+      const settingsSnap = await db.collection('company_settings').doc('default').get();
+      const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+      if (settings.upiEnabled === false) {
+        return res.status(400).json({ error: 'UPI payments are currently disabled by administration.' });
+      }
+
+      const { utrReference, screenshotDataUrl, screenshotFileName, amountSubmitted, transactionRef } = req.body;
+      const utr = String(utrReference || '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, '');
+      if (!/^[A-Z0-9\-_]{6,30}$/.test(utr)) {
+        return res.status(400).json({
+          error: 'Please enter a valid 6–30 character alphanumeric UPI UTR / transaction reference.',
+        });
+      }
+      if (!screenshotDataUrl && !screenshotFileName) {
+        return res.status(400).json({ error: 'Please upload your UPI payment screenshot for finance verification.' });
+      }
+
+      // Never trust client-supplied amount: reject mismatch and always bind to trusted booking record
+      const trustedAmount = Math.round(Number(booking.pricing.amountDueNow) * 100) / 100;
+      if (amountSubmitted !== undefined && amountSubmitted !== null) {
+        const clientAmt = Number(amountSubmitted);
+        if (!Number.isFinite(clientAmt) || Math.abs(clientAmt - trustedAmount) > 1) {
+          return res.status(400).json({
+            error: `Payable amount mismatch. Expected ₹${trustedAmount} from backend booking record.`,
+          });
+        }
+      }
+
+      // Prevent duplicate UTR or payment reuse across different bookings
+      const [existingUtrProofs, existingPayments, sameBookingProofs] = await Promise.all([
+        db.collection('payment_proofs').where('utrReference', '==', utr).get(),
+        db.collection('payments').where('gatewayRef', '==', utr).get(),
+        db.collection('payment_proofs').where('bookingId', '==', booking.id).get(),
+      ]);
+
+      const activeSameBooking = sameBookingProofs.docs.some(
+        (d) => (d.data() as PaymentProof).status === 'Pending Verification'
+      );
+      if (activeSameBooking) {
+        return res.status(409).json({
+          error: 'A payment proof is already pending verification for this booking.',
+        });
+      }
+
+      const conflictingProof = existingUtrProofs.docs.find((d) => {
+        const pf = d.data() as PaymentProof;
+        return pf.status === 'Pending Verification' || pf.status === 'Approved';
+      });
+      const conflictingPayment = existingPayments.docs.find((d) => {
+        const py = d.data() as any;
+        return py.status === 'Paid' || py.status === 'Refunded' || py.status === 'Partially Refunded';
+      });
+
+      if (conflictingProof || conflictingPayment) {
+        await writePaymentAuditLog({
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+          utrReference: utr,
+          actorUid: uid,
+          actorRole: profile.role,
+          action: 'DUPLICATE_UTR_BLOCKED',
+          expectedAmount: trustedAmount,
+          details: `Blocked reuse of UTR ${utr} across bookings / existing verified record.`,
+        });
+        return res.status(409).json({
+          error: 'This UTR / transaction reference has already been submitted or verified for a payment.',
+        });
+      }
+
+      const upiId = settings.upiId || 'elitedrive@icici';
+      const upiMerchantName = settings.upiMerchantName || 'EliteDrive Mobility Pvt Ltd';
+      const resolvedTxRef =
+        String(transactionRef || '').trim() ||
+        booking.activePaymentSession?.transactionRef ||
+        generatePaymentSessionRef(booking.bookingReference);
+      const upiUri = buildBookingUpiUri({
+        upiId,
+        upiMerchantName,
+        amount: trustedAmount,
+        transactionRef: resolvedTxRef,
+        bookingReference: booking.bookingReference,
+      });
+
+      const now = new Date().toISOString();
+      const proofId = `proof-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      const proofDoc: PaymentProof = {
+        id: proofId,
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        userId: booking.userId,
+        customerName: booking.customerName,
+        amountSubmitted: trustedAmount,
+        utrReference: utr,
+        transactionRef: resolvedTxRef,
+        upiUri,
+        expiresAt: booking.activePaymentSession?.expiresAt || now,
+        screenshotStorageRef: `private-payment-proofs/${booking.userId}/${proofId}-${String(screenshotFileName || 'upi-receipt.png').replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+        ...(typeof screenshotDataUrl === 'string' && screenshotDataUrl.startsWith('data:image/')
+          ? { screenshotDataUrl: screenshotDataUrl.slice(0, 1_500_000) }
+          : {}),
+        paymentMode: booking.pricing.paymentMode,
+        status: 'Pending Verification',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await db.collection('payment_proofs').doc(proofId).set(proofDoc);
+      await bookingRef.update({
+        status: 'Payment Verification',
+        paymentStatus: 'Pending Verification',
+        paymentMethod: 'UPI',
+        updatedAt: now,
+      });
+
+      await appendBookingHistory({
+        bookingId: booking.id,
+        userId: booking.userId,
+        fromStatus: booking.status,
+        toStatus: 'Payment Verification',
+        changedByUid: uid,
+        changedByRole: profile.role,
+        reason: `Customer submitted UPI payment proof (UTR: ${utr}, TxRef: ${resolvedTxRef}) awaiting finance verification.`,
+      });
+
+      await writePaymentAuditLog({
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        transactionRef: resolvedTxRef,
+        utrReference: utr,
+        actorUid: uid,
+        actorRole: profile.role,
+        action: 'UPI_PROOF_SUBMITTED',
+        expectedAmount: trustedAmount,
+        submittedAmount: trustedAmount,
+        statusBefore: booking.paymentStatus,
+        statusAfter: 'Pending Verification',
+        details: `Submitted UTR ${utr} for ₹${trustedAmount}. Awaiting manual Finance approval.`,
+      });
+
+      await createNotification({
+        userId: booking.userId,
+        title: `Payment Proof Submitted (${booking.bookingReference})`,
+        body: `UTR ${utr} for ₹${trustedAmount} is queued for finance verification. Payment is confirmed only after verification.`,
+      });
+
+      const updatedBooking = (await bookingRef.get()).data() as Booking;
+      void sendPaymentStatusNotification({
+        booking: updatedBooking,
+        event: 'payment_proof_submitted',
+        utrReference: utr,
+        amount: trustedAmount,
+      }).catch((e) => console.error('WhatsApp payment proof notify error:', e));
+
+      res.json({ proof: proofDoc, booking: updatedBooking });
+    } catch (err) {
+      console.error('Payment proof submission error:', err);
+      res.status(500).json({ error: 'Failed to submit payment proof.' });
+    }
+  });
+
+  // --- ADMIN / FINANCE PAYMENT PROOF VERIFICATION ---
+  app.post(
+    '/api/admin/payments/:proofId/verify',
+    requireAuth,
+    requireStaffRole(['super_admin', 'finance_staff']),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = req.authUser!.profile;
+        const { decision, notes } = req.body as { decision?: 'approve' | 'reject'; notes?: string };
+        if (decision !== 'approve' && decision !== 'reject') {
+          return res.status(400).json({ error: "Decision must be 'approve' or 'reject'." });
+        }
+
+        const proofRef = db.collection('payment_proofs').doc(req.params.proofId);
+        const proofSnap = await proofRef.get();
+        if (!proofSnap.exists) return res.status(404).json({ error: 'Payment proof not found.' });
+
+        const proof = proofSnap.data() as PaymentProof;
+        if (proof.status !== 'Pending Verification') {
+          return res.status(400).json({ error: `This payment proof has already been ${proof.status}.` });
+        }
+
+        const bookingRef = db.collection('bookings').doc(proof.bookingId);
+        const bookingSnap = await bookingRef.get();
+        if (!bookingSnap.exists) return res.status(404).json({ error: 'Associated booking not found.' });
+        const booking = bookingSnap.data() as Booking;
+        const customerSnap = await db.collection('users').doc(booking.userId).get();
+        const customerKyc = (customerSnap.data() as UserProfile | undefined)?.kycStatus || booking.kycStatusSnapshot;
+        const now = new Date().toISOString();
+
+        if (decision === 'reject') {
+          const rejectReason = notes || 'UTR / amount could not be matched in bank statement.';
+          await proofRef.update({
+            status: 'Rejected',
+            reviewedByUid: actor.uid,
+            reviewedByName: actor.displayName,
+            reviewNotes: rejectReason,
+            updatedAt: now,
+          });
+          await bookingRef.update({
+            status: 'Payment Failed',
+            paymentStatus: 'Failed',
+            updatedAt: now,
+          });
+          await appendBookingHistory({
+            bookingId: booking.id,
+            userId: booking.userId,
+            fromStatus: booking.status,
+            toStatus: 'Payment Failed',
+            changedByUid: actor.uid,
+            changedByRole: actor.role,
+            reason: rejectReason,
+          });
+          await writePaymentAuditLog({
+            bookingId: booking.id,
+            bookingReference: booking.bookingReference,
+            transactionRef: proof.transactionRef,
+            utrReference: proof.utrReference,
+            actorUid: actor.uid,
+            actorRole: actor.role,
+            action: 'PAYMENT_REJECTED',
+            expectedAmount: booking.pricing.amountDueNow,
+            submittedAmount: proof.amountSubmitted,
+            statusBefore: booking.paymentStatus,
+            statusAfter: 'Failed',
+            details: `Rejected UTR ${proof.utrReference}: ${rejectReason}`,
+          });
+          await createNotification({
+            userId: booking.userId,
+            title: `Payment Proof Rejected (${booking.bookingReference})`,
+            body: rejectReason,
+          });
+          await writeAuditLog({
+            actorUid: actor.uid,
+            actorRole: actor.role,
+            action: 'REJECT_PAYMENT_PROOF',
+            targetType: 'payment_proof',
+            targetId: proof.id,
+            details: `Rejected UTR ${proof.utrReference} for ${booking.bookingReference}`,
+          });
+
+          const updatedBooking = (await bookingRef.get()).data() as Booking;
+          void sendPaymentStatusNotification({
+            booking: updatedBooking,
+            event: 'payment_rejected',
+            utrReference: proof.utrReference,
+            amount: proof.amountSubmitted,
+            reason: rejectReason,
+          }).catch((e) => console.error('WhatsApp payment reject notify error:', e));
+
+          return res.json({ success: true, booking: updatedBooking });
+        }
+
+        // Prevent duplicate verified payment records (same UTR or already-paid booking)
+        const [dupUtrPay, dupBookingPay] = await Promise.all([
+          db.collection('payments').where('gatewayRef', '==', proof.utrReference).get(),
+          db.collection('payments').where('bookingId', '==', booking.id).get(),
+        ]);
+        const hasPaidUtr = dupUtrPay.docs.some((d) => (d.data() as any).status === 'Paid');
+        const hasPaidBooking = dupBookingPay.docs.some((d) => (d.data() as any).status === 'Paid');
+        if (hasPaidUtr || hasPaidBooking) {
+          return res.status(409).json({
+            error: 'Duplicate payment detected: a verified payment already exists for this UTR or booking.',
+          });
+        }
+
+        // Server-calculated authoritative amount from booking record
+        const verifiedAmount = Math.round(Number(booking.pricing.amountDueNow) * 100) / 100;
+        const nextPaymentStatus = booking.pricing.paymentMode === 'advance_balance' ? 'Partial Paid' : 'Paid';
+        const nextBookingStatus: BookingStatus =
+          booking.bookingMode === 'instant'
+            ? customerKyc === 'Verified'
+              ? 'Ready for Pickup'
+              : 'Confirmed'
+            : 'Pending Approval';
+
+        const paymentId = `pay-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+        const invoiceId = `inv-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+
+        await db.runTransaction(async (tx) => {
+          tx.update(proofRef, {
+            status: 'Approved',
+            reviewedByUid: actor.uid,
+            reviewedByName: actor.displayName,
+            reviewNotes: notes || 'Verified against company UPI settlement.',
+            updatedAt: now,
+          });
+          tx.update(bookingRef, {
+            status: nextBookingStatus,
+            paymentStatus: nextPaymentStatus,
+            updatedAt: now,
+          });
+          if (booking.bookingMode === 'instant') {
+            tx.update(db.collection('vehicles').doc(booking.vehicleId), { status: 'Reserved' });
+          }
+          tx.set(db.collection('payments').doc(paymentId), {
+            id: paymentId,
+            bookingId: booking.id,
+            bookingReference: booking.bookingReference,
+            userId: booking.userId,
+            amount: verifiedAmount,
+            method: 'UPI',
+            mode: booking.pricing.paymentMode,
+            gatewayRef: proof.utrReference,
+            status: 'Paid',
+            createdAt: now,
+          });
+          tx.set(db.collection('invoices').doc(invoiceId), {
+            id: invoiceId,
+            invoiceNumber: `INV-ED-${Math.floor(10000 + Math.random() * 90000)}`,
+            bookingId: booking.id,
+            bookingReference: booking.bookingReference,
+            userId: booking.userId,
+            customerName: booking.customerName,
+            subtotal: booking.pricing.totalRentalWithTax - booking.pricing.taxAmount,
+            taxAmount: booking.pricing.taxAmount,
+            depositHeld: booking.pricing.securityDeposit,
+            depositRefunded: 0,
+            totalAmount: verifiedAmount,
+            issuedAt: now,
+          });
+        });
+
+        await appendBookingHistory({
+          bookingId: booking.id,
+          userId: booking.userId,
+          fromStatus: booking.status,
+          toStatus: nextBookingStatus,
+          changedByUid: actor.uid,
+          changedByRole: actor.role,
+          reason: `Finance verified UPI payment proof (UTR: ${proof.utrReference}) for ₹${verifiedAmount}.`,
+        });
+
+        await writePaymentAuditLog({
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+          transactionRef: proof.transactionRef,
+          utrReference: proof.utrReference,
+          actorUid: actor.uid,
+          actorRole: actor.role,
+          action: 'PAYMENT_VERIFIED',
+          expectedAmount: verifiedAmount,
+          submittedAmount: proof.amountSubmitted,
+          statusBefore: booking.paymentStatus,
+          statusAfter: nextPaymentStatus,
+          details: `Verified UTR ${proof.utrReference} for ₹${verifiedAmount}. Booking -> ${nextBookingStatus}.`,
+        });
+
+        await createNotification({
+          userId: booking.userId,
+          title: `Payment Verified: ${booking.bookingReference}`,
+          body: `Finance verified your UPI payment ₹${verifiedAmount} (UTR ${proof.utrReference}). Booking status: ${nextBookingStatus}.`,
+        });
+
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorRole: actor.role,
+          action: 'VERIFY_PAYMENT_PROOF',
+          targetType: 'payment_proof',
+          targetId: proof.id,
+          details: `Verified UTR ${proof.utrReference} (₹${verifiedAmount}) for ${booking.bookingReference}`,
+        });
+
+        const updatedBooking = (await bookingRef.get()).data() as Booking;
+        void sendPaymentStatusNotification({
+          booking: updatedBooking,
+          event: 'payment_verified',
+          utrReference: proof.utrReference,
+          amount: verifiedAmount,
+        }).catch((e) => console.error('WhatsApp payment verify notify error:', e));
+
+        res.json({ success: true, booking: updatedBooking, paymentId, invoiceId });
+      } catch (err) {
+        console.error('Finance verify proof error:', err);
+        res.status(500).json({ error: 'Failed to process payment verification.' });
+      }
+    }
+  );
+
   app.post('/api/bookings/:id/cancel', requireAuth, async (req: AuthRequest, res) => {
     try {
       const uid = req.authUser!.uid;
@@ -948,6 +1806,11 @@ async function startServer() {
           : 'Your booking has been cancelled.',
       });
 
+      const updatedBooking = (await bookingRef.get()).data() as Booking;
+      void sendBookingApprovalNotification(updatedBooking, 'cancelled', req.body.reason).catch((e) =>
+        console.error('WhatsApp cancel notify error:', e)
+      );
+
       res.json({ success: true, status: nextStatus });
     } catch (err) {
       res.status(500).json({ error: 'Failed to cancel booking.' });
@@ -958,12 +1821,13 @@ async function startServer() {
   app.get('/api/me/dashboard', requireAuth, async (req: AuthRequest, res) => {
     try {
       const uid = req.authUser!.uid;
-      const [privateSnap, bookingsSnap, kycSnap, paymentsSnap, invoicesSnap, subsSnap, roadsideSnap, supportSnap, notifSnap] =
+      const [privateSnap, bookingsSnap, kycSnap, paymentsSnap, proofsSnap, invoicesSnap, subsSnap, roadsideSnap, supportSnap, notifSnap] =
         await Promise.all([
           db.collection('users').doc(uid).collection('private').doc('info').get(),
           db.collection('bookings').where('userId', '==', uid).get(),
           db.collection('kyc_verifications').where('userId', '==', uid).get(),
           db.collection('payments').where('userId', '==', uid).get(),
+          db.collection('payment_proofs').where('userId', '==', uid).get(),
           db.collection('invoices').where('userId', '==', uid).get(),
           db.collection('customer_subscriptions').where('userId', '==', uid).get(),
           db.collection('roadside_requests').where('userId', '==', uid).get(),
@@ -989,6 +1853,7 @@ async function startServer() {
         bookings,
         kycList: kycSnap.docs.map((d) => d.data()),
         payments: paymentsSnap.docs.map((d) => d.data()),
+        paymentProofs: proofsSnap.docs.map((d) => d.data()).sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt)),
         invoices: invoicesSnap.docs.map((d) => d.data()),
         subscriptions: subsSnap.docs.map((d) => d.data()),
         roadsideRequests: roadsideSnap.docs.map((d) => d.data()),
@@ -1005,7 +1870,15 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const now = new Date().toISOString();
-      const { displayName, phone, savedAddresses, favouriteVehicleIds, marketingConsent, requestDeletion } = req.body;
+      const {
+        displayName,
+        phone,
+        savedAddresses,
+        favouriteVehicleIds,
+        marketingConsent,
+        whatsappConsent,
+        requestDeletion,
+      } = req.body;
 
       const userUpdate: Record<string, any> = { updatedAt: now };
       if (displayName) userUpdate.displayName = String(displayName).trim();
@@ -1018,6 +1891,10 @@ async function startServer() {
       if (Array.isArray(savedAddresses)) privateUpdate.savedAddresses = savedAddresses.slice(0, 10);
       if (Array.isArray(favouriteVehicleIds)) privateUpdate.favouriteVehicleIds = favouriteVehicleIds.slice(0, 50);
       if (typeof marketingConsent === 'boolean') privateUpdate.marketingConsent = marketingConsent;
+      if (typeof whatsappConsent === 'boolean') {
+        privateUpdate.whatsappConsent = whatsappConsent;
+        privateUpdate.whatsappOptOut = !whatsappConsent;
+      }
 
       await db.collection('users').doc(uid).collection('private').doc('info').set(privateUpdate, { merge: true });
 
@@ -1025,6 +1902,22 @@ async function startServer() {
       res.json({ profile: updatedProfile });
     } catch (err) {
       res.status(500).json({ error: 'Failed to update profile.' });
+    }
+  });
+
+  app.post('/api/me/fcm-token', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const token = String(req.body.token || '').trim();
+      if (!token) return res.status(400).json({ error: 'FCM token is required.' });
+      const ref = db.collection('users').doc(uid).collection('private').doc('info');
+      const snap = await ref.get();
+      const existing = (snap.data()?.fcmTokens as string[] | undefined) || [];
+      const merged = Array.from(new Set([...existing, token])).slice(-5);
+      await ref.set({ fcmTokens: merged, updatedAt: new Date().toISOString() }, { merge: true });
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ error: 'Failed to save push token.' });
     }
   });
 
@@ -1075,6 +1968,10 @@ async function startServer() {
             ? 'Your Driving Licence & ID proof are stored in private encrypted storage and queued for operations review.'
             : `Your offline KYC appointment at ${branchName || 'selected branch'} is scheduled for ${appointmentDate} (${appointmentSlot}).`,
       });
+
+      void sendKycStatusNotification(kycDoc as any, 'kyc_submitted').catch((e) =>
+        console.error('WhatsApp KYC submit notify error:', e)
+      );
 
       res.json({ kyc: kycDoc, kycStatus: nextStatus });
     } catch (err) {
@@ -1222,6 +2119,7 @@ async function startServer() {
           branchesSnap,
           citiesSnap,
           paymentsSnap,
+          proofsSnap,
           invoicesSnap,
           couponsSnap,
           insSnap,
@@ -1230,6 +2128,7 @@ async function startServer() {
           roadsideSnap,
           supportSnap,
           auditSnap,
+          paymentAuditSnap,
           settingsSnap,
         ] = await Promise.all([
           db.collection('vehicles').get(),
@@ -1240,6 +2139,7 @@ async function startServer() {
           db.collection('branches').get(),
           db.collection('cities').get(),
           db.collection('payments').get(),
+          db.collection('payment_proofs').get(),
           db.collection('invoices').get(),
           db.collection('coupons').get(),
           db.collection('insurance_packages').get(),
@@ -1248,6 +2148,7 @@ async function startServer() {
           db.collection('roadside_requests').get(),
           db.collection('support_tickets').get(),
           db.collection('audit_logs').orderBy('timestamp', 'desc').limit(50).get(),
+          db.collection('payment_audit_logs').orderBy('timestamp', 'desc').limit(100).get(),
           db.collection('company_settings').doc('default').get(),
         ]);
 
@@ -1275,6 +2176,9 @@ async function startServer() {
           branches: branchesSnap.docs.map((d) => d.data()),
           cities: citiesSnap.docs.map((d) => d.data()),
           payments: ['super_admin', 'finance_staff'].includes(actor.role) ? paymentsSnap.docs.map((d) => d.data()) : [],
+          paymentProofs: ['super_admin', 'finance_staff'].includes(actor.role)
+            ? proofsSnap.docs.map((d) => d.data()).sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt))
+            : [],
           invoices: ['super_admin', 'finance_staff'].includes(actor.role) ? invoicesSnap.docs.map((d) => d.data()) : [],
           coupons: couponsSnap.docs.map((d) => d.data()),
           insurancePackages: insSnap.docs.map((d) => d.data()),
@@ -1283,6 +2187,9 @@ async function startServer() {
           roadsideRequests: roadsideSnap.docs.map((d) => d.data()),
           supportTickets: supportSnap.docs.map((d) => d.data()),
           auditLogs: actor.role === 'super_admin' ? auditSnap.docs.map((d) => d.data()) : [],
+          paymentAuditLogs: ['super_admin', 'finance_staff'].includes(actor.role)
+            ? paymentAuditSnap.docs.map((d) => d.data())
+            : [],
           settings: settingsSnap.exists ? settingsSnap.data() : null,
         });
       } catch (err) {
@@ -1517,6 +2424,17 @@ async function startServer() {
           details: reason || `Updated booking ${booking.bookingReference}`,
         });
 
+        const updatedBooking = (await bookingRef.get()).data() as Booking;
+        if (action === 'approve' || action === 'reject') {
+          void sendBookingApprovalNotification(updatedBooking, action, reason).catch((e) =>
+            console.error('WhatsApp booking decision notify error:', e)
+          );
+        } else if (action === 'ready_for_pickup') {
+          void sendTripStatusNotification(updatedBooking, 'pickup_scheduled', reason).catch((e) =>
+            console.error('WhatsApp pickup schedule notify error:', e)
+          );
+        }
+
         res.json({ success: true });
       } catch (err) {
         res.status(500).json({ error: 'Failed to update booking.' });
@@ -1599,6 +2517,13 @@ async function startServer() {
           title: `Rental Active: ${booking.vehicleName}`,
           body: `Handover completed by ${actor.displayName}. Drive safely!`,
         });
+
+        const updatedBooking = (await bookingRef.get()).data() as Booking;
+        void sendTripStatusNotification(
+          updatedBooking,
+          'pickup_completed',
+          `Vehicle handed over at ${handoverInspection.odometerKm} km by ${actor.displayName}.`
+        ).catch((e) => console.error('WhatsApp handover notify error:', e));
 
         res.json({ success: true, handoverInspection });
       } catch (err) {
@@ -1687,6 +2612,13 @@ async function startServer() {
           body: `Return verified. Security deposit refund of ₹${depositRefundAmount} has been initiated.`,
         });
 
+        const updatedBooking = (await bookingRef.get()).data() as Booking;
+        void sendTripStatusNotification(
+          updatedBooking,
+          'return_completed',
+          `Return completed at ${endOdo} km. Deposit refund: ₹${depositRefundAmount}.`
+        ).catch((e) => console.error('WhatsApp return notify error:', e));
+
         res.json({ success: true, returnInspection });
       } catch (err) {
         console.error('Return inspection error:', err);
@@ -1735,6 +2667,13 @@ async function startServer() {
           targetId: req.params.id,
           details: `Set KYC status to ${status}`,
         });
+
+        const updatedKyc = (await kycRef.get()).data() as any;
+        void sendKycStatusNotification(
+          updatedKyc,
+          status === 'Verified' ? 'kyc_approved' : 'kyc_rejected',
+          rejectionReason
+        ).catch((e) => console.error('WhatsApp KYC review notify error:', e));
 
         res.json({ success: true });
       } catch (err) {
@@ -1830,6 +2769,109 @@ async function startServer() {
     }
   );
 
+  // --- CENTRALIZED ADMIN UPI PAYMENT SETTINGS ---
+  app.get(
+    '/api/admin/payment-settings',
+    requireAuth,
+    requireStaffRole(['super_admin', 'finance_staff']),
+    async (_req, res) => {
+      try {
+        const [settingsSnap, logsSnap] = await Promise.all([
+          db.collection('company_settings').doc('default').get(),
+          db.collection('payment_audit_logs').orderBy('timestamp', 'desc').limit(100).get(),
+        ]);
+        const s = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+        res.json({
+          paymentSettings: {
+            upiEnabled: s.upiEnabled !== false,
+            upiId: s.upiId || 'elitedrive@icici',
+            upiMerchantName: s.upiMerchantName || 'EliteDrive Mobility Pvt Ltd',
+            upiStaticQrImage: s.upiStaticQrImage || '',
+            upiPaymentInstructions: s.upiPaymentInstructions || '',
+            advancePaymentPercent: s.advancePaymentPercent || 30,
+          },
+          paymentAuditLogs: logsSnap.docs.map((d) => d.data()),
+        });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to load payment settings.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/payment-settings',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = req.authUser!.profile;
+        const {
+          upiEnabled,
+          upiId,
+          upiMerchantName,
+          upiStaticQrImage,
+          upiPaymentInstructions,
+        } = req.body as Partial<CompanySettings>;
+
+        const enabled = upiEnabled !== false;
+        const cleanVpa = String(upiId || '').trim();
+        const cleanName = String(upiMerchantName || '').trim();
+        const cleanInstructions = String(upiPaymentInstructions || '').trim().slice(0, 2000);
+        const cleanQr = String(upiStaticQrImage || '').trim();
+
+        if (enabled && !/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9.-]{2,}$/.test(cleanVpa)) {
+          return res.status(400).json({ error: 'Please enter a valid UPI ID / VPA (e.g. elitedrive@icici).' });
+        }
+        if (enabled && cleanName.length < 2) {
+          return res.status(400).json({ error: 'Please enter the official UPI payee / business name.' });
+        }
+        if (cleanQr && !cleanQr.startsWith('data:image/') && !cleanQr.startsWith('https://')) {
+          return res.status(400).json({ error: 'Company QR must be a valid image upload or HTTPS image URL.' });
+        }
+        if (cleanQr.length > 2_000_000) {
+          return res.status(400).json({ error: 'Uploaded QR image exceeds 1.5 MB limit.' });
+        }
+
+        const now = new Date().toISOString();
+        await db.collection('company_settings').doc('default').set(
+          {
+            upiEnabled: enabled,
+            upiId: cleanVpa,
+            upiMerchantName: cleanName,
+            upiStaticQrImage: cleanQr,
+            upiPaymentInstructions: cleanInstructions,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorRole: actor.role,
+          action: 'UPDATE_PAYMENT_SETTINGS',
+          targetType: 'company_settings',
+          targetId: 'default',
+          details: `Updated UPI Payment Settings (enabled=${enabled}, VPA=${cleanVpa}, staticQR=${cleanQr ? 'present' : 'none'}).`,
+        });
+
+        await writePaymentAuditLog({
+          bookingId: 'company_settings',
+          bookingReference: 'GLOBAL_SETTINGS',
+          actorUid: actor.uid,
+          actorRole: actor.role,
+          action: 'PAYMENT_SETTINGS_UPDATED',
+          details: `Super Admin updated UPI settings: enabled=${enabled}, VPA=${cleanVpa}, payee=${cleanName}.`,
+        });
+
+        const updatedSnap = await db.collection('company_settings').doc('default').get();
+        res.json({ success: true, settings: updatedSnap.data() });
+      } catch (err) {
+        console.error('Update payment settings error:', err);
+        res.status(500).json({ error: 'Failed to update UPI payment settings.' });
+      }
+    }
+  );
+
   app.post(
     '/api/admin/refunds/:paymentId',
     requireAuth,
@@ -1852,9 +2894,226 @@ async function startServer() {
           title: `Refund Processed (${payment.bookingReference})`,
           body: `₹${payment.amount} has been refunded to your original payment method.`,
         });
+
+        const bkSnap = await db.collection('bookings').doc(payment.bookingId).get();
+        if (bkSnap.exists) {
+          void sendPaymentStatusNotification({
+            booking: bkSnap.data() as Booking,
+            event: 'refund_processed',
+            amount: payment.amount,
+            utrReference: payment.gatewayRef,
+          }).catch((e) => console.error('WhatsApp refund notify error:', e));
+        }
+
         res.json({ success: true });
       } catch (err) {
         res.status(500).json({ error: 'Failed to process refund.' });
+      }
+    }
+  );
+
+  // --- ADMIN WHATSAPP BUSINESS MANAGEMENT, EMPLOYEE NOTIFICATIONS, LOGS & REMINDERS ---
+  app.get(
+    '/api/admin/whatsapp',
+    requireAuth,
+    requireStaffRole(['super_admin', 'operations_staff', 'support_staff']),
+    async (_req, res) => {
+      try {
+        const [config, templatesSnap, employeesSnap, logsSnap] = await Promise.all([
+          getWhatsAppConfig(),
+          db.collection('whatsapp_templates').get(),
+          db.collection('employee_notification_settings').get(),
+          db.collection('notification_logs').orderBy('createdAt', 'desc').limit(100).get(),
+        ]);
+
+        res.json({
+          config,
+          templates: templatesSnap.docs.map((d) => d.data()),
+          employees: employeesSnap.docs.map((d) => d.data()),
+          logs: logsSnap.docs.map((d) => d.data()),
+        });
+      } catch (err) {
+        console.error('WhatsApp overview error:', err);
+        res.status(500).json({ error: 'Failed to load WhatsApp integration console.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/whatsapp/config',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        const now = new Date().toISOString();
+        const {
+          businessPhoneNumber,
+          phoneNumberId,
+          wabaId,
+          monthlyBudgetInr,
+          zeroBudgetEnforced,
+          otpExpirySeconds,
+          otpMaxAttempts,
+          otpCooldownSeconds,
+          customerEventFlags,
+          accessTokenSecret,
+          appSecret,
+          verifyToken,
+        } = req.body;
+
+        // Store sensitive credentials ONLY in non-public whatsapp_secrets (never returned in GET responses)
+        if (accessTokenSecret || appSecret || verifyToken) {
+          await db
+            .collection('whatsapp_secrets')
+            .doc('default')
+            .set(
+              {
+                ...(accessTokenSecret ? { accessToken: String(accessTokenSecret).trim() } : {}),
+                ...(appSecret ? { appSecret: String(appSecret).trim() } : {}),
+                ...(verifyToken ? { verifyToken: String(verifyToken).trim() } : {}),
+                updatedAt: now,
+              },
+              { merge: true }
+            );
+        }
+
+        const secrets = await getWhatsAppSecrets();
+        await db
+          .collection('whatsapp_config')
+          .doc('default')
+          .set(
+            {
+              ...(businessPhoneNumber !== undefined ? { businessPhoneNumber: String(businessPhoneNumber).trim() } : {}),
+              ...(phoneNumberId !== undefined ? { phoneNumberId: String(phoneNumberId).trim() } : {}),
+              ...(wabaId !== undefined ? { wabaId: String(wabaId).trim() } : {}),
+              ...(monthlyBudgetInr !== undefined ? { monthlyBudgetInr: Math.max(0, Number(monthlyBudgetInr)) } : {}),
+              ...(typeof zeroBudgetEnforced === 'boolean' ? { zeroBudgetEnforced } : {}),
+              ...(otpExpirySeconds !== undefined ? { otpExpirySeconds: Math.max(60, Number(otpExpirySeconds)) } : {}),
+              ...(otpMaxAttempts !== undefined ? { otpMaxAttempts: Math.max(1, Number(otpMaxAttempts)) } : {}),
+              ...(otpCooldownSeconds !== undefined ? { otpCooldownSeconds: Math.max(15, Number(otpCooldownSeconds)) } : {}),
+              ...(customerEventFlags ? { customerEventFlags } : {}),
+              hasAccessTokenSecret: Boolean(secrets.accessToken),
+              hasAppSecret: Boolean(secrets.appSecret),
+              webhookVerifyTokenConfigured: Boolean(secrets.verifyToken),
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+
+        await writeAuditLog({
+          actorUid: req.authUser!.uid,
+          actorRole: req.authUser!.profile.role,
+          action: 'UPDATE_WHATSAPP_CONFIG',
+          targetType: 'whatsapp_config',
+          targetId: 'default',
+          details: 'Updated WhatsApp Business configuration and budget policy.',
+        });
+
+        res.json({ config: await getWhatsAppConfig() });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to update WhatsApp configuration.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/whatsapp/verify',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        const config = await getWhatsAppConfig();
+        const result = await verifyLiveMetaConnection({
+          businessPhoneNumber: req.body.businessPhoneNumber || config.businessPhoneNumber,
+          phoneNumberId: req.body.phoneNumberId || config.phoneNumberId,
+          wabaId: req.body.wabaId || config.wabaId,
+          accessToken: req.body.accessTokenSecret,
+        });
+        await writeAuditLog({
+          actorUid: req.authUser!.uid,
+          actorRole: req.authUser!.profile.role,
+          action: 'VERIFY_WHATSAPP_META',
+          targetType: 'whatsapp_config',
+          targetId: 'default',
+          details: result.message,
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: 'Live Meta verification failed.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/whatsapp/employees',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        const { name, phone, branchId, department, whatsappEnabled, events } = req.body;
+        if (!name || !phone) return res.status(400).json({ error: 'Employee name and mobile number are required.' });
+        const id = `emp-notif-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+        const doc: EmployeeNotificationSetting = {
+          id,
+          name: String(name).trim(),
+          phone: String(phone).trim(),
+          branchId: String(branchId || 'all'),
+          department: department || 'operations',
+          whatsappEnabled: whatsappEnabled !== false,
+          events: Array.isArray(events) ? (events as NotificationEventKey[]) : ['booking_received'],
+          updatedAt: new Date().toISOString(),
+        };
+        await db.collection('employee_notification_settings').doc(id).set(doc);
+        res.json({ employee: doc });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to add employee notification rule.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/whatsapp/employees/:id',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        const ref = db.collection('employee_notification_settings').doc(req.params.id);
+        const snap = await ref.get();
+        if (!snap.exists) return res.status(404).json({ error: 'Employee notification record not found.' });
+        const updates = { ...req.body, updatedAt: new Date().toISOString() };
+        delete updates.id;
+        await ref.update(updates);
+        res.json({ employee: (await ref.get()).data() });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to update employee notification rule.' });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/admin/whatsapp/employees/:id',
+    requireAuth,
+    requireStaffRole(['super_admin']),
+    async (req: AuthRequest, res) => {
+      try {
+        await db.collection('employee_notification_settings').doc(req.params.id).delete();
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to delete employee notification rule.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/reminders/run',
+    requireAuth,
+    requireStaffRole(['super_admin', 'operations_staff', 'fleet_manager']),
+    async (_req, res) => {
+      try {
+        const summary = await runPickupAndReturnReminders();
+        res.json({ success: true, ...summary });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to execute pickup/return reminders.' });
       }
     }
   );

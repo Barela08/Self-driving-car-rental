@@ -28,6 +28,7 @@ import type {
   InvoiceRecord,
   KycVerification,
   NotificationRecord,
+  PaymentProof,
   PaymentRecord,
   RoadsideRequest,
   SavedAddress,
@@ -42,6 +43,7 @@ interface DashboardPayload {
   bookings: Booking[];
   kycList: KycVerification[];
   payments: PaymentRecord[];
+  paymentProofs?: PaymentProof[];
   invoices: InvoiceRecord[];
   subscriptions: CustomerSubscription[];
   roadsideRequests: RoadsideRequest[];
@@ -87,6 +89,10 @@ export const CustomerDashboard: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(false);
+  const [whatsappConsent, setWhatsappConsent] = useState(true);
+  const [otpChallengeId, setOtpChallengeId] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpVerified, setOtpVerified] = useState(false);
   const [newAddrLabel, setNewAddrLabel] = useState('');
   const [newAddrText, setNewAddrText] = useState('');
   const [newAddrCity, setNewAddrCity] = useState('Mumbai');
@@ -100,6 +106,7 @@ export const CustomerDashboard: React.FC = () => {
       setEditName(profile?.displayName || '');
       setEditPhone(payload.privateInfo?.phone || '');
       setMarketingConsent(Boolean(payload.privateInfo?.marketingConsent));
+      setWhatsappConsent(payload.privateInfo?.whatsappConsent !== false && !payload.privateInfo?.whatsappOptOut);
       if (!rsaBookingId && payload.bookings.length > 0) {
         setRsaBookingId(payload.bookings[0].id);
       }
@@ -130,24 +137,8 @@ export const CustomerDashboard: React.FC = () => {
     return <Navigate to="/dashboard/staff" replace />;
   }
 
-  const handleRetryPayment = async (booking: Booking) => {
-    setBusyId(booking.id);
-    try {
-      await apiFetch('/api/payments/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          bookingId: booking.id,
-          paymentMethod: booking.paymentMethod,
-          gatewayOrderId: `retry_${Date.now()}`,
-        }),
-      });
-      toast.success(`Payment verified for ${booking.bookingReference}`);
-      await loadDashboard();
-    } catch (err: any) {
-      toast.error(err.message || 'Payment verification failed');
-    } finally {
-      setBusyId(null);
-    }
+  const handleOpenPaymentPage = (booking: Booking) => {
+    navigate(`/bookings/${booking.id}/pay`);
   };
 
   const handleCancelBooking = async (booking: Booking) => {
@@ -283,13 +274,58 @@ export const CustomerDashboard: React.FC = () => {
           displayName: editName,
           phone: editPhone,
           marketingConsent,
+          whatsappConsent,
         }),
       });
-      toast.success('Account details updated.');
+      toast.success('Account & WhatsApp preferences updated.');
       await refreshProfile();
       await loadDashboard();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update profile');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleSendAccountOtp = async () => {
+    if (!editPhone.trim()) {
+      toast.error('Enter your mobile number first.');
+      return;
+    }
+    setBusyId('otp');
+    try {
+      const res = await apiFetch<{ challengeId: string; message: string }>('/api/auth/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: editPhone.trim(), purpose: 'verification' }),
+      });
+      setOtpChallengeId(res.challengeId);
+      toast.success(res.message);
+    } catch (err: any) {
+      toast.error(err.message || 'Unable to send OTP');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleVerifyAccountOtp = async () => {
+    if (!otpChallengeId || otpCode.trim().length !== 6) return;
+    setBusyId('otp_verify');
+    try {
+      const res = await apiFetch<{ verified: boolean; message: string }>('/api/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          challengeId: otpChallengeId,
+          phone: editPhone.trim(),
+          code: otpCode.trim(),
+          purpose: 'verification',
+        }),
+      });
+      if (res.verified) {
+        setOtpVerified(true);
+        toast.success(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'OTP verification failed');
     } finally {
       setBusyId(null);
     }
@@ -527,12 +563,29 @@ export const CustomerDashboard: React.FC = () => {
                                 {needsPayment && (
                                   <button
                                     type="button"
-                                    disabled={busyId === bk.id}
-                                    onClick={() => void handleRetryPayment(bk)}
-                                    className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg cursor-pointer"
+                                    onClick={() => handleOpenPaymentPage(bk)}
+                                    className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg hover:bg-gold-bright cursor-pointer"
                                   >
-                                    {busyId === bk.id ? 'Verifying...' : `Pay ${formatINR(bk.pricing.amountDueNow)}`}
+                                    {bk.paymentStatus === 'Failed'
+                                      ? `Retry UPI Payment (${formatINR(bk.pricing.amountDueNow)})`
+                                      : `Pay via UPI QR (${formatINR(bk.pricing.amountDueNow)})`}
                                   </button>
+                                )}
+                                {bk.paymentStatus === 'Pending Verification' && (
+                                  <Link
+                                    to={`/bookings/${bk.id}/pay`}
+                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold"
+                                  >
+                                    Awaiting Finance Verification
+                                  </Link>
+                                )}
+                                {(bk.paymentStatus === 'Paid' || bk.paymentStatus === 'Partial Paid') && (
+                                  <Link
+                                    to={`/bookings/${bk.id}/pay`}
+                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold"
+                                  >
+                                    Payment Summary
+                                  </Link>
                                 )}
                                 {canCancel && (
                                   <button
@@ -841,8 +894,29 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
                   <div className="flex items-center gap-2">
                     <CreditCard className="w-4 h-4 text-gold-hover" />
-                    <h2 className="font-display text-xl font-semibold">Payment Transactions</h2>
+                    <h2 className="font-display text-xl font-semibold">UPI Proofs & Verified Transactions</h2>
                   </div>
+                  {(data?.paymentProofs || []).length > 0 && (
+                    <div className="space-y-2 pb-3 border-b border-black/10">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-muted">
+                        Submitted UPI Proofs
+                      </p>
+                      {data!.paymentProofs!.map((pf) => (
+                        <div key={pf.id} className="p-3 rounded-lg bg-alabaster border border-black/10 flex justify-between text-xs">
+                          <div>
+                            <p className="font-mono font-semibold text-ink">
+                              {pf.bookingReference} · UTR {pf.utrReference}
+                            </p>
+                            {pf.reviewNotes && <p className="text-slate-muted text-[11px]">{pf.reviewNotes}</p>}
+                          </div>
+                          <div className="text-right font-mono">
+                            <p className="font-semibold">{formatINR(pf.amountSubmitted)}</p>
+                            <p className="text-[11px] text-gold-hover">{pf.status}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {(!data?.payments || data.payments.length === 0) ? (
                     <p className="text-xs text-slate-muted">No verified payments recorded yet.</p>
                   ) : (
@@ -1130,14 +1204,58 @@ export const CustomerDashboard: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block font-semibold text-slate-muted mb-1">Phone Number</label>
-                      <input
-                        type="tel"
-                        value={editPhone}
-                        onChange={(e) => setEditPhone(e.target.value)}
-                        className="w-full px-3 py-2 border border-black/15 rounded-lg text-sm"
-                      />
+                      <label className="block font-semibold text-slate-muted mb-1">Phone Number (+91)</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="tel"
+                          value={editPhone}
+                          onChange={(e) => {
+                            setEditPhone(e.target.value);
+                            setOtpVerified(false);
+                          }}
+                          className="flex-1 px-3 py-2 border border-black/15 rounded-lg text-sm font-mono"
+                        />
+                        <button
+                          type="button"
+                          disabled={busyId === 'otp' || otpVerified}
+                          onClick={() => void handleSendAccountOtp()}
+                          className="px-3 py-2 border border-black/15 rounded-lg font-semibold hover:border-gold cursor-pointer whitespace-nowrap"
+                        >
+                          {otpVerified ? 'Verified' : 'Verify via WhatsApp OTP'}
+                        </button>
+                      </div>
+                      {otpChallengeId && !otpVerified && (
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            type="text"
+                            maxLength={6}
+                            value={otpCode}
+                            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                            placeholder="6-digit WhatsApp OTP"
+                            className="flex-1 px-3 py-1.5 border border-black/15 rounded-lg font-mono"
+                          />
+                          <button
+                            type="button"
+                            disabled={busyId === 'otp_verify'}
+                            onClick={() => void handleVerifyAccountOtp()}
+                            className="px-3 py-1.5 bg-obsidian text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            Confirm OTP
+                          </button>
+                        </div>
+                      )}
                     </div>
+                    <label className="flex items-start gap-2 pt-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={whatsappConsent}
+                        onChange={(e) => setWhatsappConsent(e.target.checked)}
+                        className="mt-0.5 accent-obsidian"
+                      />
+                      <span className="text-ink">
+                        Receive official WhatsApp booking, payment verification, KYC & trip alerts (opt out anytime by unchecking or replying STOP).
+                      </span>
+                    </label>
                     <label className="flex items-start gap-2 pt-1 cursor-pointer">
                       <input
                         type="checkbox"

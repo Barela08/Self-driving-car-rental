@@ -130,50 +130,49 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setSubmitting(true);
     try {
       const idempotencyKey = `bk-${profile.uid}-${vehicle.id}-${startDate}-${endDate}`;
-      const createRes = await apiFetch<{ booking: { id: string; bookingReference: string } }>('/api/bookings', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({
-          vehicleId: vehicle.id,
-          startDate,
-          endDate,
-          pickupMode: location.pickupMode,
-          pickupAddress: location.pickupAddress,
-          pickupLat: location.pickupLat,
-          pickupLng: location.pickupLng,
-          returnAddress: location.returnAddress,
-          returnLat: location.returnLat,
-          returnLng: location.returnLng,
-          pickupBranchId: location.pickupBranchId,
-          returnBranchId: location.returnBranchId,
-          isOneWay: location.isOneWay,
-          insurancePackageId: insuranceId || null,
-          roadsideRequested,
-          driverRequested,
-          couponCode: appliedCoupon || null,
-          paymentMode,
-          paymentMethod,
-          termsAccepted: true,
-        }),
-      });
-
-      // Server-side gateway verification
-      const verifyRes = await apiFetch<{ booking: { bookingReference: string; status: string } }>(
-        '/api/payments/verify',
+      const createRes = await apiFetch<{ booking: { id: string; bookingReference: string; pricing: PricingBreakdown } }>(
+        '/api/bookings',
         {
           method: 'POST',
+          headers: { 'Idempotency-Key': idempotencyKey },
           body: JSON.stringify({
-            bookingId: createRes.booking.id,
+            vehicleId: vehicle.id,
+            startDate,
+            endDate,
+            pickupMode: location.pickupMode,
+            pickupAddress: location.pickupAddress,
+            pickupLat: location.pickupLat,
+            pickupLng: location.pickupLng,
+            returnAddress: location.returnAddress,
+            returnLat: location.returnLat,
+            returnLng: location.returnLng,
+            pickupBranchId: location.pickupBranchId,
+            returnBranchId: location.returnBranchId,
+            isOneWay: location.isOneWay,
+            insurancePackageId: insuranceId || null,
+            roadsideRequested,
+            driverRequested,
+            couponCode: appliedCoupon || null,
+            paymentMode,
             paymentMethod,
+            termsAccepted: true,
           }),
         }
       );
 
-      toast.success(
-        `Booking ${verifyRes.booking.bookingReference} (${verifyRes.booking.status}) confirmed!`
-      );
-      onClose();
-      navigate('/dashboard');
+      if (paymentMethod === 'UPI') {
+        toast.success(
+          `Booking ${createRes.booking.bookingReference} reserved! Redirecting to UPI QR Checkout.`
+        );
+        onClose();
+        navigate(`/bookings/${createRes.booking.id}/pay`);
+      } else {
+        toast.success(
+          `Booking ${createRes.booking.bookingReference} created with Cash at Branch option.`
+        );
+        onClose();
+        navigate('/dashboard');
+      }
     } catch (err: any) {
       toast.error(err.message || 'Booking failed. Please review your selections.');
     } finally {
@@ -422,7 +421,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
               {/* Payment Options */}
               <div className="space-y-2.5 pt-2 border-t border-black/10">
-                <p className="text-xs font-semibold text-ink">Payment Schedule</p>
+                <p className="text-xs font-semibold text-ink">Payment Schedule (QR & UPI Verification)</p>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -450,17 +449,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2">
-                  {(['UPI', 'Card', 'NetBanking', 'Cash'] as const).map((m) => (
+                <div className="grid grid-cols-2 gap-2">
+                  {(['UPI', 'Cash'] as const).map((m) => (
                     <button
                       key={m}
                       type="button"
                       onClick={() => setPaymentMethod(m)}
-                      className={`py-2 px-1.5 rounded-lg border text-xs font-semibold cursor-pointer ${
+                      className={`py-2 px-2 rounded-lg border text-xs font-semibold cursor-pointer ${
                         paymentMethod === m ? 'border-gold bg-white text-ink' : 'border-black/10 text-slate-muted'
                       }`}
                     >
-                      {m}
+                      {m === 'UPI' ? 'UPI QR + UTR Proof' : 'Cash at Branch'}
                     </button>
                   ))}
                 </div>
@@ -487,10 +486,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               >
                 <CreditCard className="w-4 h-4 text-gold" />
                 {submitting
-                  ? 'Verifying Booking & Payment...'
+                  ? 'Creating Reservation...'
                   : pricing
-                    ? `Pay ${formatINR(pricing.amountDueNow)} & ${vehicle.instantBooking ? 'Confirm Now' : 'Request Approval'}`
-                    : 'Confirm Booking'}
+                    ? `Reserve (${formatINR(pricing.amountDueNow)}) & Proceed to UPI QR`
+                    : 'Reserve & Proceed'}
               </button>
 
               {profile && profile.kycStatus !== 'Verified' && (

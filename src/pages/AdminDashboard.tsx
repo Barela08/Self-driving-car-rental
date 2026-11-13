@@ -27,8 +27,10 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { auth } from '../lib/firebase';
-import { apiFetch, formatINR } from '../lib/api';
+import { apiFetch, formatINR, getSessionToken } from '../lib/api';
 import { resolveVehicleImage } from '../lib/mediaAssets';
+import { WhatsAppAdminPanel } from '../components/WhatsAppAdminPanel';
+import { PaymentSettingsAdminPanel } from '../components/PaymentSettingsAdminPanel';
 import type {
   AuditLog,
   Booking,
@@ -40,6 +42,8 @@ import type {
   InvoiceRecord,
   KycStatus,
   KycVerification,
+  PaymentAuditLog,
+  PaymentProof,
   PaymentRecord,
   RoadsideRequest,
   Role,
@@ -51,7 +55,15 @@ import type {
   VehicleStatus,
 } from '../types';
 
-type AdminTab = 'overview' | 'fleet' | 'bookings' | 'kyc_users' | 'branches' | 'finance_cms';
+type AdminTab =
+  | 'overview'
+  | 'fleet'
+  | 'bookings'
+  | 'kyc_users'
+  | 'branches'
+  | 'finance_cms'
+  | 'payment_settings'
+  | 'whatsapp';
 
 interface AdminOverview {
   actor: UserProfile;
@@ -63,6 +75,8 @@ interface AdminOverview {
   branches: Branch[];
   cities: City[];
   payments: PaymentRecord[];
+  paymentProofs?: PaymentProof[];
+  paymentAuditLogs?: PaymentAuditLog[];
   invoices: InvoiceRecord[];
   coupons: Coupon[];
   drivers: Driver[];
@@ -80,14 +94,16 @@ const IMAGE_PRESET_OPTIONS = [
   { key: 'swift', label: 'Maruti Swift Hatchback' },
 ];
 
-export const AdminDashboard: React.FC = () => {
+export const AdminDashboard: React.FC<{ initialTab?: AdminTab }> = ({ initialTab = 'overview' }) => {
   const { profile, loading: authLoading } = useAuth();
   const { reloadCatalog } = useCatalog();
 
-  const [tab, setTab] = useState<AdminTab>('overview');
+  const [tab, setTab] = useState<AdminTab>(initialTab);
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [proofNotes, setProofNotes] = useState<Record<string, string>>({});
+  const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
 
   // Add/Edit Vehicle Modal
   const [showVehicleForm, setShowVehicleForm] = useState(false);
@@ -482,9 +498,33 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleVerifyPaymentProof = async (proofId: string, decision: 'approve' | 'reject') => {
+    const customNote = (proofNotes[proofId] || '').trim();
+    setBusy(true);
+    try {
+      await apiFetch(`/api/admin/payments/${proofId}/verify`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision,
+          notes:
+            customNote ||
+            (decision === 'approve'
+              ? 'Verified UTR against EliteDrive bank statement.'
+              : 'UTR or amount could not be matched. Please re-submit valid proof.'),
+        }),
+      });
+      toast.success(decision === 'approve' ? 'Payment verified and recorded' : 'Payment proof rejected');
+      await loadOverview();
+    } catch (err: any) {
+      toast.error(err.message || 'Verification action failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const downloadCsv = async (type: 'bookings' | 'finance') => {
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = getSessionToken() || (await auth.currentUser?.getIdToken());
       const res = await fetch(`/api/admin/export/${type}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -518,13 +558,19 @@ export const AdminDashboard: React.FC = () => {
     (b) => bookingFilter === 'ALL' || b.status === bookingFilter
   );
 
+  const pendingProofsCount = (data?.paymentProofs || []).filter((p) => p.status === 'Pending Verification').length;
+
   const visibleTabs: { key: AdminTab; label: string }[] = [
     { key: 'overview', label: 'Overview & Analytics' },
     ...(canManageFleet ? [{ key: 'fleet' as AdminTab, label: 'Fleet & Private Logs' }] : []),
     ...(canManageFleet ? [{ key: 'bookings' as AdminTab, label: `Bookings (${data?.bookings.length || 0})` }] : []),
     ...(isSuperAdmin ? [{ key: 'kyc_users' as AdminTab, label: 'KYC & Staff RBAC' }] : []),
     ...(isSuperAdmin ? [{ key: 'branches' as AdminTab, label: 'Branches & Cities' }] : []),
-    ...(canManageFinance ? [{ key: 'finance_cms' as AdminTab, label: 'Finance, Coupons & CMS' }] : []),
+    ...(canManageFinance
+      ? [{ key: 'finance_cms' as AdminTab, label: `Finance & Proofs (${pendingProofsCount})` }]
+      : []),
+    ...(canManageFinance ? [{ key: 'payment_settings' as AdminTab, label: 'Payment Settings' }] : []),
+    ...(isSuperAdmin ? [{ key: 'whatsapp' as AdminTab, label: 'WhatsApp & Alerts' }] : []),
   ];
 
   return (
@@ -1046,8 +1092,107 @@ export const AdminDashboard: React.FC = () => {
             {tab === 'finance_cms' && (
               <div className="grid lg:grid-cols-12 gap-6">
                 <div className="lg:col-span-7 space-y-6">
+                  {/* UPI Payment Proof Verification Queue */}
                   <div className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
-                    <h2 className="font-display text-xl font-semibold">Payments Ledger & Refunds</h2>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="font-display text-xl font-semibold">
+                        UPI Payment Proof Verification Queue ({pendingProofsCount} Pending)
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => setTab('payment_settings')}
+                        className="px-3 py-1.5 border border-black/15 rounded-lg text-xs font-semibold hover:border-gold cursor-pointer"
+                      >
+                        Configure UPI ID & QR
+                      </button>
+                    </div>
+                    {(!data?.paymentProofs || data.paymentProofs.length === 0) ? (
+                      <p className="text-xs text-slate-muted">No customer UPI payment proofs submitted yet.</p>
+                    ) : (
+                      <div className="space-y-3 max-h-[460px] overflow-y-auto text-xs">
+                        {data.paymentProofs.map((pf) => (
+                          <div
+                            key={pf.id}
+                            className="p-4 rounded-lg bg-alabaster border border-black/10 space-y-3"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                              <div className="flex items-start gap-3">
+                                {pf.screenshotDataUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewScreenshotUrl(pf.screenshotDataUrl || null)}
+                                    title="Click to enlarge payment screenshot"
+                                    className="shrink-0 cursor-pointer"
+                                  >
+                                    <img
+                                      src={pf.screenshotDataUrl}
+                                      alt={`Receipt ${pf.utrReference}`}
+                                      className="w-16 h-16 object-cover rounded border border-black/15 bg-white hover:border-gold"
+                                    />
+                                  </button>
+                                )}
+                                <div className="space-y-0.5">
+                                  <p className="font-mono font-semibold text-ink">
+                                    {pf.bookingReference} · {formatINR(pf.amountSubmitted)} ({pf.paymentMode === 'advance_balance' ? 'Advance' : 'Full'})
+                                  </p>
+                                  <p className="text-slate-muted">
+                                    Customer: <strong className="text-ink">{pf.customerName}</strong> · UTR:{' '}
+                                    <strong className="font-mono text-ink select-all">{pf.utrReference}</strong>
+                                  </p>
+                                  {pf.transactionRef && (
+                                    <p className="font-mono text-[11px] text-slate-muted">
+                                      Session TxRef: {pf.transactionRef}
+                                    </p>
+                                  )}
+                                  <p className="text-[11px] font-semibold text-gold-hover">
+                                    Status: {pf.status} {pf.reviewedByName ? `· by ${pf.reviewedByName}` : ''}
+                                  </p>
+                                  {pf.reviewNotes && pf.status !== 'Pending Verification' && (
+                                    <p className="text-[11px] text-slate-muted">Note: {pf.reviewNotes}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {pf.status === 'Pending Verification' && (
+                              <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-black/10">
+                                <input
+                                  type="text"
+                                  value={proofNotes[pf.id] || ''}
+                                  onChange={(e) =>
+                                    setProofNotes((prev) => ({ ...prev, [pf.id]: e.target.value }))
+                                  }
+                                  placeholder="Optional verification note or rejection reason..."
+                                  className="flex-1 px-3 py-1.5 bg-white border border-black/15 rounded-lg text-xs focus:outline-none focus:border-gold"
+                                />
+                                <div className="flex gap-2 shrink-0">
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void handleVerifyPaymentProof(pf.id, 'approve')}
+                                    className="px-3 py-1.5 bg-obsidian text-white font-semibold rounded-lg cursor-pointer disabled:opacity-50"
+                                  >
+                                    Verify & Record
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void handleVerifyPaymentProof(pf.id, 'reject')}
+                                    className="px-3 py-1.5 border border-red-300 text-red-700 font-semibold rounded-lg cursor-pointer disabled:opacity-50"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
+                    <h2 className="font-display text-xl font-semibold">Verified Payments Ledger & Refunds</h2>
                     {(!data?.payments || data.payments.length === 0) ? (
                       <p className="text-xs text-slate-muted">No verified payments recorded yet.</p>
                     ) : (
@@ -1142,9 +1287,54 @@ export const AdminDashboard: React.FC = () => {
                 )}
               </div>
             )}
+
+            {/* CENTRALIZED UPI PAYMENT SETTINGS & AUDIT LOGS */}
+            {tab === 'payment_settings' && (
+              <PaymentSettingsAdminPanel
+                isSuperAdmin={isSuperAdmin}
+                onSettingsSaved={async () => {
+                  await loadOverview();
+                  await reloadCatalog();
+                }}
+              />
+            )}
+
+            {/* WHATSAPP BUSINESS CLOUD API & NOTIFICATIONS */}
+            {tab === 'whatsapp' && (
+              <WhatsAppAdminPanel branches={data?.branches || []} isSuperAdmin={isSuperAdmin} />
+            )}
           </>
         )}
       </div>
+
+      {/* Screenshot Preview Modal */}
+      {previewScreenshotUrl && (
+        <div
+          onClick={() => setPreviewScreenshotUrl(null)}
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl p-4 max-w-xl w-full space-y-3 cursor-default"
+          >
+            <div className="flex items-center justify-between border-b border-black/10 pb-2">
+              <h3 className="font-display text-lg font-semibold text-ink">Customer Payment Screenshot</h3>
+              <button
+                type="button"
+                onClick={() => setPreviewScreenshotUrl(null)}
+                className="px-3 py-1 text-xs font-semibold border border-black/15 rounded-lg cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+            <img
+              src={previewScreenshotUrl}
+              alt="Customer uploaded UPI receipt"
+              className="w-full max-h-[70vh] object-contain rounded-lg bg-alabaster"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Vehicle Modal */}
       {showVehicleForm && (

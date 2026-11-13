@@ -253,5 +253,50 @@ service cloud.firestore {
         incoming().status == 'Open';
       allow update, delete: if isAdmin();
     }
+
+    // WhatsApp Business Integration & Payment Proof Collections
+    match /whatsapp_config/{configId} {
+      allow get: if isValidId(configId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /whatsapp_templates/{templateId} {
+      allow get: if isValidId(templateId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /employee_notification_settings/{settingId} {
+      allow get: if isValidId(settingId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /notification_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /payment_proofs/{proofId} {
+      allow get: if isValidId(proofId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /payment_audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /whatsapp_webhook_events/{eventId} {
+      allow get: if isValidId(eventId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Never expose OTP hashes or challenges to client Firestore reads or writes
+    match /whatsapp_otp_challenges/{challengeId} {
+      allow read, write: if false;
+    }
   }
 }

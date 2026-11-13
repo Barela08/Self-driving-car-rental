@@ -101,7 +101,29 @@ async function runSeed(): Promise<void> {
   const settingsSnap = await db.collection('company_settings').doc('default').get();
   const now = new Date().toISOString();
 
-  if (!settingsSnap.exists) {
+  if (settingsSnap.exists) {
+    const current = settingsSnap.data() as Record<string, any>;
+    if (
+      !current?.upiId ||
+      !current?.upiMerchantName ||
+      typeof current?.upiEnabled !== 'boolean' ||
+      !current?.upiPaymentInstructions
+    ) {
+      await db.collection('company_settings').doc('default').set(
+        {
+          upiEnabled: typeof current?.upiEnabled === 'boolean' ? current.upiEnabled : true,
+          upiId: current?.upiId || process.env.COMPANY_UPI_ID || 'elitedrive@icici',
+          upiMerchantName: current?.upiMerchantName || process.env.COMPANY_UPI_NAME || 'EliteDrive Mobility Pvt Ltd',
+          upiStaticQrImage: current?.upiStaticQrImage || '',
+          upiPaymentInstructions:
+            current?.upiPaymentInstructions ||
+            '1. Scan the dynamic booking QR (amount and reference are pre-filled automatically) or tap Open UPI App on mobile.\n2. Confirm the payee name matches EliteDrive Mobility Pvt Ltd before authorizing payment.\n3. Enter your 12-digit UTR / transaction reference and attach the receipt screenshot.\n4. Finance verifies the transaction before confirming your booking.',
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+  } else {
     await db.collection('company_settings').doc('default').set({
       id: 'default',
       companyName: 'EliteDrive',
@@ -110,6 +132,12 @@ async function runSeed(): Promise<void> {
       roadsideEmergencyPhone: '1800-102-8899',
       supportEmail: 'concierge@elitedrive.in',
       whatsappNumber: '919820011223',
+      upiEnabled: true,
+      upiId: process.env.COMPANY_UPI_ID || 'elitedrive@icici',
+      upiMerchantName: process.env.COMPANY_UPI_NAME || 'EliteDrive Mobility Pvt Ltd',
+      upiStaticQrImage: '',
+      upiPaymentInstructions:
+        '1. Scan the dynamic booking QR (amount and reference are pre-filled automatically) or tap Open UPI App on mobile.\n2. Confirm the payee name matches EliteDrive Mobility Pvt Ltd before authorizing payment.\n3. Enter your 12-digit UTR / transaction reference and attach the receipt screenshot.\n4. Finance verifies the transaction before confirming your booking.',
       taxRatePercent: 18,
       advancePaymentPercent: 30,
       roadsideAddonPerDay: 199,
@@ -798,4 +826,112 @@ async function runSeed(): Promise<void> {
     displayName: 'Meera Iyer (Support Staff)',
     role: 'support_staff',
   });
+
+  // WhatsApp Business Config (Honest Disconnected state unless real Meta Cloud API secrets are configured & verified)
+  const waSnap = await db.collection('whatsapp_config').doc('default').get();
+  if (!waSnap.exists) {
+    await db.collection('whatsapp_config').doc('default').set({
+      id: 'default',
+      connectionStatus: 'Disconnected',
+      businessPhoneNumber: process.env.WHATSAPP_BUSINESS_PHONE || '',
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+      wabaId: process.env.WHATSAPP_WABA_ID || '',
+      accountStatus: 'Not Onboarded',
+      qualityRating: 'UNKNOWN',
+      hasAccessTokenSecret: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+      hasAppSecret: Boolean(process.env.WHATSAPP_APP_SECRET),
+      webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+      monthlyBudgetInr: 0, // Zero-Budget Safety Policy default
+      currentMonthSpendInr: 0,
+      freeServiceConversationsUsed: 0,
+      freeServiceAllowanceMonthly: 1000,
+      perUtilityCostInr: 0.35,
+      perAuthCostInr: 0.25,
+      perMarketingCostInr: 0.85,
+      zeroBudgetEnforced: true,
+      otpExpirySeconds: 300,
+      otpMaxAttempts: 5,
+      otpCooldownSeconds: 60,
+      customerEventFlags: {
+        booking_received: true,
+        booking_approved: true,
+        booking_rejected: true,
+        booking_cancelled: true,
+        payment_proof_submitted: true,
+        payment_verified: true,
+        payment_rejected: true,
+        kyc_submitted: true,
+        kyc_approved: true,
+        kyc_rejected: true,
+        pickup_scheduled: true,
+        pickup_completed: true,
+        return_reminder: true,
+        return_completed: true,
+        refund_processed: true,
+      },
+      lastVerifiedAt: null,
+      lastError: null,
+      updatedAt: now,
+    });
+
+    const templates = [
+      { id: 'tpl-booking-received', name: 'elitedrive_booking_received', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-booking-approved', name: 'elitedrive_booking_approved', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-booking-status', name: 'elitedrive_booking_status_update', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-payment-status', name: 'elitedrive_payment_status', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-kyc-status', name: 'elitedrive_kyc_status', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-pickup-return', name: 'elitedrive_trip_reminder', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-employee-alert', name: 'elitedrive_staff_booking_alert', category: 'UTILITY', language: 'en', status: 'Not Synced' },
+      { id: 'tpl-auth-otp', name: 'elitedrive_auth_otp', category: 'AUTHENTICATION', language: 'en', status: 'Not Synced' },
+    ];
+    for (const tpl of templates) {
+      await db.collection('whatsapp_templates').doc(tpl.id).set(tpl);
+    }
+
+    const employees = [
+      {
+        id: 'emp-notif-admin',
+        name: 'Vikram Mehta (Super Admin)',
+        phone: '+91 98200 11001',
+        branchId: 'all',
+        department: 'super_admin',
+        whatsappEnabled: true,
+        events: ['booking_received', 'booking_approved', 'booking_cancelled', 'payment_proof_submitted', 'payment_verified', 'kyc_submitted', 'refund_processed'],
+        updatedAt: now,
+      },
+      {
+        id: 'emp-notif-ops-bom',
+        name: 'Arjun Nair (Bandra Ops)',
+        phone: '+91 98200 11002',
+        branchId: 'branch-bom-bandra',
+        department: 'operations',
+        whatsappEnabled: true,
+        events: ['booking_received', 'booking_approved', 'kyc_submitted', 'pickup_scheduled', 'pickup_completed', 'return_reminder', 'return_completed'],
+        updatedAt: now,
+      },
+      {
+        id: 'emp-notif-fleet-blr',
+        name: 'Kavita Rao (Bengaluru Fleet)',
+        phone: '+91 98450 11003',
+        branchId: 'branch-blr-indiranagar',
+        department: 'fleet_manager',
+        whatsappEnabled: true,
+        events: ['booking_received', 'pickup_scheduled', 'return_reminder', 'return_completed'],
+        updatedAt: now,
+      },
+      {
+        id: 'emp-notif-finance',
+        name: 'Siddharth Jain (Finance Desk)',
+        phone: '+91 98200 11004',
+        branchId: 'all',
+        department: 'finance',
+        whatsappEnabled: true,
+        events: ['payment_proof_submitted', 'payment_verified', 'refund_processed'],
+        updatedAt: now,
+      },
+    ];
+    for (const emp of employees) {
+      await db.collection('employee_notification_settings').doc(emp.id).set(emp);
+    }
+  }
 }

@@ -20,3 +20,7 @@
 10. **Immutable Timestamp Tampering**: `POST /support_tickets/{id}` with backdated `createdAt` not matching `request.time` -> Denied.
 11. **Unverified / Anonymous Spoof**: Write attempt without `request.auth != null` -> Denied.
 12. **Public Vehicle Private-Doc Read**: `GET /vehicle_private/{vehicleId}` (containing registration/VIN/insurance doc refs) as unauthenticated or customer -> Denied.
+13. **WhatsApp OTP Client Read**: `GET /whatsapp_otp_challenges/{id}` by any client (even Admin) -> Denied (OTP hashes are strictly server-only).
+14. **UPI Payment Proof Self-Approval**: `PATCH /payment_proofs/{id}` with `{ status: "Approved" }` by customer -> Denied.
+15. **Notification Log Token/OTP Leakage**: `notification_logs` contains zero plaintext OTPs and zero Meta access tokens; writes restricted to server/Cloud Functions.
+16. **Payment Audit Log Tampering**: `POST /payment_audit_logs/{id}` or client write to `payment_audit_logs` -> Denied (server-only immutable financial audit trail).
