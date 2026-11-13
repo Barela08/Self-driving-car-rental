@@ -14,6 +14,8 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { apiFetch } from '../lib/api';
 import { canAccessMasterConsole } from '../lib/permissions';
 import { AdminAiAuthPanel } from '../components/admin/AdminAiAuthPanel';
@@ -54,6 +56,7 @@ type MasterTab = 'overview' | 'tenants' | 'owners' | 'ai_auth' | 'logs';
 
 export const MasterAdminDashboard: React.FC = () => {
   const { profile, loading: authLoading, logout } = useAuth();
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<MasterTab>('overview');
@@ -209,7 +212,7 @@ export const MasterAdminDashboard: React.FC = () => {
             onClick={() => void handleLogout()}
             className="w-full py-2 px-3 rounded-lg border border-white/15 text-white/85 hover:border-gold inline-flex items-center justify-center gap-2 cursor-pointer"
           >
-            <LogOut className="w-3.5 h-3.5" /> Sign Out
+            <LogOut className="w-3.5 h-3.5" /> {t('nav.signOut')}
           </button>
         </div>
       </aside>
@@ -243,6 +246,7 @@ export const MasterAdminDashboard: React.FC = () => {
                 </button>
               ))}
             </div>
+            <LanguageSwitcher variant="dark" />
             <button
               type="button"
               onClick={() => void loadMasterData()}

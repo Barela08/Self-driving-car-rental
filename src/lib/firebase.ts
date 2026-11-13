@@ -1,12 +1,27 @@
 import { initializeApp, getApps } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 
+const recaptchaSiteKey = (import.meta as any).env?.VITE_RECAPTCHA_SITE_KEY as string | undefined;
+if (typeof window !== 'undefined' && recaptchaSiteKey && recaptchaSiteKey.trim()) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(recaptchaSiteKey.trim()),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (err) {
+    console.debug('Firebase App Check skipped:', err);
+  }
+}
+
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
 export enum OperationType {

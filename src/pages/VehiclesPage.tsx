@@ -100,7 +100,7 @@ export const VehiclesPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [startDate, endDate, effectiveBranchId, fetchAvailabilitySummary]);
+  }, [startDate, endDate, effectiveBranchId, fetchAvailabilitySummary, vehicles.length]);
 
   const modelCards = useMemo(() => {
     const summaryMap = new Map<string, VehicleAvailabilitySummary>();
@@ -472,7 +472,7 @@ export const VehiclesPage: React.FC = () => {
                   const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
                   const totalUnits = summary ? summary.totalUnits : 1;
                   const statusText = summary
-                    ? summary.availabilityStatus
+                    ? summary.statusLabel || summary.availabilityStatus
                     : car.status === 'Available'
                       ? t('fleet.available')
                       : t('fleet.soldOut');

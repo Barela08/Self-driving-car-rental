@@ -7,6 +7,7 @@ import {
   CalendarClock,
   Car,
   CreditCard,
+  Database,
   Eye,
   FileCheck2,
   History,
@@ -22,6 +23,8 @@ import {
   X,
 } from 'lucide-react';
 import { hasAdminPermission } from '../../lib/permissions';
+import { useLanguage } from '../../context/LanguageContext';
+import { LanguageSwitcher } from '../LanguageSwitcher';
 import type { AdminNotification, AdminPermission, Branch, CompanySettings, CustomRole, UserProfile } from '../../types';
 import { normalizeTargetTab, type AdminTabKey } from './adminTypes';
 
@@ -30,6 +33,7 @@ interface AdminNavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   requiredAny?: AdminPermission[];
+  ownerOnly?: boolean;
 }
 
 const ADMIN_NAV_ITEMS: AdminNavItem[] = [
@@ -133,6 +137,12 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     icon: Settings2,
     requiredAny: ['manage_website_settings', 'manage_coupons', 'publish_offers'],
   },
+  {
+    key: 'data_management',
+    label: 'Data & Firebase Control',
+    icon: Database,
+    ownerOnly: true,
+  },
 ];
 
 interface AdminLayoutProps {
@@ -166,10 +176,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   onMarkAllRead,
   children,
 }) => {
+  const { t } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
 
   const visibleNav = ADMIN_NAV_ITEMS.filter((item) => {
+    if (item.ownerOnly && profile.role !== 'super_admin') return false;
     if (!item.requiredAny || item.requiredAny.length === 0) return true;
     return item.requiredAny.some((perm) => hasAdminPermission(profile, perm, roles));
   });
@@ -270,7 +282,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             className="w-full py-2 px-3 rounded-lg border border-white/15 text-white/80 hover:text-white hover:border-gold/50 inline-flex items-center justify-center gap-2 cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
-            Sign Out
+            {t('nav.signOut')}
           </button>
         </div>
       </aside>
@@ -350,14 +362,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            <LanguageSwitcher variant="dark" />
             <button
               type="button"
               onClick={onOpenUserPreview}
               className="px-3.5 py-2 rounded-lg bg-gold text-obsidian hover:bg-gold-bright text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
             >
               <Eye className="w-3.5 h-3.5" />
-              USER PREVIEW
+              <span className="hidden sm:inline">{t('common.userPreview')}</span>
             </button>
 
             <div className="relative">

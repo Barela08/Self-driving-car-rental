@@ -217,7 +217,7 @@ async function runSeed(): Promise<void> {
     upiPaymentInstructions:
       '1. Scan the dynamic booking QR (amount and reference are pre-filled automatically) or tap Open UPI App on mobile.\n2. Confirm the payee name matches EliteDrive Mobility Pvt Ltd before authorizing payment.\n3. Enter your 12-digit UTR / transaction reference, paid amount, and attach the receipt screenshot.\n4. Finance verifies the transaction before confirming your booking.',
     upiVerificationRequired: true,
-    holdDurationMinutes: 20,
+    holdDurationMinutes: 15,
     minimumAdvanceAmount: 1000,
     fullPaymentEnabled: true,
     securityDepositRule: 'Refundable security deposit collected with booking or at pickup; settled within 48 hours of clean return inspection.',

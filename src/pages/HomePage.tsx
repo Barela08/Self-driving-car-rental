@@ -472,11 +472,13 @@ export const HomePage: React.FC = () => {
               const summary = summaryByVehicleId.get(car.id);
               const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
               const isSoldOut = availCount <= 0;
-              const statusLabel = isSoldOut
-                ? t('fleet.soldOut')
-                : availCount <= 2
-                  ? t('fleet.limited')
-                  : t('fleet.available');
+              const statusLabel = summary?.statusLabel
+                ? summary.statusLabel
+                : isSoldOut
+                  ? t('fleet.soldOut')
+                  : availCount === 1
+                    ? t('fleet.onlyOneRemaining')
+                    : t('fleet.available');
 
               return (
                 <Link

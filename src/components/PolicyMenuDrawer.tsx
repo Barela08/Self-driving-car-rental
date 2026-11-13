@@ -93,7 +93,7 @@ export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClos
               <Link to="/#offers" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-ivory">
                 {t('nav.offers')}
               </Link>
-              <Link to="/auth" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-gold font-semibold">
+              <Link to="/login" onClick={onClose} className="px-3 py-2 rounded-lg bg-navy-deep hover:border-gold/40 border border-white/10 text-gold font-semibold">
                 {t('nav.loginRegister')}
               </Link>
             </div>
@@ -108,11 +108,11 @@ export const PolicyMenuDrawer: React.FC<PolicyMenuDrawerProps> = ({ open, onClos
                   key={lang.code}
                   type="button"
                   onClick={() => setLanguage(lang.code)}
-                  className={`py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  className={`py-1.5 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                     language === lang.code ? 'bg-gold text-obsidian' : 'text-ivory/75 hover:text-white'
                   }`}
                 >
-                  {lang.nativeLabel}
+                  {lang.shortCode} · {lang.nativeLabel}
                 </button>
               ))}
             </div>

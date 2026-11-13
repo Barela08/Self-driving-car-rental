@@ -593,6 +593,99 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "language", "status", "createdAt"]
+    },
+    "Business": {
+      "title": "Business",
+      "description": "Core business identity, contact info, map coordinates, and operating rules",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "brandName": { "type": "string", "maxLength": 160 }
+      },
+      "required": ["id", "companyName"]
+    },
+    "VehicleModel": {
+      "title": "VehicleModel",
+      "description": "Grouped vehicle model tracking total and active physical fleet quantity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "modelKey": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "totalQuantity": { "type": "number" },
+        "activeQuantity": { "type": "number" }
+      },
+      "required": ["id", "modelKey", "name", "totalQuantity", "activeQuantity"]
+    },
+    "VehicleCategoryRecord": {
+      "title": "VehicleCategoryRecord",
+      "description": "Fleet vehicle category taxonomy",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "active"]
+    },
+    "InventoryUnit": {
+      "title": "InventoryUnit",
+      "description": "Physical car inventory tracking record with unitCode and registration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "vehicleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "modelKey": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "registrationNumber": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "vehicleId", "modelKey", "status"]
+    },
+    "CustomerDocument": {
+      "title": "CustomerDocument",
+      "description": "Private customer KYC document metadata (DL Front, DL Back, Aadhaar)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "docType": { "type": "string", "enum": ["dl_front", "dl_back", "aadhaar"] },
+        "storagePath": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "status": { "type": "string", "enum": ["Not Uploaded", "Uploaded", "Pending Verification", "Verified", "Rejected", "Resubmission Required"] },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "docType", "storagePath", "status", "uploadedAt"]
+    },
+    "ConsentRecord": {
+      "title": "ConsentRecord",
+      "description": "Timestamped booking consent acceptance ledger (5 mandatory + optional marketing)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "accuracyConfirmed": { "type": "boolean" },
+        "termsAccepted": { "type": "boolean" },
+        "privacyAccepted": { "type": "boolean" },
+        "rentalRulesAccepted": { "type": "boolean" },
+        "cancellationRefundAccepted": { "type": "boolean" },
+        "marketingConsent": { "type": "boolean" },
+        "acceptedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "accuracyConfirmed", "termsAccepted", "privacyAccepted", "rentalRulesAccepted", "cancellationRefundAccepted", "acceptedAt"]
+    },
+    "MigrationJob": {
+      "title": "MigrationJob",
+      "description": "Firebase data migration execution report and backup audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mode": { "type": "string", "maxLength": 40 },
+        "firebaseWriteSucceeded": { "type": "boolean" },
+        "backupPath": { "type": "string", "maxLength": 240 },
+        "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "mode", "firebaseWriteSucceeded", "completedAt"]
     }
   },
   "firestore": {
@@ -747,6 +840,78 @@
     "/ai_usage_logs/{logId}": {
       "schema": { "$ref": "#/entities/AiUsageLog" },
       "description": "AI Assistant interaction and latency telemetry"
+    },
+    "/businesses/{businessId}": {
+      "schema": { "$ref": "#/entities/Business" },
+      "description": "Core business profile and operating hub configuration"
+    },
+    "/owners/{ownerId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Business Owner profile records"
+    },
+    "/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Staff member profiles and branch assignments"
+    },
+    "/permissions/{permissionId}": {
+      "schema": { "$ref": "#/entities/CustomRole" },
+      "description": "Granular RBAC permission definitions"
+    },
+    "/vehicleModels/{modelId}": {
+      "schema": { "$ref": "#/entities/VehicleModel" },
+      "description": "Normalized vehicle models with fleet quantity counts"
+    },
+    "/vehicleCategories/{categoryId}": {
+      "schema": { "$ref": "#/entities/VehicleCategoryRecord" },
+      "description": "Vehicle category taxonomy"
+    },
+    "/inventory/{unitId}": {
+      "schema": { "$ref": "#/entities/InventoryUnit" },
+      "description": "Physical car unit tracking ledger"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Normalized customer directory records"
+    },
+    "/customerDocuments/{docId}": {
+      "schema": { "$ref": "#/entities/CustomerDocument" },
+      "description": "Private customer KYC document metadata (DL Front, DL Back, Aadhaar)"
+    },
+    "/kyc_document_blobs/{docId}": {
+      "schema": { "$ref": "#/entities/PaymentScreenshot" },
+      "description": "Server-only private KYC file bytes when stored in Firestore fallback"
+    },
+    "/maintenance/{maintenanceId}": {
+      "schema": { "$ref": "#/entities/VehicleMaintenance" },
+      "description": "Normalized fleet maintenance log collection"
+    },
+    "/websiteSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/Business" },
+      "description": "CMS website content, legal policies, and EN/HI/MR localization"
+    },
+    "/socialLinks/{linkId}": {
+      "schema": { "$ref": "#/entities/Offer" },
+      "description": "Normalized company social media profile links"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Unified immutable audit logs"
+    },
+    "/systemSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/AuthOtpConfig" },
+      "description": "System payment, hold, auth, and integration settings"
+    },
+    "/aiSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/AiConfig" },
+      "description": "Normalized AI concierge settings"
+    },
+    "/migrationJobs/{jobId}": {
+      "schema": { "$ref": "#/entities/MigrationJob" },
+      "description": "Firebase migration history and validation reports"
+    },
+    "/consent_records/{consentId}": {
+      "schema": { "$ref": "#/entities/ConsentRecord" },
+      "description": "Timestamped booking consent records"
     }
   }
 }

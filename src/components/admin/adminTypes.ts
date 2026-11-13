@@ -8,6 +8,7 @@ import type {
   CompanySettings,
   ContactEnquiry,
   Coupon,
+  CustomerDocumentRecord,
   CustomerReview,
   CustomRole,
   Driver,
@@ -16,6 +17,7 @@ import type {
   InventoryHold,
   InvoiceRecord,
   KycVerification,
+  MigrationJobReport,
   NotificationCampaign,
   NotificationLog,
   Offer,
@@ -50,7 +52,8 @@ export type AdminTabKey =
   | 'website_settings'
   | 'coupons_offers'
   | 'ai_auth'
-  | 'whatsapp';
+  | 'whatsapp'
+  | 'data_management';
 
 export interface AdminWhatsAppSummary {
   connectionStatus: string;
@@ -66,6 +69,7 @@ export interface AdminOverviewPayload {
   vehiclePrivate: VehiclePrivateDetails[];
   bookings: Booking[];
   kycQueue: KycVerification[];
+  customerDocuments?: CustomerDocumentRecord[];
   users: UserProfile[];
   branches: Branch[];
   cities: City[];
@@ -94,6 +98,15 @@ export interface AdminOverviewPayload {
   customerReviews?: CustomerReview[];
   staffLoginHistory: StaffLoginHistory[];
   integrations: IntegrationStatusItem[];
+  firebaseStatus?: {
+    mode: string;
+    projectId: string;
+    databaseId: string;
+    storageBucket: string;
+    liveReady: boolean;
+    reason?: string;
+  };
+  migrationJobs?: MigrationJobReport[];
 }
 
 export function normalizeTargetTab(targetTab?: string): AdminTabKey {
@@ -135,6 +148,9 @@ export function normalizeTargetTab(targetTab?: string): AdminTabKey {
     case 'ai_auth':
     case 'ai_assistant':
       return 'ai_auth';
+    case 'data_management':
+    case 'firebase_migration':
+      return 'data_management';
     default:
       return 'overview';
   }

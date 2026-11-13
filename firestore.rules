@@ -41,7 +41,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        ((request.auth.token.email == 'barelanilesh483@gmail.com' ||
+        ((request.auth.token.email == 'nileshbarela08@gmail.com' ||
+          request.auth.token.email == 'barelanilesh483@gmail.com' ||
           request.auth.token.email == 'nbgamer126@gmail.com') &&
           request.auth.token.email_verified == true) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
@@ -82,16 +83,17 @@ service cloud.firestore {
     }
 
     function isValidPrivateInfo(data) {
-      return data.keys().hasAll(['uid', 'email', 'marketingConsent', 'serviceConsentVersion', 'updatedAt']) &&
+      return data.keys().hasAll(['uid', 'marketingConsent', 'serviceConsentVersion', 'updatedAt']) &&
         data.keys().hasOnly([
-          'uid', 'email', 'phone', 'savedAddresses', 'favouriteVehicleIds',
+          'uid', 'email', 'phone', 'phoneVerified', 'phoneVerifiedAt', 'savedAddresses', 'favouriteVehicleIds',
           'marketingConsent', 'whatsappConsent', 'whatsappOptOut', 'fcmTokens',
           'serviceConsentVersion', 'serviceConsentAt', 'updatedAt'
         ]) &&
         isValidId(data.uid) &&
-        data.uid == request.auth.uid &&
-        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
         (!('phone' in data) || (data.phone is string && data.phone.size() <= 24)) &&
+        (!('phoneVerified' in data) || data.phoneVerified is bool) &&
+        (!('phoneVerifiedAt' in data) || (data.phoneVerifiedAt is string && data.phoneVerifiedAt.size() <= 64)) &&
         (!('savedAddresses' in data) || (data.savedAddresses is list && data.savedAddresses.size() <= 10)) &&
         (!('favouriteVehicleIds' in data) || (data.favouriteVehicleIds is list && data.favouriteVehicleIds.size() <= 50)) &&
         data.marketingConsent is bool &&
@@ -139,18 +141,25 @@ service cloud.firestore {
     // 4. Collection Rules
     match /admins/{adminUid} {
       allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
-      allow list, write: if false;
+      allow list, write: if isAdmin();
+    }
+
+    match /auth_credentials/{credId} {
+      allow read: if false;
+      allow write: if isAdmin();
     }
 
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if false;
-      allow create: if isValidId(userId) && isVerifiedUser() && isOwner(userId) &&
-        isValidUserProfile(incoming()) &&
-        incoming().uid == userId &&
-        incoming().role == 'customer' &&
-        incoming().accountStatus == 'active' &&
-        incoming().kycStatus == 'Not Started';
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) && (
+        isAdmin() ||
+        (isOwner(userId) &&
+          incoming().uid == userId &&
+          incoming().role == 'customer' &&
+          incoming().accountStatus == 'active' &&
+          incoming().kycStatus == 'Not Started')
+      );
       allow update: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) && (
         isAdmin() ||
         (isOwner(userId) &&
@@ -161,22 +170,25 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'accountStatus', 'updatedAt']) &&
           incoming().accountStatus in ['active', 'deletion_requested'])
       );
-      allow delete: if false;
+      allow delete: if isAdmin();
 
       match /private/{docId} {
         allow get: if isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin());
-        allow list: if false;
-        allow create: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isOwner(userId) &&
-          isValidPrivateInfo(incoming());
-        allow update: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isOwner(userId) &&
-          isValidPrivateInfo(incoming()) &&
-          incoming().uid == existing().uid &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent',
-            'whatsappConsent', 'whatsappOptOut', 'fcmTokens',
-            'serviceConsentVersion', 'serviceConsentAt', 'updatedAt'
-          ]);
-        allow delete: if false;
+        allow list: if isAdmin();
+        allow create: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isValidPrivateInfo(incoming()) && (
+          isAdmin() || (isOwner(userId) && incoming().uid == request.auth.uid)
+        );
+        allow update: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isValidPrivateInfo(incoming()) && (
+          isAdmin() ||
+          (isOwner(userId) &&
+            incoming().uid == existing().uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent',
+              'whatsappConsent', 'whatsappOptOut', 'fcmTokens',
+              'serviceConsentVersion', 'serviceConsentAt', 'updatedAt'
+            ]))
+        );
+        allow delete: if isAdmin();
       }
     }
 
@@ -234,52 +246,61 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Bookings & Operational Records (Mutations enforced server-side via Admin SDK)
+    match /drivers/{driverId} {
+      allow get: if isValidId(driverId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    // Bookings & Operational Records
     match /bookings/{bookingId} {
       allow get: if isValidId(bookingId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
 
       match /status_history/{historyId} {
         allow get: if isValidId(bookingId) && isValidId(historyId) && isSignedIn() && (
           get(/databases/$(database)/documents/bookings/$(bookingId)).data.userId == request.auth.uid || isAdmin()
         );
         allow list: if isValidId(bookingId) && isSignedIn() && resource.data.userId == request.auth.uid;
-        allow write: if false;
+        allow write: if isAdmin();
       }
     }
 
     match /kyc_verifications/{kycId} {
       allow get: if isValidId(kycId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /payments/{paymentId} {
       allow get: if isValidId(paymentId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /invoices/{invoiceId} {
       allow get: if isValidId(invoiceId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /customer_subscriptions/{subId} {
       allow get: if isValidId(subId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /notifications/{notificationId} {
       allow get: if isValidId(notificationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow update: if isValidId(notificationId) && isSignedIn() && existing().userId == request.auth.uid &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
-        incoming().read is bool;
-      allow create, delete: if false;
+      allow update: if isValidId(notificationId) && isSignedIn() && (
+        isAdmin() ||
+        (existing().userId == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+          incoming().read is bool)
+      );
+      allow create, delete: if isAdmin();
     }
 
     match /support_tickets/{ticketId} {
@@ -320,20 +341,18 @@ service cloud.firestore {
 
     match /notification_logs/{logId} {
       allow get: if isValidId(logId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /payment_proofs/{proofId} {
       allow get: if isValidId(proofId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /payment_audit_logs/{logId} {
       allow get: if isValidId(logId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /whatsapp_webhook_events/{eventId} {
@@ -347,23 +366,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Owner Admin Control Center operational collections (mutated via server Admin SDK)
+    // Owner Admin Control Center operational collections
     match /notification_campaigns/{campaignId} {
       allow get: if isValidId(campaignId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /admin_notifications/{notificationId} {
       allow get: if isValidId(notificationId) && isAdmin();
-      allow list, update: if isAdmin();
-      allow create, delete: if false;
+      allow list, write: if isAdmin();
     }
 
     match /contact_enquiries/{enquiryId} {
       allow get: if isValidId(enquiryId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /email_fallbacks/{fallbackId} {
@@ -374,32 +390,28 @@ service cloud.firestore {
 
     match /roles/{roleId} {
       allow get: if isValidId(roleId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /vehicle_maintenance/{maintenanceId} {
       allow get: if isValidId(maintenanceId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /refunds/{refundId} {
       allow get: if isValidId(refundId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /staff_login_history/{entryId} {
       allow get: if isValidId(entryId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /audit_logs/{logId} {
       allow get: if isValidId(logId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /integrations_checks/{checkId} {
@@ -411,13 +423,12 @@ service cloud.firestore {
     match /inventory_holds/{holdId} {
       allow get: if isValidId(holdId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /booking_vehicle_assignments/{assignmentId} {
       allow get: if isValidId(assignmentId) && isAdmin();
-      allow list: if isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     // Never expose raw payment screenshots to direct client reads or writes
@@ -425,52 +436,156 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /company_assets/{assetId} {
+      allow read, write: if false;
+    }
+
     match /rental_agreements/{agreementId} {
       allow get: if isValidId(agreementId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
     match /customer_reviews/{reviewId} {
       allow get: if isValidId(reviewId) && (existing().status == 'Approved' || isOwner(existing().userId) || isAdmin());
       allow list: if resource.data.status == 'Approved' || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
-    // Master Admin Platform & AI / Auth-OTP collections (server-Admin-SDK enforced)
+    // Master Admin Platform & AI / Auth-OTP collections
     match /master_admins/{masterUid} {
-      allow get: if isValidId(masterUid) && (isOwner(masterUid) || isMasterAdmin());
-      allow list, write: if false;
+      allow get: if isValidId(masterUid) && (isOwner(masterUid) || isMasterAdmin() || isAdmin());
+      allow list, write: if isAdmin();
     }
 
     match /platform_tenants/{tenantId} {
-      allow get: if isValidId(tenantId) && isMasterAdmin();
-      allow list: if isMasterAdmin();
-      allow write: if false;
+      allow get: if isValidId(tenantId) && (isMasterAdmin() || isAdmin());
+      allow list, write: if isAdmin();
     }
 
     match /auth_otp_config/{configId} {
       allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
-      allow list: if isMasterAdmin() || isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /otp_verification_logs/{logId} {
       allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
-      allow list: if isMasterAdmin() || isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /ai_config/{configId} {
       allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
-      allow list: if isMasterAdmin() || isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
     }
 
     match /ai_usage_logs/{logId} {
       allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
-      allow list: if isMasterAdmin() || isAdmin();
-      allow write: if false;
+      allow list, write: if isAdmin();
+    }
+
+    // Normalized Master Prompt Business, Inventory, KYC Document, and Governance Collections
+    match /businesses/{businessId} {
+      allow get: if isValidId(businessId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /websiteSettings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /socialLinks/{linkId} {
+      allow get: if isValidId(linkId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /vehicleModels/{modelId} {
+      allow get: if isValidId(modelId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /vehicleCategories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /inventory/{unitId} {
+      allow get: if isValidId(unitId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /owners/{ownerId} {
+      allow get: if isValidId(ownerId) && (isOwner(ownerId) || isAdmin());
+      allow list, write: if isAdmin();
+    }
+
+    match /staff/{staffId} {
+      allow get: if isValidId(staffId) && (isOwner(staffId) || isAdmin());
+      allow list, write: if isAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow get: if isValidId(customerId) && (isOwner(customerId) || isAdmin());
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /permissions/{permissionId} {
+      allow get: if isValidId(permissionId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /customerDocuments/{docId} {
+      allow get: if isValidId(docId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if isAdmin();
+    }
+
+    // Never expose raw private KYC file bytes to direct client Firestore reads or writes
+    match /kyc_document_blobs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /consent_records/{consentId} {
+      allow get: if isValidId(consentId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if isAdmin();
+    }
+
+    match /maintenance/{maintenanceId} {
+      allow get: if isValidId(maintenanceId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /seed_markers/{markerId} {
+      allow get: if isValidId(markerId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /systemSettings/{settingId} {
+      allow get: if isValidId(settingId) && isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    match /aiSettings/{settingId} {
+      allow get: if isValidId(settingId) && (isMasterAdmin() || isAdmin());
+      allow list, write: if isAdmin();
+    }
+
+    match /migrationJobs/{jobId} {
+      allow get: if isValidId(jobId) && isAdmin();
+      allow list, write: if isAdmin();
     }
   }
 }

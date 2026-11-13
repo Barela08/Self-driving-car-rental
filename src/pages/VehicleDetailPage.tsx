@@ -56,7 +56,7 @@ export const VehicleDetailPage: React.FC = () => {
         setBlockedWindows([]);
         setAvailabilitySummary(null);
       });
-  }, [id, startDate, endDate]);
+  }, [id, startDate, endDate, vehicles.length, vehicle?.status]);
 
   useEffect(() => {
     if (!id) return;
@@ -90,7 +90,10 @@ export const VehicleDetailPage: React.FC = () => {
   const specEntries = Object.entries(vehicle.specifications || {});
   const availableUnits = availabilitySummary ? availabilitySummary.availableUnits : vehicle.status === 'Available' ? 1 : 0;
   const totalUnits = availabilitySummary ? availabilitySummary.totalUnits : 1;
-  const availabilityStatus = availabilitySummary?.availabilityStatus || (availableUnits > 0 ? t('fleet.available') : t('fleet.soldOut'));
+  const availabilityStatus =
+    availabilitySummary?.statusLabel ||
+    availabilitySummary?.availabilityStatus ||
+    (availableUnits > 0 ? t('fleet.available') : t('fleet.soldOut'));
   const nextAvailFormatted = availabilitySummary?.nextAvailableDate
     ? new Date(availabilitySummary.nextAvailableDate).toLocaleString('en-IN', {
         day: '2-digit',

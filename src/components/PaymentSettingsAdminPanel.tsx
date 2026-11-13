@@ -109,7 +109,7 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
   const [advancePercent, setAdvancePercent] = useState(30);
   const [minimumAdvanceAmount, setMinimumAdvanceAmount] = useState(1000);
   const [fullPaymentEnabled, setFullPaymentEnabled] = useState(true);
-  const [holdDurationMinutes, setHoldDurationMinutes] = useState(20);
+  const [holdDurationMinutes, setHoldDurationMinutes] = useState(15);
   const [upiVerificationRequired, setUpiVerificationRequired] = useState(true);
   const [balanceRule, setBalanceRule] = useState(
     'Remaining rental balance is collected at vehicle pickup or verified prior to handover.'
@@ -149,7 +149,7 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
       setAdvancePercent(res.paymentSettings.advancePaymentPercent || 30);
       setMinimumAdvanceAmount(Number(res.paymentSettings.minimumAdvanceAmount ?? 1000));
       setFullPaymentEnabled(res.paymentSettings.fullPaymentEnabled !== false);
-      setHoldDurationMinutes(Number(res.paymentSettings.holdDurationMinutes || 20));
+      setHoldDurationMinutes(Number(res.paymentSettings.holdDurationMinutes || 15));
       setUpiVerificationRequired(res.paymentSettings.upiVerificationRequired !== false);
       setBalanceRule(
         res.paymentSettings.balancePaymentRule ||
@@ -1223,7 +1223,7 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
             )}
           </form>
 
-          {/* Right: Live Checkout QR Preview & Razorpay Integration Health */}
+          {/* Right: Live Checkout QR Preview & Manual UPI Compliance Health */}
           <div className="lg:col-span-5 space-y-5">
             <div className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-black/10 pb-3">

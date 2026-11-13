@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Globe, Menu, User } from 'lucide-react';
+import { Menu, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
-import { SUPPORTED_LANGUAGES } from '../lib/i18n';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import { PolicyMenuDrawer } from './PolicyMenuDrawer';
 
 export const Navbar: React.FC = () => {
   const { profile, logout } = useAuth();
   const { settings, isPreviewMode } = useCatalog();
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -105,26 +105,9 @@ export const Navbar: React.FC = () => {
             })}
           </nav>
 
-          {/* Zone 3: Language Switcher, Auth / Profile & Policy Hamburger Drawer */}
-          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            {/* Compact Language Switcher */}
-            <div className="hidden sm:flex items-center gap-0.5 p-0.5 rounded-lg bg-navy-deep/90 border border-white/15">
-              <Globe className="w-3.5 h-3.5 text-gold ml-1.5 mr-1 shrink-0" aria-hidden="true" />
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <button
-                  key={lang.code}
-                  type="button"
-                  onClick={() => setLanguage(lang.code)}
-                  className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    language === lang.code
-                      ? 'bg-gold text-obsidian'
-                      : 'text-ivory/70 hover:text-white'
-                  }`}
-                >
-                  {lang.nativeLabel}
-                </button>
-              ))}
-            </div>
+          {/* Zone 3: Compact Language Switcher, Auth / Profile & Policy Hamburger Drawer */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <LanguageSwitcher variant="dark" />
 
             {isPreviewMode ? (
               <span className="px-3 py-1.5 text-xs font-semibold border border-gold/40 text-gold rounded-lg whitespace-nowrap shrink-0">

@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { apiFetch } from '../lib/api';
+import { db } from '../lib/firebase';
 import type {
   Branch,
   City,
@@ -162,6 +164,76 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     void reloadCatalog();
   }, [reloadCatalog]);
+
+  // Real-time Firestore onSnapshot listeners layered over /api/bootstrap
+  // Skip empty snapshots so an un-migrated remote Firestore project never blanks out API bootstrap data.
+  useEffect(() => {
+    const unsubs: Array<() => void> = [];
+    try {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'vehicles'),
+          (snap) => {
+            if (snap.empty) return;
+            const list = snap.docs.map((d) => d.data() as Vehicle);
+            setVehicles(list);
+          },
+          (err) => console.debug('Firestore vehicles listener skipped:', err.message)
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'branches'),
+          (snap) => {
+            if (snap.empty) return;
+            setBranches(snap.docs.map((d) => d.data() as Branch));
+          },
+          (err) => console.debug('Firestore branches listener skipped:', err.message)
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'offers'),
+          (snap) => {
+            if (snap.empty) return;
+            setOffers(snap.docs.map((d) => d.data() as Offer));
+          },
+          (err) => console.debug('Firestore offers listener skipped:', err.message)
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'coupons'),
+          (snap) => {
+            if (snap.empty) return;
+            setCoupons(snap.docs.map((d) => d.data() as Coupon));
+          },
+          (err) => console.debug('Firestore coupons listener skipped:', err.message)
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          doc(db, 'company_settings', 'default'),
+          (snap) => {
+            if (!snap.exists()) return;
+            setSettings(snap.data() as CompanySettings);
+          },
+          (err) => console.debug('Firestore settings listener skipped:', err.message)
+        )
+      );
+    } catch (err) {
+      console.debug('Firestore realtime listeners unavailable:', err);
+    }
+    return () => {
+      for (const unsub of unsubs) {
+        try {
+          unsub();
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    };
+  }, []);
 
   const activeBranches = branches.filter((b) => b.active);
 

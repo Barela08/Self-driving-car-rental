@@ -411,17 +411,17 @@ export function computePhysicalAvailability(params: {
       availabilityStatus = 'Sold Out';
       nextAvailableDate = findNextAvailableStart(units, intervalsByUnit, safeStartMs, safeDurationMs);
       statusLabel = nextAvailableDate
-        ? `Sold Out for Selected Dates`
+        ? 'Sold Out for Selected Dates'
         : 'Currently Unavailable — Contact Support';
     } else if (availableUnits === 1) {
       availabilityStatus = 'Only 1 Remaining';
-      statusLabel = 'Only 1 Remaining';
+      statusLabel = 'Only 1 Car Remaining';
     } else if (availableUnits === 2) {
       availabilityStatus = 'Only 2 Remaining';
-      statusLabel = 'Only 2 Remaining';
+      statusLabel = `${availableUnits} Cars Available`;
     } else {
       availabilityStatus = 'Available';
-      statusLabel = `Available (${availableUnits} units)`;
+      statusLabel = `${availableUnits} Cars Available`;
     }
 
     summaries.push({
@@ -450,6 +450,227 @@ export function computePhysicalAvailability(params: {
   }
 
   return summaries;
+}
+
+export interface PhysicalUnitInspection {
+  vehicleId: string;
+  unitCode: string;
+  registrationNumber: string;
+  name: string;
+  modelKey: string;
+  branchId: string;
+  branchName: string;
+  status: Vehicle['status'];
+  maintenanceStatus: string;
+  archived: boolean;
+  activeBookingCount: number;
+  historicalBookingCount: number;
+  activeHoldCount: number;
+  activeMaintenanceCount: number;
+  hasProtectedHistory: boolean;
+  canRetire: boolean;
+  blockReason: string | null;
+}
+
+export function getModelPhysicalUnits(params: {
+  vehicles: Vehicle[];
+  bookings: Booking[];
+  holds: InventoryHold[];
+  maintenanceLogs: VehicleMaintenanceRecord[];
+  modelKey: string;
+  branchId?: string;
+}): PhysicalUnitInspection[] {
+  const { vehicles, bookings, holds, maintenanceLogs, modelKey, branchId } = params;
+  const nowMs = Date.now();
+
+  const matching = vehicles
+    .filter((v) => !v.archived && buildModelKey(v) === modelKey && (!branchId || v.branchId === branchId))
+    .sort((a, b) => String(a.unitCode || a.id).localeCompare(String(b.unitCode || b.id)));
+
+  return matching.map((unit) => {
+    let activeBookingCount = 0;
+    let historicalBookingCount = 0;
+    for (const b of bookings) {
+      const assignedIds = getBookingAssignedVehicleIds(b);
+      if (!assignedIds.includes(unit.id)) continue;
+      historicalBookingCount++;
+      if (ACTIVE_RESERVATION_STATUSES.includes(b.status)) {
+        activeBookingCount++;
+      }
+    }
+
+    const activeHoldCount = holds.filter(
+      (h) =>
+        h.status === 'Active' &&
+        new Date(h.expiresAt).getTime() > nowMs &&
+        Array.isArray(h.vehicleIds) &&
+        h.vehicleIds.includes(unit.id)
+    ).length;
+
+    const activeMaintenanceCount = maintenanceLogs.filter(
+      (m) => m.vehicleId === unit.id && m.status !== 'Completed'
+    ).length;
+
+    let blockReason: string | null = null;
+    if (activeBookingCount > 0) {
+      blockReason = `${activeBookingCount} active/upcoming booking(s)`;
+    } else if (activeHoldCount > 0) {
+      blockReason = `${activeHoldCount} active customer checkout hold(s)`;
+    } else if (
+      activeMaintenanceCount > 0 ||
+      unit.status === 'Maintenance' ||
+      unit.status === 'Under Maintenance' ||
+      unit.maintenanceStatus === 'In Workshop'
+    ) {
+      blockReason = 'Under active maintenance / workshop lock';
+    } else if (unit.status === 'Rented' || unit.status === 'Active Rental' || unit.status === 'Reserved') {
+      blockReason = `Unit currently marked ${unit.status}`;
+    }
+
+    return {
+      vehicleId: unit.id,
+      unitCode: unit.unitCode || unit.id,
+      registrationNumber: unit.registrationNumber || unit.documents?.rcNumber || unit.id,
+      name: unit.name,
+      modelKey: buildModelKey(unit),
+      branchId: unit.branchId,
+      branchName: unit.branchName,
+      status: unit.status,
+      maintenanceStatus: unit.maintenanceStatus || 'Operational',
+      archived: Boolean(unit.archived),
+      activeBookingCount,
+      historicalBookingCount,
+      activeHoldCount,
+      activeMaintenanceCount,
+      hasProtectedHistory: historicalBookingCount > 0 || activeMaintenanceCount > 0,
+      canRetire: blockReason === null,
+      blockReason,
+    };
+  });
+}
+
+export function validateModelQuantityReduction(params: {
+  unitsAnalysis: PhysicalUnitInspection[];
+  targetQuantity: number;
+  selectedRetireIds?: string[];
+}): {
+  ok: boolean;
+  error?: string;
+  unitsToRetire: PhysicalUnitInspection[];
+  delta: number;
+  maxReducibleTo: number;
+} {
+  const { unitsAnalysis, targetQuantity, selectedRetireIds } = params;
+  const currentCount = unitsAnalysis.length;
+  const delta = currentCount - targetQuantity;
+
+  if (delta <= 0) {
+    return {
+      ok: true,
+      unitsToRetire: [],
+      delta: 0,
+      maxReducibleTo: currentCount,
+    };
+  }
+
+  const occupied = unitsAnalysis.filter((u) => !u.canRetire);
+  const free = unitsAnalysis.filter((u) => u.canRetire);
+  const minAllowedQuantity = Math.max(1, occupied.length);
+
+  if (targetQuantity < 1) {
+    return {
+      ok: false,
+      error: 'Vehicle model quantity cannot be reduced below 1. Archive the model from Data Management if retiring completely.',
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  if (targetQuantity < occupied.length) {
+    return {
+      ok: false,
+      error: `Cannot reduce quantity to ${targetQuantity}: ${occupied.length} unit(s) have active bookings, holds, or workshop maintenance (${occupied
+        .map((u) => `${u.registrationNumber}: ${u.blockReason}`)
+        .join('; ')}).`,
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  if (!selectedRetireIds || selectedRetireIds.length === 0) {
+    return {
+      ok: false,
+      error: `Select ${delta} unallocated unit(s) to retire from inventory.`,
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  if (selectedRetireIds.length !== delta) {
+    return {
+      ok: false,
+      error: `Please select exact ${delta} physical unit(s) to retire (currently selected ${selectedRetireIds.length}).`,
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  const uniqueSelected = Array.from(new Set(selectedRetireIds));
+  if (uniqueSelected.length !== delta) {
+    return {
+      ok: false,
+      error: 'Duplicate unit IDs selected for retirement.',
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  const byId = new Map(unitsAnalysis.map((u) => [u.vehicleId, u]));
+  const chosen: PhysicalUnitInspection[] = [];
+  for (const id of uniqueSelected) {
+    const unit = byId.get(id);
+    if (!unit) {
+      return {
+        ok: false,
+        error: `Selected unit ${id} does not belong to this vehicle model.`,
+        unitsToRetire: [],
+        delta,
+        maxReducibleTo: minAllowedQuantity,
+      };
+    }
+    if (!unit.canRetire) {
+      return {
+        ok: false,
+        error: `Unit ${unit.registrationNumber} cannot be removed: ${unit.blockReason}.`,
+        unitsToRetire: [],
+        delta,
+        maxReducibleTo: minAllowedQuantity,
+      };
+    }
+    chosen.push(unit);
+  }
+
+  if (free.length < delta) {
+    return {
+      ok: false,
+      error: `Only ${free.length} unallocated unit(s) can be safely retired right now.`,
+      unitsToRetire: [],
+      delta,
+      maxReducibleTo: minAllowedQuantity,
+    };
+  }
+
+  return {
+    ok: true,
+    unitsToRetire: chosen,
+    delta,
+    maxReducibleTo: minAllowedQuantity,
+  };
 }
 
 export function validateMultiBranchLocation(params: {

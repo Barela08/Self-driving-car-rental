@@ -326,8 +326,10 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
         endDate: endIso,
         deliveryCharge: 0,
         oneWayCharge: 0,
+        insurancePackage: null,
         roadsideRequested: Boolean(args.roadsideRequested),
         driverRequested: Boolean(args.driverRequested),
+        coupon: null,
         paymentMode: 'full',
         settings,
       });
@@ -360,6 +362,7 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
         endDate: endIso,
         deliveryCharge: 0,
         oneWayCharge: 0,
+        insurancePackage: null,
         roadsideRequested: Boolean(args.roadsideRequested),
         driverRequested: Boolean(args.driverRequested),
         coupon,
@@ -414,7 +417,7 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
       if (!reqData.userId || !reqData.userProfile) {
         return {
           signedIn: false,
-          message: 'Customer is browsing as guest. Invite customer to sign in at /login to view bookings or finalize a reservation.',
+          message: 'Guest customer inside AI Concierge. Can start Step 1 Mobile OTP verification directly inside the Guided Booking flow without leaving this screen.',
         };
       }
       const userBookings = allBookings
@@ -447,9 +450,9 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
     cfg.systemInstructions,
     `Company: ${settings.companyName || 'EliteDrive'} in ${settings.operatingCityName || 'Mumbai'}.`,
     `Active branch count: ${activeBranches.length}. ${activeBranches.length === 0 ? 'Operate as single-city central hub without branch selectors.' : ''}`,
-    `Booking assistance via chat: ${cfg.bookingEnabled ? 'Enabled (guide user to exact vehicle booking or quote)' : 'Informational only'}.`,
-    `Customer KYC status: ${reqData.userProfile ? `${reqData.userProfile.displayName} (KYC: ${reqData.userProfile.kycStatus})` : 'Guest (not signed in)'}.`,
-    `CRITICAL: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output.`,
+    `Booking assistance via chat: ${cfg.bookingEnabled ? 'Enabled — customers can complete full 8-step booking directly inside the AI Concierge Guided Booking tab (Mobile OTP verification, Full Name, Select Car, Upload DL Front/Back & Aadhaar KYC, Travel Dates, Pickup Location, Fare Summary & Consents, Manual UPI QR/UTR) without logging in beforehand.' : 'Informational only'}.`,
+    `Customer KYC status: ${reqData.userProfile ? `${reqData.userProfile.displayName || 'Verified Mobile User'} (KYC: ${reqData.userProfile.kycStatus})` : 'Guest (not yet OTP-verified)'}.`,
+    `CRITICAL: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output. Never block a guest from starting a booking—invite them to verify their mobile OTP in Step 1 right inside the Concierge.`,
   ].join('\n');
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -588,7 +591,7 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
   } else {
     suggestedActions.push({
       label: lang === 'hi' ? 'मेरी बुकिंग्स' : lang === 'mr' ? 'माझ्या बुकिंग्स' : 'My Bookings',
-      to: '/dashboard/customer',
+      to: '/dashboard',
     });
   }
 

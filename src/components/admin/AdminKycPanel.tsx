@@ -1,18 +1,26 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, Eye, FileCheck2, RotateCcw, Search, ShieldAlert, X, XCircle } from 'lucide-react';
-import { apiFetch } from '../../lib/api';
+import { AlertTriangle, CheckCircle2, Eye, FileCheck2, FileText, RotateCcw, Search, ShieldAlert, X, XCircle } from 'lucide-react';
+import { apiFetch, getSessionToken } from '../../lib/api';
+import { auth } from '../../lib/firebase';
 import { hasAdminPermission } from '../../lib/permissions';
-import type { CustomRole, KycStatus, KycVerification, UserProfile } from '../../types';
+import type { CustomerDocumentRecord, CustomRole, KycStatus, KycVerification, UserProfile } from '../../types';
 
 interface AdminKycPanelProps {
   profile: UserProfile;
   roles?: CustomRole[];
   kycQueue: KycVerification[];
+  customerDocuments?: CustomerDocumentRecord[];
   onReload: () => Promise<void>;
 }
 
-export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({ profile, roles, kycQueue, onReload }) => {
+export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
+  profile,
+  roles,
+  kycQueue,
+  customerDocuments = [],
+  onReload,
+}) => {
   const [statusFilter, setStatusFilter] = useState<'All' | KycStatus>('All');
   const [search, setSearch] = useState('');
   const [selectedKyc, setSelectedKyc] = useState<KycVerification | null>(null);
@@ -20,6 +28,16 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({ profile, roles, ky
   const [reviewNotes, setReviewNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [docPreviewMeta, setDocPreviewMeta] = useState<CustomerDocumentRecord | null>(null);
+  const [docPreviewUrl, setDocPreviewUrl] = useState('');
+  const [docPreviewMime, setDocPreviewMime] = useState('');
+  const [docPreviewLoading, setDocPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (docPreviewUrl) URL.revokeObjectURL(docPreviewUrl);
+    };
+  }, [docPreviewUrl]);
 
   const canInspectDocs =
     hasAdminPermission(profile, 'view_kyc_documents', roles) ||
@@ -60,6 +78,11 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({ profile, roles, ky
     setSelectedKyc(kyc);
     setReviewNotes(kyc.reviewNotes || '');
     setRejectionReason(kyc.rejectionReason || '');
+    if (docPreviewUrl) {
+      URL.revokeObjectURL(docPreviewUrl);
+      setDocPreviewUrl('');
+    }
+    setDocPreviewMeta(null);
     if (!canInspectDocs) return;
     setDocLoading(true);
     try {
@@ -69,6 +92,38 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({ profile, roles, ky
       toast.error(err.message || 'Could not retrieve encrypted KYC bundle.');
     } finally {
       setDocLoading(false);
+    }
+  };
+
+  const handlePreviewUploadedDoc = async (docItem: CustomerDocumentRecord) => {
+    if (!canInspectDocs) {
+      toast.error('Requires view_kyc_documents permission.');
+      return;
+    }
+    setDocPreviewMeta(docItem);
+    setDocPreviewLoading(true);
+    if (docPreviewUrl) {
+      URL.revokeObjectURL(docPreviewUrl);
+      setDocPreviewUrl('');
+    }
+    try {
+      const token = getSessionToken() || (auth.currentUser ? await auth.currentUser.getIdToken() : '');
+      const res = await fetch(docItem.downloadProxyUrl || `/api/kyc/document/${docItem.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Unable to stream KYC document');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setDocPreviewMime(blob.type || docItem.mimeType);
+      setDocPreviewUrl(url);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load private document file');
+      setDocPreviewMeta(null);
+    } finally {
+      setDocPreviewLoading(false);
     }
   };
 
@@ -306,6 +361,93 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({ profile, roles, ky
                           : '[Masked — requires view_kyc_documents permission]'}
                       </p>
                     </div>
+                  </div>
+
+                  {/* Uploaded Customer KYC Document Files (DL Front, DL Back, Aadhaar) */}
+                  <div className="space-y-2.5">
+                    <p className="font-semibold text-ink">
+                      Uploaded Customer KYC Files ({customerDocuments.filter((d) => d.userId === selectedKyc.userId).length}/3)
+                    </p>
+                    {customerDocuments.filter((d) => d.userId === selectedKyc.userId).length === 0 ? (
+                      <p className="text-[11px] text-slate-muted p-3 rounded-lg bg-alabaster border border-black/10">
+                        No digital document scans uploaded for this customer yet.
+                      </p>
+                    ) : (
+                      <div className="grid sm:grid-cols-3 gap-2.5">
+                        {customerDocuments
+                          .filter((d) => d.userId === selectedKyc.userId)
+                          .map((docItem) => (
+                            <div
+                              key={docItem.id}
+                              className="p-3 rounded-xl bg-alabaster border border-black/10 flex flex-col justify-between gap-2"
+                            >
+                              <div className="space-y-0.5">
+                                <p className="font-semibold text-ink">{docItem.label}</p>
+                                <p className="font-mono text-[10px] text-slate-muted truncate" title={docItem.fileName}>
+                                  {docItem.fileName} ({Math.max(1, Math.round(docItem.sizeBytes / 1024))} KB)
+                                </p>
+                                {docItem.maskedNumber && (
+                                  <p className="font-mono text-[11px] text-gold-hover font-semibold">
+                                    Aadhaar: {docItem.maskedNumber}
+                                  </p>
+                                )}
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-white border border-black/10 text-[10px] font-semibold">
+                                  {docItem.status}
+                                </span>
+                              </div>
+                              {canInspectDocs && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handlePreviewUploadedDoc(docItem)}
+                                  className="px-2.5 py-1.5 bg-obsidian text-white rounded-lg text-[11px] font-semibold inline-flex items-center justify-center gap-1 hover:bg-graphite cursor-pointer"
+                                >
+                                  <Eye className="w-3 h-3 text-gold" />
+                                  View Document
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
+                    {docPreviewMeta && (
+                      <div className="p-3 rounded-xl border border-gold/40 bg-obsidian text-white space-y-2">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-gold">
+                            Secure Preview: {docPreviewMeta.label} ({docPreviewMeta.fileName})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (docPreviewUrl) URL.revokeObjectURL(docPreviewUrl);
+                              setDocPreviewUrl('');
+                              setDocPreviewMeta(null);
+                            }}
+                            className="text-white/70 hover:text-white cursor-pointer"
+                          >
+                            Close Preview
+                          </button>
+                        </div>
+                        {docPreviewLoading ? (
+                          <p className="text-center py-6 text-white/60">Decrypting document stream...</p>
+                        ) : docPreviewMime === 'application/pdf' ? (
+                          <div className="space-y-2 text-center">
+                            <FileText className="w-6 h-6 text-gold mx-auto" />
+                            <iframe
+                              src={docPreviewUrl}
+                              title={docPreviewMeta.fileName}
+                              className="w-full h-72 rounded-lg bg-white"
+                            />
+                          </div>
+                        ) : docPreviewUrl ? (
+                          <img
+                            src={docPreviewUrl}
+                            alt={docPreviewMeta.label}
+                            className="max-h-72 mx-auto rounded-lg object-contain border border-white/10"
+                          />
+                        ) : null}
+                      </div>
+                    )}
                   </div>
 
                   {isDlExpiringSoon(selectedKyc.licenseExpiry) && (

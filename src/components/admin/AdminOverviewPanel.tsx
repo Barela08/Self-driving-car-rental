@@ -104,11 +104,16 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
     ).length;
 
     const totalVehicles = vehicles.length;
+    const distinctModelKeys = new Set(
+      vehicles.map((v) => v.modelKey || `${v.brand}-${v.model || v.name}`.toLowerCase())
+    );
+    const totalVehicleModels = distinctModelKeys.size;
     const availableVehicles = vehicles.filter((v) => v.status === 'Available').length;
     const reservedVehicles = vehicles.filter((v) => v.status === 'Reserved').length;
     const rentedVehicles = vehicles.filter((v) =>
       ['Rented', 'Active Rental'].includes(v.status)
     ).length;
+    const bookedVehicles = reservedVehicles + rentedVehicles;
     const maintenanceVehicles = vehicles.filter((v) =>
       ['Maintenance', 'Under Maintenance', 'Inspection'].includes(v.status)
     ).length;
@@ -233,9 +238,11 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
       newCustomers,
       totalStaff: staffMembers.length,
       totalVehicles,
+      totalVehicleModels,
       availableVehicles,
       reservedVehicles,
       rentedVehicles,
+      bookedVehicles,
       maintenanceVehicles,
       pendingPaymentsCount,
       pendingRefundRequests,
@@ -255,26 +262,26 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
   }, [data, dateWindow, branchFilter, activeBranches]);
 
   const kpiCards = [
-    { label: 'Filtered Revenue', value: formatINR(metrics.totalRevenue), accent: true },
+    { label: 'Total Vehicles (Models)', value: metrics.totalVehicleModels, accent: false },
+    { label: 'Total Physical Cars', value: metrics.totalVehicles, accent: false },
+    { label: 'Available Cars', value: metrics.availableVehicles, accent: false },
+    { label: 'Booked Cars', value: metrics.bookedVehicles, accent: false },
+    { label: 'Active Rentals', value: metrics.activeRentals, accent: true },
+    { label: 'Pending Bookings', value: metrics.pendingApprovals, accent: metrics.pendingApprovals > 0 },
+    { label: 'Pending Payments', value: metrics.pendingPaymentsCount, accent: metrics.pendingPaymentsCount > 0 },
+    { label: 'Pending KYC', value: metrics.pendingKycCount, accent: metrics.pendingKycCount > 0 },
+    { label: 'Total Customers', value: metrics.totalCustomers, accent: false },
+    { label: 'Revenue (Filtered)', value: formatINR(metrics.totalRevenue), accent: true },
     { label: "Today's Revenue", value: formatINR(metrics.todaysRevenue), accent: false },
     { label: 'Monthly Revenue', value: formatINR(metrics.monthlyRevenue), accent: false },
     { label: 'Outstanding Balances', value: formatINR(metrics.outstandingBalances), accent: false },
-    { label: 'Active Rentals', value: metrics.activeRentals, accent: true },
     { label: 'Total Bookings', value: metrics.totalBookings, accent: false },
     { label: "Today's Bookings", value: metrics.todaysBookings, accent: false },
-    { label: 'Pending Approvals', value: metrics.pendingApprovals, accent: metrics.pendingApprovals > 0 },
     { label: 'Upcoming Reservations', value: metrics.upcomingBookings, accent: false },
     { label: 'Cancelled / Rejected', value: metrics.cancelledBookings, accent: false },
-    { label: 'Available Fleet', value: metrics.availableVehicles, accent: false },
-    { label: 'Reserved Units', value: metrics.reservedVehicles, accent: false },
-    { label: 'Rented Out', value: metrics.rentedVehicles, accent: false },
     { label: 'Under Maintenance', value: metrics.maintenanceVehicles, accent: metrics.maintenanceVehicles > 0 },
-    { label: 'Pending Payments', value: metrics.pendingPaymentsCount, accent: metrics.pendingPaymentsCount > 0 },
-    { label: 'Pending KYC Requests', value: metrics.pendingKycCount, accent: metrics.pendingKycCount > 0 },
     { label: 'Refund Requests', value: metrics.pendingRefundRequests, accent: metrics.pendingRefundRequests > 0 },
-    { label: 'Total Customers', value: metrics.totalCustomers, accent: false },
-    { label: 'New Customers (7d)', value: metrics.newCustomers, accent: false },
-    { label: 'Staff Team / Promos', value: `${metrics.totalStaff} · ${metrics.activeCoupons + metrics.activeOffers}`, accent: false },
+    { label: 'New Customers (7d) · Staff', value: `${metrics.newCustomers} · ${metrics.totalStaff}`, accent: false },
   ];
 
   const openEnquiriesCount = (data.enquiries || []).filter((e) => e.status === 'New').length;

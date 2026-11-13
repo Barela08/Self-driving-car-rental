@@ -8,7 +8,7 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 
 initializeApp();
-const db = getFirestore();
+const db = getFirestore('ai-studio-elitedrivecarren-1530ccb4-04ad-4731-8f7e-d96458988250');
 const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
 
 // Google Cloud Secret Manager bindings (never stored in Firestore or client bundles)
@@ -623,3 +623,85 @@ export const processWhatsAppWebhook = onRequest(
     res.status(200).send('EVENT_RECEIVED');
   }
 );
+
+// 10. Trusted Backend Manual UPI Payment Verification (Finance/Owner only; never auto-approves on screenshot upload)
+export const verifyManualUpiPayment = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required.');
+  }
+  const actorUid = request.auth.uid;
+  const adminSnap = await db.collection('admins').doc(actorUid).get();
+  const userSnap = await db.collection('users').doc(actorUid).get();
+  const actorRole = String(userSnap.data()?.role || '');
+  const perms = (userSnap.data()?.permissions as string[] | undefined) || [];
+  const isAuthorized =
+    actorRole === 'super_admin' ||
+    perms.includes('verify_payments') ||
+    (adminSnap.exists && adminSnap.data()?.active !== false);
+
+  if (!isAuthorized) {
+    throw new HttpsError('permission-denied', 'Finance verification permission required.');
+  }
+
+  const proofId = String(request.data?.proofId || '').trim();
+  const decision = String(request.data?.decision || '').trim(); // 'approve' | 'reject' | 'resubmit'
+  const notes = String(request.data?.notes || '').trim().slice(0, 500);
+  if (!proofId || !['approve', 'reject', 'resubmit'].includes(decision)) {
+    throw new HttpsError('invalid-argument', 'Valid proofId and decision (approve | reject | resubmit) required.');
+  }
+
+  const proofRef = db.collection('payment_proofs').doc(proofId);
+  const now = new Date().toISOString();
+
+  await db.runTransaction(async (tx) => {
+    const proofSnap = await tx.get(proofRef);
+    if (!proofSnap.exists) throw new HttpsError('not-found', 'Payment proof not found.');
+    const proof = proofSnap.data()!;
+    const bookingRef = db.collection('bookings').doc(String(proof.bookingId));
+    const bkSnap = await tx.get(bookingRef);
+    if (!bkSnap.exists) throw new HttpsError('not-found', 'Booking not found.');
+    const booking = bkSnap.data()!;
+
+    if (decision === 'approve') {
+      const nextPayStatus = booking.pricing?.balanceDueAtPickup > 0 ? 'Partial Paid' : 'Paid';
+      const nextBkStatus = booking.bookingMode === 'approval' ? 'Pending Approval' : 'Confirmed';
+      tx.update(proofRef, {
+        status: 'Approved',
+        reviewedByUid: actorUid,
+        reviewedAt: now,
+        notes,
+        updatedAt: now,
+      });
+      tx.update(bookingRef, {
+        paymentStatus: nextPayStatus,
+        status: nextBkStatus,
+        updatedAt: now,
+      });
+    } else {
+      const nextProofStatus = decision === 'resubmit' ? 'Resubmission Requested' : 'Rejected';
+      tx.update(proofRef, {
+        status: nextProofStatus,
+        reviewedByUid: actorUid,
+        reviewedAt: now,
+        notes,
+        updatedAt: now,
+      });
+      tx.update(bookingRef, {
+        paymentStatus: 'Failed',
+        status: 'Payment Failed',
+        updatedAt: now,
+      });
+    }
+  });
+
+  await db.collection('payment_audit_logs').add({
+    bookingId: proofId,
+    actorUid,
+    actorRole,
+    action: `CLOUD_FN_PAYMENT_${decision.toUpperCase()}`,
+    details: notes || `Manual UPI verification (${decision}) committed by ${actorUid}.`,
+    timestamp: now,
+  });
+
+  return { ok: true, proofId, decision };
+});

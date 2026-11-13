@@ -3,8 +3,14 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import crypto from 'crypto';
 import 'dotenv/config';
-import { db } from './src/server/db.ts';
+import {
+  db,
+  getAdminStorageBucket,
+  getFirebaseBackendStatus,
+  probeLiveFirebaseAdmin,
+} from './src/server/db.ts';
 import { ensureSeeded, hashPassword, verifyPassword } from './src/server/seed.ts';
+import { runFirebaseMigration } from './src/server/firebaseMigration.ts';
 import {
   assertBranchAccess,
   filterByBranch,
@@ -29,11 +35,13 @@ import {
   datesOverlap,
   expireStaleHolds,
   getBookingAssignedVehicleIds,
+  getModelPhysicalUnits,
   getUnitOccupiedIntervals,
   isUnitFreeForWindow,
   isVehicleBlockedStatus,
   toCanonicalBookingStatus,
   toCanonicalPaymentStatus,
+  validateModelQuantityReduction,
   validateMultiBranchLocation,
   withInventoryLock,
 } from './src/server/availability.ts';
@@ -79,14 +87,20 @@ import {
 import type {
   AdminPermission,
   Booking,
+  BookingConsentsPayload,
   BookingStatus,
   BookingVehicleAssignment,
   Branch,
   CompanySettings,
+  ConsentRecord,
   ContactEnquiry,
   Coupon,
+  CustomerDocumentRecord,
+  CustomerDocumentType,
   CustomerReview,
   CustomRole,
+  DataManagementEntityItem,
+  DeleteImpactPreview,
   EmployeeNotificationSetting,
   InsurancePackage,
   IntegrationStatusItem,
@@ -168,9 +182,6 @@ function sanitizeProofsForClient(proofs: PaymentProof[]): PaymentProof[] {
 function buildIntegrationsStatus(waConfig: any, checksMap: Record<string, any> = {}): IntegrationStatusItem[] {
   const now = new Date().toISOString();
   const hasMapsKey = Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY);
-  const hasRazorpayId = Boolean(process.env.RAZORPAY_KEY_ID);
-  const hasRazorpaySecret = Boolean(process.env.RAZORPAY_KEY_SECRET);
-  const hasRazorpayWebhook = Boolean(process.env.RAZORPAY_WEBHOOK_SECRET);
   const hasFcmVapid = Boolean(process.env.VITE_FCM_VAPID_KEY);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
 
@@ -203,15 +214,15 @@ function buildIntegrationsStatus(waConfig: any, checksMap: Record<string, any> =
       lastError: hasMapsKey ? checksMap.google_maps?.lastError || null : 'Missing VITE_GOOGLE_MAPS_API_KEY / GOOGLE_MAPS_API_KEY.',
     },
     {
-      key: 'razorpay',
+      key: 'manual_upi',
       name: 'Manual UPI QR & Bank UTR Verification',
       category: 'Payments & Refunds',
       status: 'Connected',
       configured: true,
-      description: 'Online card/netbanking gateways are disabled by policy. Manual UPI QR + Finance UTR verification is active.',
+      description: 'Third-party online payment gateways are completely disabled. Direct Company UPI ID / QR + UTR + Screenshot Finance verification is active.',
       requiredEnvVars: [],
-      presentEnvVars: ['COMPANY_UPI_ID'],
-      lastCheckedAt: checksMap.razorpay?.checkedAt || now,
+      presentEnvVars: ['company_settings.upiId'],
+      lastCheckedAt: checksMap.manual_upi?.checkedAt || now,
       lastError: null,
     },
     {
@@ -359,12 +370,13 @@ async function createNotification(params: {
 }
 
 async function startServer() {
+  await probeLiveFirebaseAdmin().catch(() => undefined);
   const app = express();
   const PORT = 3000;
 
   app.use(
     express.json({
-      limit: '5mb',
+      limit: '10mb',
       verify: (req, _res, buf) => {
         (req as any).rawBody = buf;
       },
@@ -736,30 +748,78 @@ async function startServer() {
         return res.status(403).json({ error: 'Forbidden.' });
       }
 
+      const proofSnap = await db.collection('payment_proofs').doc(proofId).get();
+      const proofMeta = proofSnap.exists ? (proofSnap.data() as PaymentProof) : null;
       const shotSnap = await db.collection('payment_screenshots').doc(proofId).get();
       let dataUrl = shotSnap.exists ? String(shotSnap.data()?.dataUrl || '') : '';
-      if (!dataUrl) {
-        // Legacy fallback if older proof stored inline before migration
-        const proofSnap = await db.collection('payment_proofs').doc(proofId).get();
-        dataUrl = proofSnap.exists ? String(proofSnap.data()?.screenshotDataUrl || '') : '';
-      }
-      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
-        return res.status(404).json({ error: 'Payment screenshot image not found.' });
+      if (!dataUrl && proofMeta) {
+        dataUrl = String(proofMeta.screenshotDataUrl || '');
       }
 
-      const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-      if (!match) {
-        return res.status(415).json({ error: 'Unsupported stored screenshot format.' });
+      if (dataUrl && dataUrl.startsWith('data:image/')) {
+        const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+        if (!match) {
+          return res.status(415).json({ error: 'Unsupported stored screenshot format.' });
+        }
+        const mime = match[1];
+        const buffer = Buffer.from(match[2], 'base64');
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.send(buffer);
       }
-      const mime = match[1];
-      const buffer = Buffer.from(match[2], 'base64');
-      res.setHeader('Content-Type', mime);
-      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      return res.send(buffer);
+
+      // Firebase Storage fallback when proof binary resides in private bucket path
+      const bucket = getAdminStorageBucket();
+      if (bucket && proofMeta?.screenshotStorageRef && proofMeta.screenshotStorageRef.startsWith('payment-proofs/')) {
+        try {
+          const [downloaded] = await bucket.file(proofMeta.screenshotStorageRef).download();
+          const mime = proofMeta.screenshotStorageRef.endsWith('.png')
+            ? 'image/png'
+            : proofMeta.screenshotStorageRef.endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+          res.setHeader('Content-Type', mime);
+          res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          return res.send(downloaded);
+        } catch {
+          // Fall through to 404
+        }
+      }
+
+      return res.status(404).json({ error: 'Payment screenshot image not found.' });
     } catch (err) {
       console.error('Payment screenshot proxy error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to serve payment screenshot.' });
+    }
+  });
+
+  // Public Company UPI QR asset streaming endpoint (backed by Firebase Storage & Firestore company_assets)
+  app.get('/api/payment-qr', async (_req, res) => {
+    try {
+      const assetSnap = await db.collection('company_assets').doc('upi-qr').get();
+      if (assetSnap.exists) {
+        const asset = assetSnap.data() as any;
+        if (asset.base64Data) {
+          const buf = Buffer.from(String(asset.base64Data), 'base64');
+          res.setHeader('Content-Type', String(asset.mimeType || 'image/png'));
+          res.setHeader('Cache-Control', 'public, max-age=300');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          return res.send(buf);
+        }
+        const bucket = getAdminStorageBucket();
+        if (bucket && asset.storagePath) {
+          const [downloaded] = await bucket.file(String(asset.storagePath)).download();
+          res.setHeader('Content-Type', String(asset.mimeType || 'image/png'));
+          res.setHeader('Cache-Control', 'public, max-age=300');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          return res.send(downloaded);
+        }
+      }
+      return res.status(404).json({ error: 'Company static UPI QR has not been uploaded yet.' });
+    } catch {
+      return res.status(500).json({ error: 'Failed to serve company UPI QR.' });
     }
   });
 
@@ -1564,11 +1624,58 @@ async function startServer() {
         paymentMethod,
         gstNumber,
         termsAccepted,
+        consents,
+        language,
         rentalAgreementAcceptedAt,
       } = req.body;
 
-      if (!termsAccepted) {
-        return res.status(400).json({ error: 'Please accept the rental agreement and privacy terms before booking.' });
+      const parsedConsents: BookingConsentsPayload = {
+        accuracyConfirmed: Boolean(consents?.accuracyConfirmed),
+        termsAccepted: Boolean(consents?.termsAccepted ?? termsAccepted),
+        privacyAccepted: Boolean(consents?.privacyAccepted),
+        rentalRulesAccepted: Boolean(consents?.rentalRulesAccepted),
+        cancellationRefundAccepted: Boolean(consents?.cancellationRefundAccepted),
+        marketingConsent: Boolean(consents?.marketingConsent),
+        policyVersion: String(consents?.policyVersion || 'v2.0'),
+        language: (language || consents?.language || 'en') as SupportedLanguage,
+        acceptedAt: rentalAgreementAcceptedAt || new Date().toISOString(),
+      };
+
+      if (
+        !parsedConsents.accuracyConfirmed ||
+        !parsedConsents.termsAccepted ||
+        !parsedConsents.privacyAccepted ||
+        !parsedConsents.rentalRulesAccepted ||
+        !parsedConsents.cancellationRefundAccepted
+      ) {
+        return res.status(400).json({
+          error:
+            'Please confirm all 5 mandatory compliance & policy acknowledgements before completing your booking.',
+        });
+      }
+
+      // Mandatory KYC Document Check: DL Front + DL Back + Aadhaar Card required before booking
+      const custDocsSnap = await db.collection('customer_documents').where('userId', '==', uid).get();
+      const custDocs = custDocsSnap.docs.map((d) => d.data() as CustomerDocumentRecord);
+      const validDocsByType = new Map<CustomerDocumentType, CustomerDocumentRecord>();
+      for (const docItem of custDocs) {
+        if (docItem.status !== 'Rejected' && docItem.status !== 'Not Uploaded') {
+          validDocsByType.set(docItem.docType, docItem);
+        }
+      }
+      const requiredDocTypes: CustomerDocumentType[] = ['dl_front', 'dl_back', 'aadhaar'];
+      const missingDocTypes = requiredDocTypes.filter((t) => !validDocsByType.has(t));
+      if (missingDocTypes.length > 0) {
+        const labelMap: Record<CustomerDocumentType, string> = {
+          dl_front: 'Driving Licence (Front)',
+          dl_back: 'Driving Licence (Back)',
+          aadhaar: 'Aadhaar Card',
+        };
+        return res.status(412).json({
+          error: `Mandatory KYC documents missing before booking: ${missingDocTypes.map((m) => labelMap[m]).join(', ')}.`,
+          code: 'KYC_DOCUMENTS_REQUIRED',
+          missingDocuments: missingDocTypes,
+        });
       }
 
       const requestedQty = Math.max(1, Math.floor(Number(quantity || 1)));
@@ -1727,7 +1834,7 @@ async function startServer() {
       const bookingId = `bk-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
       const bookingReference = `ED-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
       const holdId = `hold-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
-      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 20)));
+      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 15)));
       const operatingCityName = hub.cityName || settings.operatingCityName || 'Mumbai';
       const resolvedBranchName =
         hub.id === 'branch-central-hub' ? (settings.officeName || hub.name) : hub.name;
@@ -1847,13 +1954,26 @@ async function startServer() {
             canonicalPaymentStatus: 'NOT_SUBMITTED',
             paymentMethod: resolvedPaymentMethod,
             kycStatusSnapshot: profile.kycStatus,
+            kycDocumentIds: requiredDocTypes.map((t) => validDocsByType.get(t)!.id),
+            kycDocumentsSnapshot: {
+              dlFrontStatus: validDocsByType.get('dl_front')!.status,
+              dlBackStatus: validDocsByType.get('dl_back')!.status,
+              aadhaarStatus: validDocsByType.get('aadhaar')!.status,
+              ...(validDocsByType.get('aadhaar')?.maskedNumber
+                ? { aadhaarMasked: validDocsByType.get('aadhaar')!.maskedNumber }
+                : {}),
+              ...(validDocsByType.get('dl_front')?.licenseNumber
+                ? { licenseNumber: validDocsByType.get('dl_front')!.licenseNumber }
+                : {}),
+            },
             quantity: requestedQty,
             assignedVehicleIds,
             assignedVehicleRegs,
             holdId,
             holdExpiresAt,
-            rentalAgreementAcceptedAt: rentalAgreementAcceptedAt || now,
-            rentalAgreementVersion: 'v2.0',
+            rentalAgreementAcceptedAt: parsedConsents.acceptedAt || now,
+            rentalAgreementVersion: parsedConsents.policyVersion || 'v2.0',
+            consents: parsedConsents,
             pricing,
             handoverOtp: String(Math.floor(100000 + Math.random() * 900000)),
             handoverInspection: null,
@@ -1864,6 +1984,24 @@ async function startServer() {
           };
 
           tx.set(db.collection('bookings').doc(bookingId), record);
+
+          const consentDoc: ConsentRecord = {
+            id: `consent-${bookingId}`,
+            bookingId,
+            bookingReference,
+            userId: uid,
+            accuracyConfirmed: parsedConsents.accuracyConfirmed,
+            termsAccepted: parsedConsents.termsAccepted,
+            privacyAccepted: parsedConsents.privacyAccepted,
+            rentalRulesAccepted: parsedConsents.rentalRulesAccepted,
+            cancellationRefundAccepted: parsedConsents.cancellationRefundAccepted,
+            marketingConsent: parsedConsents.marketingConsent,
+            policyVersion: parsedConsents.policyVersion || 'v2.0',
+            language: (parsedConsents.language || 'en') as SupportedLanguage,
+            acceptedAt: parsedConsents.acceptedAt || now,
+            createdAt: now,
+          };
+          tx.set(db.collection('consent_records').doc(consentDoc.id), consentDoc);
 
           // Create temporary inventory hold for assigned units
           const holdDoc: InventoryHold = {
@@ -1909,7 +2047,7 @@ async function startServer() {
             bookingReference,
             userId: uid,
             customerName: profile.displayName,
-            version: 'v2.0',
+            version: parsedConsents.policyVersion || 'v2.0',
             acceptedAt: record.rentalAgreementAcceptedAt,
             termsSnapshot: settings.termsSummary || 'Standard EliteDrive Self-Drive Rental Agreement',
             rulesSnapshot: settings.rentalRulesSummary || '',
@@ -2118,7 +2256,7 @@ async function startServer() {
       const upiId = settings.upiId || 'elitedrive@icici';
       const upiMerchantName = settings.upiMerchantName || 'EliteDrive Mobility Pvt Ltd';
       const exactAmount = Math.round(Number(booking.pricing.amountDueNow) * 100) / 100;
-      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 20)));
+      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 15)));
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
 
@@ -2223,7 +2361,7 @@ async function startServer() {
       const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
       const upiId = settings.upiId || 'elitedrive@icici';
       const upiMerchantName = settings.upiMerchantName || 'EliteDrive Mobility Pvt Ltd';
-      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 20)));
+      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 15)));
 
       const result = await withInventoryLock(async () => {
         await expireStaleHolds(db);
@@ -2391,7 +2529,7 @@ async function startServer() {
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
       const transactionRef = generatePaymentSessionRef(booking.bookingReference);
-      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 20)));
+      const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 15)));
       const expiresAt = booking.holdExpiresAt || new Date(nowMs + holdMinutes * 60 * 1000).toISOString();
 
       await bookingRef.update({
@@ -2592,12 +2730,36 @@ async function startServer() {
         const proofId = `proof-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
         const safeFileName = String(screenshotFileName || 'upi-receipt.png').replace(/[^a-zA-Z0-9._-]/g, '_');
 
-        // Store raw screenshot ONLY in private collection payment_screenshots/{proofId}
+        // Upload screenshot buffer to Firebase Storage (private payment-proofs path) if Admin bucket is ready
+        let storagePathRef = `payment_screenshots/${proofId}`;
+        const imgMatch = screenshotDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+        if (imgMatch) {
+          const proofMime = imgMatch[1];
+          const proofBuf = Buffer.from(imgMatch[2], 'base64');
+          const ext = proofMime.includes('png') ? 'png' : proofMime.includes('webp') ? 'webp' : 'jpg';
+          const bucket = getAdminStorageBucket();
+          if (bucket) {
+            try {
+              const bucketPath = `payment-proofs/${booking.userId}/${booking.id}/${proofId}.${ext}`;
+              await bucket.file(bucketPath).save(proofBuf, {
+                resumable: false,
+                contentType: proofMime,
+                metadata: { metadata: { bookingId: booking.id, customerId: booking.userId, proofId } },
+              });
+              storagePathRef = bucketPath;
+            } catch {
+              // Fall back cleanly to server-only payment_screenshots doc
+            }
+          }
+        }
+
+        // Store raw screenshot ONLY in private server-only collection payment_screenshots/{proofId}
         await db.collection('payment_screenshots').doc(proofId).set({
           proofId,
           bookingId: booking.id,
           userId: booking.userId,
           fileName: safeFileName,
+          storagePath: storagePathRef,
           dataUrl: screenshotDataUrl,
           createdAt: now,
         });
@@ -2620,7 +2782,7 @@ async function startServer() {
           transactionRef: resolvedTxRef,
           upiUri,
           expiresAt: booking.holdExpiresAt || booking.activePaymentSession?.expiresAt || now,
-          screenshotStorageRef: `payment_screenshots/${proofId}`,
+          screenshotStorageRef: storagePathRef,
           paymentMode: booking.pricing.paymentMode,
           status: 'Pending Verification',
           verificationHistory: [
@@ -3169,11 +3331,12 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       await expireStaleHolds(db);
-      const [privateSnap, bookingsSnap, kycSnap, paymentsSnap, proofsSnap, invoicesSnap, subsSnap, roadsideSnap, supportSnap, notifSnap, reviewsSnap] =
+      const [privateSnap, bookingsSnap, kycSnap, kycDocsSnap, paymentsSnap, proofsSnap, invoicesSnap, subsSnap, roadsideSnap, supportSnap, notifSnap, reviewsSnap] =
         await Promise.all([
           db.collection('users').doc(uid).collection('private').doc('info').get(),
           db.collection('bookings').where('userId', '==', uid).get(),
           db.collection('kyc_verifications').where('userId', '==', uid).get(),
+          db.collection('customer_documents').where('userId', '==', uid).get(),
           db.collection('payments').where('userId', '==', uid).get(),
           db.collection('payment_proofs').where('userId', '==', uid).get(),
           db.collection('invoices').where('userId', '==', uid).get(),
@@ -3201,6 +3364,9 @@ async function startServer() {
         privateInfo: privateSnap.exists ? privateSnap.data() : null,
         bookings,
         kycList: kycSnap.docs.map((d) => d.data()),
+        customerDocuments: kycDocsSnap.docs
+          .map((d) => d.data() as CustomerDocumentRecord)
+          .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')),
         payments: paymentsSnap.docs.map((d) => d.data()),
         paymentProofs: sanitizeProofsForClient(
           proofsSnap.docs.map((d) => d.data() as PaymentProof).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -3289,7 +3455,29 @@ async function startServer() {
       }
 
       const nextStatus = mode === 'online' ? 'Under Review' : 'Pending';
-      const maskedId = idProofNumber ? `XXXX-${String(idProofNumber).slice(-4)}` : undefined;
+      const maskedId = idProofNumber ? `XXXX-XXXX-${String(idProofNumber).replace(/\D/g, '').slice(-4) || String(idProofNumber).slice(-4)}` : undefined;
+
+      const existingDocsSnap = await db.collection('customer_documents').where('userId', '==', uid).get();
+      const existingDocs = existingDocsSnap.docs.map((d) => d.data() as CustomerDocumentRecord);
+      const dlFront = existingDocs.find((d) => d.docType === 'dl_front');
+      const dlBack = existingDocs.find((d) => d.docType === 'dl_back');
+      const aadhaarDoc = existingDocs.find((d) => d.docType === 'aadhaar');
+
+      // Mark uploaded documents as Pending Verification when KYC is submitted for review
+      if (mode === 'online') {
+        for (const dSnap of existingDocsSnap.docs) {
+          const item = dSnap.data() as CustomerDocumentRecord;
+          if (item.status === 'Uploaded' || item.status === 'Resubmission Required' || item.status === 'Rejected') {
+            await dSnap.ref.update({
+              status: 'Pending Verification',
+              ...(licenseNumber ? { licenseNumber: String(licenseNumber).toUpperCase() } : {}),
+              ...(licenseExpiry ? { licenseExpiry: String(licenseExpiry) } : {}),
+              ...(maskedId && item.docType === 'aadhaar' ? { maskedNumber: maskedId } : {}),
+              updatedAt: now,
+            });
+          }
+        }
+      }
 
       const kycDoc = {
         id: kycId,
@@ -3298,9 +3486,13 @@ async function startServer() {
         mode: mode === 'branch_appointment' ? 'branch_appointment' : 'online',
         ...(licenseNumber ? { licenseNumber: String(licenseNumber).toUpperCase() } : {}),
         ...(licenseExpiry ? { licenseExpiry: String(licenseExpiry) } : {}),
-        ...(idProofType ? { idProofType } : {}),
-        ...(maskedId ? { idProofNumberMasked: maskedId } : {}),
-        ...(mode === 'online' ? { documentStorageRef: `private-kyc/${uid}/dl-id-bundle.enc` } : {}),
+        ...(idProofType ? { idProofType } : { idProofType: 'Aadhaar' }),
+        ...(maskedId ? { idProofNumberMasked: maskedId } : aadhaarDoc?.maskedNumber ? { idProofNumberMasked: aadhaarDoc.maskedNumber } : {}),
+        ...(mode === 'online' ? { documentStorageRef: `customer-documents/${uid}/` } : {}),
+        ...(dlFront ? { dlFrontDocId: dlFront.id } : {}),
+        ...(dlBack ? { dlBackDocId: dlBack.id } : {}),
+        ...(aadhaarDoc ? { aadhaarDocId: aadhaarDoc.id } : {}),
+        uploadedDocumentsCount: [dlFront, dlBack, aadhaarDoc].filter(Boolean).length,
         selfieCaptured: Boolean(selfieCaptured),
         ...(branchId ? { branchId, branchName } : {}),
         ...(appointmentDate ? { appointmentDate } : {}),
@@ -3309,7 +3501,7 @@ async function startServer() {
         updatedAt: now,
       };
 
-      await db.collection('kyc_verifications').doc(kycId).set(kycDoc);
+      await db.collection('kyc_verifications').doc(kycId).set(kycDoc, { merge: true });
       await db.collection('users').doc(uid).update({ kycStatus: nextStatus, updatedAt: now });
 
       await createNotification({
@@ -3317,7 +3509,7 @@ async function startServer() {
         title: mode === 'online' ? 'KYC Submitted for Review' : 'Branch KYC Appointment Scheduled',
         body:
           mode === 'online'
-            ? 'Your Driving Licence & ID proof are stored in private encrypted storage and queued for operations review.'
+            ? 'Your Driving Licence & Aadhaar documents are stored in private encrypted storage and queued for operations review.'
             : `Your offline KYC appointment at ${branchName || 'selected branch'} is scheduled for ${appointmentDate} (${appointmentSlot}).`,
       });
 
@@ -3337,6 +3529,238 @@ async function startServer() {
     } catch (err) {
       console.error('KYC submit error:', err);
       res.status(500).json({ error: 'Failed to submit KYC.' });
+    }
+  });
+
+  // Secure Customer KYC Document Upload (DL Front, DL Back, Aadhaar - Private Storage & Masked Metadata)
+  app.get('/api/kyc/documents', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const snap = await db.collection('customer_documents').where('userId', '==', uid).get();
+      const documents = snap.docs
+        .map((d) => d.data() as CustomerDocumentRecord)
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      res.json({ documents });
+    } catch {
+      res.status(500).json({ error: 'Failed to load customer KYC documents.' });
+    }
+  });
+
+  app.post('/api/kyc/upload-document', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const { docType, fileName, mimeType, dataUrl, aadhaarNumber, licenseNumber, licenseExpiry } = req.body || {};
+
+      const validTypes: CustomerDocumentType[] = ['dl_front', 'dl_back', 'aadhaar'];
+      if (!validTypes.includes(docType)) {
+        return res.status(400).json({ error: 'Document type must be dl_front, dl_back, or aadhaar.' });
+      }
+
+      const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+      const cleanMime = String(mimeType || '').toLowerCase().trim();
+      if (!allowedMimeTypes.includes(cleanMime)) {
+        return res.status(400).json({ error: 'Unsupported format. Upload JPG, PNG, WEBP, or PDF only.' });
+      }
+
+      const rawDataUrl = String(dataUrl || '');
+      const base64Match = /^data:([^;]+);base64,(.+)$/.exec(rawDataUrl);
+      const base64Payload = base64Match ? base64Match[2] : rawDataUrl;
+      if (!base64Payload || base64Payload.length < 16) {
+        return res.status(400).json({ error: 'Valid document file content is required.' });
+      }
+
+      const fileBuffer = Buffer.from(base64Payload, 'base64');
+      if (fileBuffer.length === 0 || fileBuffer.length > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: 'File size must be greater than 0 bytes and at most 5 MB.' });
+      }
+
+      // Immediately mask Aadhaar number if passed; never store or log raw Aadhaar digits
+      let maskedAadhaar: string | undefined;
+      if (aadhaarNumber) {
+        const digits = String(aadhaarNumber).replace(/\D/g, '');
+        if (digits.length >= 4) {
+          maskedAadhaar = `XXXX-XXXX-${digits.slice(-4)}`;
+        }
+      }
+
+      const safeExt =
+        cleanMime === 'application/pdf'
+          ? 'pdf'
+          : cleanMime === 'image/png'
+            ? 'png'
+            : cleanMime === 'image/webp'
+              ? 'webp'
+              : 'jpg';
+      const safeFileName = `${docType}-${Date.now()}.${safeExt}`;
+      const folder = docType === 'aadhaar' ? 'aadhaar' : 'driving-license';
+      const storagePath = `customer-documents/${uid}/${folder}/${safeFileName}`;
+      const docId = `kycdoc-${uid}-${docType}`;
+      const now = new Date().toISOString();
+
+      // Upload to Firebase Storage bucket if live Admin SDK bucket is authorized
+      let storedInFirebaseBucket = false;
+      const bucket = getAdminStorageBucket();
+      if (bucket) {
+        try {
+          await bucket.file(storagePath).save(fileBuffer, {
+            resumable: false,
+            contentType: cleanMime,
+            metadata: {
+              metadata: {
+                customerId: uid,
+                docType,
+              },
+            },
+          });
+          storedInFirebaseBucket = true;
+        } catch {
+          storedInFirebaseBucket = false;
+        }
+      }
+
+      // Store encrypted/private blob payload in server-only collection (never readable directly from client SDK)
+      await db.collection('kyc_document_blobs').doc(docId).set({
+        id: docId,
+        userId: uid,
+        docType,
+        storagePath,
+        storedInFirebaseBucket,
+        mimeType: cleanMime,
+        sizeBytes: fileBuffer.length,
+        base64Data: fileBuffer.toString('base64'),
+        updatedAt: now,
+      });
+
+      const labelMap: Record<CustomerDocumentType, string> = {
+        dl_front: 'Driving Licence (Front)',
+        dl_back: 'Driving Licence (Back)',
+        aadhaar: 'Aadhaar Card',
+      };
+
+      const record: CustomerDocumentRecord = {
+        id: docId,
+        userId: uid,
+        customerId: uid,
+        customerName: profile.displayName,
+        docType,
+        label: labelMap[docType],
+        fileName: String(fileName || safeFileName).slice(0, 120),
+        mimeType: cleanMime,
+        sizeBytes: fileBuffer.length,
+        storagePath,
+        downloadProxyUrl: `/api/kyc/document/${docId}`,
+        ...(maskedAadhaar ? { maskedNumber: maskedAadhaar } : {}),
+        ...(licenseNumber ? { licenseNumber: String(licenseNumber).trim().toUpperCase().slice(0, 40) } : {}),
+        ...(licenseExpiry ? { licenseExpiry: String(licenseExpiry).trim().slice(0, 20) } : {}),
+        status: 'Uploaded',
+        uploadedAt: now,
+        updatedAt: now,
+      };
+
+      await db.collection('customer_documents').doc(docId).set(record);
+
+      // Sync or initialize parent kyc_verifications doc
+      const kycId = `kyc-${uid}`;
+      const kycRef = db.collection('kyc_verifications').doc(kycId);
+      const kycSnap = await kycRef.get();
+      const allDocsSnap = await db.collection('customer_documents').where('userId', '==', uid).get();
+      const uploadedCount = allDocsSnap.docs.filter((d) => (d.data() as CustomerDocumentRecord).status !== 'Not Uploaded').length;
+      const existingKyc = kycSnap.exists ? (kycSnap.data() as any) : null;
+
+      await kycRef.set(
+        {
+          id: kycId,
+          userId: uid,
+          customerName: profile.displayName,
+          mode: existingKyc?.mode || 'online',
+          idProofType: 'Aadhaar',
+          ...(maskedAadhaar ? { idProofNumberMasked: maskedAadhaar } : {}),
+          ...(licenseNumber ? { licenseNumber: String(licenseNumber).trim().toUpperCase().slice(0, 40) } : {}),
+          ...(licenseExpiry ? { licenseExpiry: String(licenseExpiry).trim().slice(0, 20) } : {}),
+          ...(docType === 'dl_front' ? { dlFrontDocId: docId } : {}),
+          ...(docType === 'dl_back' ? { dlBackDocId: docId } : {}),
+          ...(docType === 'aadhaar' ? { aadhaarDocId: docId } : {}),
+          uploadedDocumentsCount: uploadedCount,
+          documentStorageRef: `customer-documents/${uid}/`,
+          status: existingKyc?.status && existingKyc.status !== 'Not Started' ? existingKyc.status : 'Uploaded',
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+
+      if (profile.kycStatus === 'Not Started' || profile.kycStatus === 'Rejected' || profile.kycStatus === 'Resubmission Required') {
+        await db.collection('users').doc(uid).update({ kycStatus: 'Uploaded', updatedAt: now });
+      }
+
+      res.json({ document: record, uploadedCount });
+    } catch (err) {
+      console.error('KYC document upload failed');
+      res.status(500).json({ error: 'Failed to upload KYC document.' });
+    }
+  });
+
+  // Auth-gated private KYC document streaming (never public)
+  app.get('/api/kyc/document/:docId', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const perms = req.authUser!.permissions;
+      const docSnap = await db.collection('customer_documents').doc(req.params.docId).get();
+      if (!docSnap.exists) return res.status(404).json({ error: 'Document not found.' });
+      const meta = docSnap.data() as CustomerDocumentRecord;
+
+      const isDocOwner = meta.userId === actor.uid;
+      const isAuthorizedStaff =
+        actor.role === 'super_admin' ||
+        perms.includes('view_kyc_documents') ||
+        perms.includes('review_kyc');
+
+      if (!isDocOwner && !isAuthorizedStaff) {
+        return res.status(403).json({ error: 'Unauthorized to view private KYC document.' });
+      }
+
+      const blobSnap = await db.collection('kyc_document_blobs').doc(req.params.docId).get();
+      let buf: Buffer | null = null;
+      let contentType = meta.mimeType || 'image/jpeg';
+
+      if (blobSnap.exists && blobSnap.data()?.base64Data) {
+        buf = Buffer.from(String(blobSnap.data()!.base64Data), 'base64');
+        contentType = String(blobSnap.data()!.mimeType || contentType);
+      } else {
+        const bucket = getAdminStorageBucket();
+        if (bucket && meta.storagePath) {
+          try {
+            const [downloaded] = await bucket.file(meta.storagePath).download();
+            buf = downloaded;
+          } catch {
+            buf = null;
+          }
+        }
+      }
+
+      if (!buf) {
+        return res.status(404).json({ error: 'Private document file content unavailable.' });
+      }
+
+      if (!isDocOwner) {
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorName: actor.displayName,
+          actorRole: actor.role,
+          module: 'KYC Verification',
+          action: 'INSPECT_CUSTOMER_DOCUMENT_FILE',
+          targetType: 'customer_document',
+          targetId: meta.id,
+          details: `Viewed ${meta.label} (${meta.docType}) for customer ${meta.customerName || meta.userId}.`,
+        });
+      }
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      res.setHeader('Content-Disposition', `inline; filename="${meta.fileName || meta.id}"`);
+      return res.send(buf);
+    } catch {
+      res.status(500).json({ error: 'Failed to serve KYC document.' });
     }
   });
 
@@ -3545,6 +3969,8 @@ async function startServer() {
           holdsSnap,
           assignmentsSnap,
           reviewsSnap,
+          customerDocsSnap,
+          migrationJobsSnap,
         ] = await Promise.all([
           db.collection('vehicles').get(),
           db.collection('vehicle_private').get(),
@@ -3579,6 +4005,8 @@ async function startServer() {
           db.collection('inventory_holds').get(),
           db.collection('booking_vehicle_assignments').get(),
           db.collection('customer_reviews').get(),
+          db.collection('customer_documents').get(),
+          db.collection('migrationJobs').orderBy('completedAt', 'desc').limit(15).get(),
         ]);
 
         const allBookingsRaw = await Promise.all(
@@ -3785,6 +4213,9 @@ async function startServer() {
               ? scopedBookings
               : [],
           kycQueue: scopedKyc,
+          customerDocuments: canSeeKycDocs
+            ? customerDocsSnap.docs.map((d) => d.data() as CustomerDocumentRecord)
+            : [],
           users: canSeeUsers ? enrichedUsers : enrichedUsers.filter((u) => u.uid === actor.uid),
           branches: branchesSnap.docs.map((d) => d.data()),
           cities: citiesSnap.docs.map((d) => d.data()),
@@ -3817,6 +4248,8 @@ async function startServer() {
               ? loginHistSnap.docs.map((d) => d.data())
               : [],
           integrations: buildIntegrationsStatus(waConfig, checksMap),
+          firebaseStatus: getFirebaseBackendStatus(),
+          migrationJobs: actor.role === 'super_admin' ? migrationJobsSnap.docs.map((d) => d.data()) : [],
         });
       } catch (err) {
         console.error('Admin overview error:', err);
@@ -4254,6 +4687,185 @@ async function startServer() {
         res.json({ success: true, vehicle: (await ref.get()).data() });
       } catch (err) {
         res.status(500).json({ error: 'Failed to update vehicle.' });
+      }
+    }
+  );
+
+  // Inspect physical units belonging to a vehicle model & adjust total quantity safely
+  app.get(
+    '/api/admin/vehicles/model-units',
+    requireAuth,
+    requirePermission(['manage_vehicles', 'edit_vehicle', 'view_inventory', 'manage_availability']),
+    async (req: AuthRequest, res) => {
+      try {
+        await expireStaleHolds(db);
+        const modelKey = String(req.query.modelKey || '').trim().toLowerCase();
+        const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+        if (!modelKey) return res.status(400).json({ error: 'modelKey query parameter is required.' });
+
+        const [vehSnap, bkSnap, holdSnap, maintSnap] = await Promise.all([
+          db.collection('vehicles').get(),
+          db.collection('bookings').get(),
+          db.collection('inventory_holds').where('status', '==', 'Active').get(),
+          db.collection('vehicle_maintenance').get(),
+        ]);
+
+        const units = getModelPhysicalUnits({
+          vehicles: vehSnap.docs.map((d) => d.data() as Vehicle),
+          bookings: bkSnap.docs.map((d) => d.data() as Booking),
+          holds: holdSnap.docs.map((d) => d.data() as InventoryHold),
+          maintenanceLogs: maintSnap.docs.map((d) => d.data() as VehicleMaintenanceRecord),
+          modelKey,
+          branchId,
+        });
+
+        const occupiedCount = units.filter((u) => !u.canRetire).length;
+        res.json({
+          modelKey,
+          branchId: branchId || 'all',
+          totalUnits: units.length,
+          occupiedCount,
+          minAllowedQuantity: Math.max(1, occupiedCount),
+          units,
+        });
+      } catch (err) {
+        console.error('Model units inspection error:', err);
+        res.status(500).json({ error: 'Failed to inspect model physical units.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/vehicles/model-quantity',
+    requireAuth,
+    requirePermission(['manage_vehicles', 'edit_vehicle', 'delete_archive_vehicles']),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = req.authUser!.profile;
+        const { modelKey, branchId, targetQuantity, retireVehicleIds, templateBody } = req.body || {};
+        const cleanModelKey = String(modelKey || '').trim().toLowerCase();
+        const parsedTarget = Math.floor(Number(targetQuantity));
+
+        if (!cleanModelKey || !Number.isFinite(parsedTarget) || parsedTarget < 1 || parsedTarget > 50) {
+          return res.status(400).json({ error: 'Provide a valid modelKey and targetQuantity between 1 and 50.' });
+        }
+
+        await expireStaleHolds(db);
+        const [vehSnap, bkSnap, holdSnap, maintSnap] = await Promise.all([
+          db.collection('vehicles').get(),
+          db.collection('bookings').get(),
+          db.collection('inventory_holds').where('status', '==', 'Active').get(),
+          db.collection('vehicle_maintenance').get(),
+        ]);
+
+        const allVehicles = vehSnap.docs.map((d) => d.data() as Vehicle);
+        const allBookings = bkSnap.docs.map((d) => d.data() as Booking);
+        const allHolds = holdSnap.docs.map((d) => d.data() as InventoryHold);
+        const allMaint = maintSnap.docs.map((d) => d.data() as VehicleMaintenanceRecord);
+
+        const unitsAnalysis = getModelPhysicalUnits({
+          vehicles: allVehicles,
+          bookings: allBookings,
+          holds: allHolds,
+          maintenanceLogs: allMaint,
+          modelKey: cleanModelKey,
+          branchId: branchId || undefined,
+        });
+
+        if (unitsAnalysis.length === 0) {
+          return res.status(404).json({ error: 'No active vehicle units found for this model.' });
+        }
+        const repUnit = allVehicles.find((v) => v.id === unitsAnalysis[0].vehicleId)!;
+        if (!assertBranchAccess(req, res, repUnit.branchId)) return;
+
+        const currentCount = unitsAnalysis.length;
+        const createdUnits: Vehicle[] = [];
+        const retiredUnits: Array<{ vehicleId: string; registrationNumber: string; mode: 'archived' | 'deleted' }> = [];
+
+        if (parsedTarget > currentCount) {
+          const toAdd = parsedTarget - currentCount;
+          const seedBody = {
+            ...repUnit,
+            ...(templateBody && typeof templateBody === 'object' ? templateBody : {}),
+            modelKey: cleanModelKey,
+            branchId: branchId || repUnit.branchId,
+            status: 'Available',
+            maintenanceStatus: 'Operational',
+            archived: false,
+            unitCode: undefined,
+            registrationNumber: undefined,
+          };
+          for (let i = 0; i < toAdd; i++) {
+            const { vehicle } = await createPhysicalVehicleUnit({
+              body: seedBody,
+              actor,
+              unitIndex: i,
+              existingCount: currentCount + i,
+            });
+            createdUnits.push(vehicle);
+          }
+        } else if (parsedTarget < currentCount) {
+          const validation = validateModelQuantityReduction({
+            unitsAnalysis,
+            targetQuantity: parsedTarget,
+            selectedRetireIds: Array.isArray(retireVehicleIds) ? retireVehicleIds : undefined,
+          });
+          if (!validation.ok) {
+            return res.status(409).json({
+              error: validation.error,
+              maxReducibleTo: validation.maxReducibleTo,
+              units: unitsAnalysis,
+            });
+          }
+
+          const now = new Date().toISOString();
+          for (const target of validation.unitsToRetire) {
+            if (target.hasProtectedHistory) {
+              await db.collection('vehicles').doc(target.vehicleId).update({
+                archived: true,
+                status: 'Inactive',
+                updatedAt: now,
+              });
+              retiredUnits.push({
+                vehicleId: target.vehicleId,
+                registrationNumber: target.registrationNumber,
+                mode: 'archived',
+              });
+            } else {
+              await db.collection('vehicles').doc(target.vehicleId).delete();
+              await db.collection('vehicle_private').doc(target.vehicleId).delete();
+              retiredUnits.push({
+                vehicleId: target.vehicleId,
+                registrationNumber: target.registrationNumber,
+                mode: 'deleted',
+              });
+            }
+          }
+        }
+
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorName: actor.displayName,
+          actorRole: actor.role,
+          module: 'Fleet Management',
+          branchId: repUnit.branchId,
+          action: 'UPDATE_MODEL_QUANTITY',
+          targetType: 'vehicle_model',
+          targetId: cleanModelKey,
+          details: `Adjusted quantity for ${repUnit.name} from ${currentCount} -> ${parsedTarget} (+${createdUnits.length} added, ${retiredUnits.length} retired).`,
+        });
+
+        res.json({
+          success: true,
+          modelKey: cleanModelKey,
+          previousQuantity: currentCount,
+          newQuantity: parsedTarget,
+          createdUnits,
+          retiredUnits,
+        });
+      } catch (err) {
+        console.error('Model quantity update error:', err);
+        res.status(500).json({ error: 'Failed to update vehicle model quantity.' });
       }
     }
   );
@@ -5597,6 +6209,28 @@ async function startServer() {
         });
         await db.collection('users').doc(kyc.userId).update({ kycStatus: status, updatedAt: now });
 
+        // Sync uploaded customer_documents review state
+        const docStatusMap: Record<string, string> = {
+          Verified: 'Verified',
+          Rejected: 'Rejected',
+          'Resubmission Required': 'Resubmission Required',
+          'Under Review': 'Pending Verification',
+        };
+        const mappedDocStatus = docStatusMap[status];
+        if (mappedDocStatus) {
+          const custDocsSnap = await db.collection('customer_documents').where('userId', '==', kyc.userId).get();
+          for (const cdSnap of custDocsSnap.docs) {
+            await cdSnap.ref.update({
+              status: mappedDocStatus,
+              reviewedByUid: actor.uid,
+              reviewedByName: actor.displayName,
+              reviewedAt: now,
+              ...(rejectionReason ? { rejectionReason } : {}),
+              updatedAt: now,
+            });
+          }
+        }
+
         // Sync kycStatusSnapshot on active customer bookings
         const userBookingsSnap = await db.collection('bookings').where('userId', '==', kyc.userId).get();
         for (const bDoc of userBookingsSnap.docs) {
@@ -6164,7 +6798,7 @@ async function startServer() {
             fullPaymentEnabled: s.fullPaymentEnabled !== false,
             balancePaymentRule: s.balancePaymentRule || '',
             securityDepositRule: s.securityDepositRule || '',
-            holdDurationMinutes: Number(s.holdDurationMinutes || 20),
+            holdDurationMinutes: Number(s.holdDurationMinutes || 15),
             upiVerificationRequired: s.upiVerificationRequired !== false,
             enabledPaymentMethods: {
               upi: s.enabledPaymentMethods?.upi !== false,
@@ -6208,7 +6842,7 @@ async function startServer() {
         const cleanVpa = String(upiId || '').trim();
         const cleanName = String(upiMerchantName || '').trim();
         const cleanInstructions = String(upiPaymentInstructions || '').trim().slice(0, 2000);
-        const cleanQr = String(upiStaticQrImage || '').trim();
+        const rawQr = String(upiStaticQrImage || '').trim();
 
         if (enabled && !/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9.-]{2,}$/.test(cleanVpa)) {
           return res.status(400).json({ error: 'Please enter a valid UPI ID / VPA (e.g. elitedrive@icici).' });
@@ -6216,11 +6850,58 @@ async function startServer() {
         if (enabled && cleanName.length < 2) {
           return res.status(400).json({ error: 'Please enter the official UPI payee / business name.' });
         }
-        if (cleanQr && !cleanQr.startsWith('data:image/') && !cleanQr.startsWith('https://')) {
+        if (rawQr && !rawQr.startsWith('data:image/') && !rawQr.startsWith('https://') && !rawQr.startsWith('/api/payment-qr')) {
           return res.status(400).json({ error: 'Company QR must be a valid image upload or HTTPS image URL.' });
         }
-        if (cleanQr.length > 2_000_000) {
+        if (rawQr.length > 2_000_000) {
           return res.status(400).json({ error: 'Uploaded QR image exceeds 1.5 MB limit.' });
+        }
+
+        const now = new Date().toISOString();
+        let cleanQrUrl = rawQr;
+        let qrStoragePath = '';
+
+        // Upload uploaded QR data URL into Firebase Storage (company-assets/upi-qr/...) & server asset cache
+        if (rawQr.startsWith('data:image/')) {
+          const match = rawQr.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+          if (!match) {
+            return res.status(400).json({ error: 'Invalid QR image data encoding.' });
+          }
+          const qrMime = match[1];
+          const qrBase64 = match[2];
+          const qrBuffer = Buffer.from(qrBase64, 'base64');
+          const ext = qrMime.includes('png') ? 'png' : qrMime.includes('webp') ? 'webp' : 'jpg';
+          qrStoragePath = `company-assets/upi-qr/company-qr-${Date.now()}.${ext}`;
+
+          let uploadedToBucket = false;
+          const bucket = getAdminStorageBucket();
+          if (bucket) {
+            try {
+              await bucket.file(qrStoragePath).save(qrBuffer, {
+                resumable: false,
+                contentType: qrMime,
+                metadata: { metadata: { assetType: 'company_upi_qr', updatedBy: actor.uid } },
+              });
+              uploadedToBucket = true;
+            } catch {
+              uploadedToBucket = false;
+            }
+          }
+
+          await db.collection('company_assets').doc('upi-qr').set({
+            id: 'upi-qr',
+            mimeType: qrMime,
+            storagePath: qrStoragePath,
+            storedInFirebaseBucket: uploadedToBucket,
+            base64Data: qrBase64,
+            updatedAt: now,
+            updatedByUid: actor.uid,
+          });
+
+          cleanQrUrl = `/api/payment-qr?v=${Date.now()}`;
+        } else if (!rawQr) {
+          await db.collection('company_assets').doc('upi-qr').delete().catch(() => undefined);
+          cleanQrUrl = '';
         }
 
         const sanitizedMethods = {
@@ -6230,40 +6911,46 @@ async function startServer() {
           netBanking: false,
         };
 
-        const now = new Date().toISOString();
-        await db.collection('company_settings').doc('default').set(
-          {
-            upiEnabled: enabled,
-            upiId: cleanVpa,
-            upiMerchantName: cleanName,
-            upiStaticQrImage: cleanQr,
-            upiPaymentInstructions: cleanInstructions,
-            ...(advancePaymentPercent !== undefined
-              ? { advancePaymentPercent: Math.min(90, Math.max(10, Number(advancePaymentPercent))) }
-              : {}),
-            ...(minimumAdvanceAmount !== undefined
-              ? { minimumAdvanceAmount: Math.max(0, Math.round(Number(minimumAdvanceAmount))) }
-              : {}),
-            ...(fullPaymentEnabled !== undefined ? { fullPaymentEnabled: Boolean(fullPaymentEnabled) } : {}),
-            ...(balancePaymentRule !== undefined ? { balancePaymentRule: String(balancePaymentRule).trim() } : {}),
-            ...(securityDepositRule !== undefined ? { securityDepositRule: String(securityDepositRule).trim() } : {}),
-            ...(holdDurationMinutes !== undefined
-              ? { holdDurationMinutes: Math.min(180, Math.max(5, Math.round(Number(holdDurationMinutes)))) }
-              : {}),
-            ...(upiVerificationRequired !== undefined ? { upiVerificationRequired: Boolean(upiVerificationRequired) } : {}),
-            enabledPaymentMethods: sanitizedMethods,
-            updatedAt: now,
-          },
-          { merge: true }
-        );
+        const resolvedHold =
+          holdDurationMinutes !== undefined
+            ? Math.min(180, Math.max(5, Math.round(Number(holdDurationMinutes))))
+            : undefined;
+
+        const patchPayload = {
+          upiEnabled: enabled,
+          upiId: cleanVpa,
+          upiMerchantName: cleanName,
+          upiStaticQrImage: cleanQrUrl,
+          ...(qrStoragePath ? { upiQrStoragePath: qrStoragePath } : {}),
+          upiPaymentInstructions: cleanInstructions,
+          ...(advancePaymentPercent !== undefined
+            ? { advancePaymentPercent: Math.min(90, Math.max(10, Number(advancePaymentPercent))) }
+            : {}),
+          ...(minimumAdvanceAmount !== undefined
+            ? { minimumAdvanceAmount: Math.max(0, Math.round(Number(minimumAdvanceAmount))) }
+            : {}),
+          ...(fullPaymentEnabled !== undefined ? { fullPaymentEnabled: Boolean(fullPaymentEnabled) } : {}),
+          ...(balancePaymentRule !== undefined ? { balancePaymentRule: String(balancePaymentRule).trim() } : {}),
+          ...(securityDepositRule !== undefined ? { securityDepositRule: String(securityDepositRule).trim() } : {}),
+          ...(resolvedHold !== undefined ? { holdDurationMinutes: resolvedHold } : {}),
+          ...(upiVerificationRequired !== undefined ? { upiVerificationRequired: Boolean(upiVerificationRequired) } : {}),
+          enabledPaymentMethods: sanitizedMethods,
+          updatedAt: now,
+        };
+
+        await Promise.all([
+          db.collection('company_settings').doc('default').set(patchPayload, { merge: true }),
+          db.collection('websiteSettings').doc('default').set(patchPayload, { merge: true }).catch(() => undefined),
+        ]);
 
         await writeAuditLog({
           actorUid: actor.uid,
+          actorName: actor.displayName,
           actorRole: actor.role,
           action: 'UPDATE_PAYMENT_SETTINGS',
           targetType: 'company_settings',
           targetId: 'default',
-          details: `Updated Manual UPI Payment Settings (UPI=${enabled}, VPA=${cleanVpa}, Hold=${holdDurationMinutes || 20}m).`,
+          details: `Updated Manual UPI Payment Settings (UPI=${enabled}, VPA=${cleanVpa}, Hold=${resolvedHold || 15}m).`,
         });
 
         await writePaymentAuditLog({
@@ -6272,7 +6959,7 @@ async function startServer() {
           actorUid: actor.uid,
           actorRole: actor.role,
           action: 'PAYMENT_SETTINGS_UPDATED',
-          details: `Updated Manual UPI settings: UPI=${enabled}, VPA=${cleanVpa}, payee=${cleanName}, hold=${holdDurationMinutes || 20}m.`,
+          details: `Updated Manual UPI settings: UPI=${enabled}, VPA=${cleanVpa}, payee=${cleanName}, hold=${resolvedHold || 15}m.`,
         });
 
         const updatedSnap = await db.collection('company_settings').doc('default').get();
@@ -6284,7 +6971,7 @@ async function startServer() {
     }
   );
 
-  // --- ENTERPRISE REFUNDS & DEPOSIT SETTLEMENT + REAL RAZORPAY GATEWAY ---
+  // --- ENTERPRISE REFUNDS & DEPOSIT SETTLEMENT + MANUAL UPI LEDGER ---
   app.get(
     '/api/admin/refunds',
     requireAuth,
@@ -6548,16 +7235,7 @@ async function startServer() {
     }
   );
 
-  // Online card/gateway checkout is explicitly disabled — Manual UPI QR + Finance UTR verification only
-  const onlineGatewayGone = (_req: express.Request, res: express.Response) => {
-    res.status(410).json({
-      code: 'ONLINE_GATEWAY_DISABLED',
-      error: 'Online card/gateway checkout is disabled. EliteDrive uses Manual UPI QR + Finance verification.',
-    });
-  };
-  app.post('/api/payments/razorpay/order', requireAuth, onlineGatewayGone);
-  app.post('/api/payments/razorpay/verify', requireAuth, onlineGatewayGone);
-  app.post('/api/webhooks/razorpay', onlineGatewayGone);
+  // All third-party online payment gateways have been permanently removed; Manual UPI QR + Finance UTR verification only.
 
   // --- ADMIN WHATSAPP BUSINESS MANAGEMENT, EMPLOYEE NOTIFICATIONS, LOGS & REMINDERS ---
   app.get(
@@ -7823,20 +8501,14 @@ async function startServer() {
           message = ok
             ? 'Google Maps API key is present in runtime environment.'
             : 'VITE_GOOGLE_MAPS_API_KEY is missing. Manual coordinates & branch hub radius remain active.';
-        } else if (provider === 'razorpay') {
-          const keyId = process.env.RAZORPAY_KEY_ID || '';
-          const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
-          if (!keyId || !keySecret) {
-            ok = false;
-            message = 'RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is not configured. Gateway disabled safely.';
-          } else {
-            const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
-            const testRes = await fetch('https://api.razorpay.com/v1/orders?count=1', {
-              headers: { Authorization: `Basic ${auth}` },
-            });
-            ok = testRes.ok;
-            message = ok ? 'Live Razorpay API credentials verified (HTTP 200).' : `Razorpay API returned HTTP ${testRes.status}.`;
-          }
+        } else if (provider === 'manual_upi') {
+          const settingsSnap = await db.collection('company_settings').doc('default').get();
+          const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+          const hasVpa = Boolean(settings.upiId && /^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9.-]{2,}$/.test(settings.upiId));
+          ok = Boolean(settings.upiEnabled !== false && hasVpa);
+          message = ok
+            ? `Manual UPI active (${settings.upiId}${settings.upiStaticQrImage ? ', custom QR uploaded' : ''}).`
+            : 'Company UPI VPA is missing or Manual UPI is disabled in Payment Settings.';
         } else if (provider === 'whatsapp') {
           const cfg = await getWhatsAppConfig();
           const result = await verifyLiveMetaConnection({
@@ -8258,6 +8930,222 @@ async function startServer() {
     }
   });
 
+  // Login-Free AI Booking Step 1: Mobile OTP Send & Verify (mints verified customer session without requiring prior website login)
+  app.post('/api/ai/otp/send', rateLimit(12, 60000), async (req, res) => {
+    try {
+      const phoneRaw = String(req.body?.phone || '').trim();
+      const normPhone = normalizeIndianPhone(phoneRaw);
+      if (!normPhone || normPhone.length < 10 || normPhone.length > 15) {
+        return res.status(400).json({
+          error: 'Please provide a valid mobile number with country code (e.g. +91 98200 11223).',
+        });
+      }
+
+      let matchedUserId: string | undefined;
+      let matchedEmail: string | undefined;
+      const usersSnap = await db.collection('users').get();
+      for (const u of usersSnap.docs) {
+        const uData = u.data() as Partial<UserProfile>;
+        const pSnap = await u.ref.collection('private').doc('info').get();
+        const pData = pSnap.data();
+        const candidatePhone = pData?.phone || uData.phone || '';
+        if (candidatePhone && normalizeIndianPhone(String(candidatePhone)) === normPhone) {
+          matchedUserId = u.id;
+          matchedEmail = String(pData?.email || uData.email || '');
+          break;
+        }
+      }
+
+      const result = await sendWhatsAppOtp({
+        phone: phoneRaw,
+        purpose: 'ai_booking',
+        userId: matchedUserId,
+        email: matchedEmail,
+        ip: req.ip || 'unknown',
+      });
+
+      if (!result.ok) {
+        return res.status(result.statusCode).json({
+          error: result.message,
+          cooldownSeconds: result.cooldownSeconds,
+          deliveryChannel: result.deliveryChannel,
+        });
+      }
+
+      return res.json({
+        challengeId: result.challengeId,
+        expiresInSeconds: result.expiresInSeconds,
+        cooldownSeconds: result.cooldownSeconds,
+        deliveryChannel: result.deliveryChannel,
+        isDemoOtpEligible: Boolean(result.isDemoOtpEligible),
+        message: result.message,
+      });
+    } catch (err) {
+      console.error('AI OTP send error:', err);
+      res.status(500).json({ error: 'Unable to initiate mobile OTP verification.' });
+    }
+  });
+
+  app.post('/api/ai/otp/verify', rateLimit(20, 60000), async (req, res) => {
+    try {
+      const { challengeId, phone, code } = req.body as {
+        challengeId?: string;
+        phone?: string;
+        code?: string;
+      };
+
+      const verified = await verifyWhatsAppOtp({
+        challengeId: String(challengeId || ''),
+        phone: String(phone || ''),
+        code: String(code || ''),
+        purpose: 'ai_booking',
+      });
+
+      if (!verified.ok) {
+        return res.status(verified.statusCode).json({ error: verified.message });
+      }
+
+      const normPhone = verified.phone;
+      const now = new Date().toISOString();
+      let uid = verified.userId || '';
+      let existingCustomer = false;
+
+      if (!uid) {
+        const usersSnap = await db.collection('users').get();
+        for (const u of usersSnap.docs) {
+          const uData = u.data() as Partial<UserProfile>;
+          const pSnap = await u.ref.collection('private').doc('info').get();
+          const pData = pSnap.data();
+          const candidatePhone = pData?.phone || uData.phone || '';
+          if (candidatePhone && normalizeIndianPhone(String(candidatePhone)) === normPhone) {
+            uid = u.id;
+            break;
+          }
+        }
+      }
+
+      let profile: UserProfile | null = null;
+      if (uid) {
+        const uSnap = await db.collection('users').doc(uid).get();
+        if (uSnap.exists) {
+          profile = uSnap.data() as UserProfile;
+          existingCustomer = true;
+          await db.collection('users').doc(uid).update({
+            phone: `+${normPhone}`,
+            lastLoginAt: now,
+            updatedAt: now,
+          });
+          await db.collection('users').doc(uid).collection('private').doc('info').set(
+            {
+              uid,
+              phone: `+${normPhone}`,
+              phoneVerified: true,
+              phoneVerifiedAt: now,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+          profile.phone = `+${normPhone}`;
+        }
+      }
+
+      if (!profile) {
+        uid = `cust-otp-${normPhone}`;
+        const existingByDeterministicId = await db.collection('users').doc(uid).get();
+        if (existingByDeterministicId.exists) {
+          profile = existingByDeterministicId.data() as UserProfile;
+          existingCustomer = true;
+        } else {
+          profile = {
+            uid,
+            displayName: '',
+            phone: `+${normPhone}`,
+            role: 'customer',
+            accountStatus: 'active',
+            kycStatus: 'Not Started',
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+          };
+          await db.collection('users').doc(uid).set(profile);
+          await db.collection('users').doc(uid).collection('private').doc('info').set({
+            uid,
+            email: '',
+            phone: `+${normPhone}`,
+            phoneVerified: true,
+            phoneVerifiedAt: now,
+            savedAddresses: [],
+            favouriteVehicleIds: [],
+            marketingConsent: false,
+            whatsappConsent: true,
+            whatsappOptOut: false,
+            serviceConsentVersion: 'v2025.1',
+            serviceConsentAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      const tokenVersion = await getTokenVersion(profile.uid);
+      const token = signSessionToken({
+        uid: profile.uid,
+        email: profile.email || '',
+        role: profile.role,
+        tokenVersion,
+      });
+
+      return res.json({
+        verified: true,
+        token,
+        profile,
+        isExistingCustomer: existingCustomer,
+        message: verified.message,
+      });
+    } catch (err) {
+      console.error('AI OTP verify error:', err);
+      res.status(500).json({ error: 'Unable to verify OTP code.' });
+    }
+  });
+
+  // Login-Free AI Booking Step 2: Save Full Name (after verified mobile OTP)
+  app.post('/api/ai/profile', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const fullName = String(req.body?.fullName || '').trim().slice(0, 100);
+      const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 160);
+      if (fullName.length < 2) {
+        return res.status(400).json({ error: 'Please enter your valid full name (minimum 2 characters).' });
+      }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Please enter a valid email address or leave it blank.' });
+      }
+
+      const now = new Date().toISOString();
+      await db.collection('users').doc(uid).update({
+        displayName: fullName,
+        ...(email ? { email } : {}),
+        updatedAt: now,
+      });
+      if (email) {
+        await db.collection('users').doc(uid).collection('private').doc('info').set(
+          { email, updatedAt: now },
+          { merge: true }
+        );
+      }
+
+      const kycRef = db.collection('kyc_verifications').doc(`kyc-${uid}`);
+      const kycSnap = await kycRef.get();
+      if (kycSnap.exists) {
+        await kycRef.update({ customerName: fullName, updatedAt: now });
+      }
+
+      const updatedProfile = (await db.collection('users').doc(uid).get()).data() as UserProfile;
+      res.json({ profile: updatedProfile });
+    } catch {
+      res.status(500).json({ error: 'Failed to save customer details.' });
+    }
+  });
+
   // --- BUSINESS ADMIN AI & AUTH/OTP CONFIGURATION ---
   app.get(
     '/api/admin/ai-config',
@@ -8594,6 +9482,611 @@ async function startServer() {
       res.json({ config });
     } catch {
       res.status(500).json({ error: 'Failed to update global AI configuration.' });
+    }
+  });
+
+  // --- OWNER DATA MANAGEMENT & FIREBASE MIGRATION (SUPER_ADMIN ONLY) ---
+  async function computeDeleteImpact(
+    entityType: DataManagementEntityItem['entityType'],
+    targetId: string
+  ): Promise<DeleteImpactPreview | null> {
+    const [vehSnap, bkSnap, holdSnap, paySnap, invSnap, docsSnap, maintSnap, offersSnap, couponsSnap, usersSnap, settingsSnap] =
+      await Promise.all([
+        db.collection('vehicles').get(),
+        db.collection('bookings').get(),
+        db.collection('inventory_holds').where('status', '==', 'Active').get(),
+        db.collection('payments').get(),
+        db.collection('invoices').get(),
+        db.collection('customer_documents').get(),
+        db.collection('vehicle_maintenance').get(),
+        db.collection('offers').get(),
+        db.collection('coupons').get(),
+        db.collection('users').get(),
+        db.collection('company_settings').doc('default').get(),
+      ]);
+
+    const vehicles = vehSnap.docs.map((d) => d.data() as Vehicle);
+    const bookings = bkSnap.docs.map((d) => d.data() as Booking);
+    const holds = holdSnap.docs.map((d) => d.data() as InventoryHold);
+    const payments = paySnap.docs.map((d) => d.data() as any);
+    const invoices = invSnap.docs.map((d) => d.data() as any);
+    const kycDocs = docsSnap.docs.map((d) => d.data() as CustomerDocumentRecord);
+    const maints = maintSnap.docs.map((d) => d.data() as VehicleMaintenanceRecord);
+    const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+
+    if (entityType === 'vehicle_unit' || entityType === 'vehicle') {
+      const unit = vehicles.find((v) => v.id === targetId);
+      if (!unit) return null;
+      const relatedUnits = entityType === 'vehicle'
+        ? vehicles.filter((v) => buildModelKey(v) === buildModelKey(unit))
+        : [unit];
+      const ids = new Set(relatedUnits.map((u) => u.id));
+      const linkedBookings = bookings.filter(
+        (b) => ids.has(b.vehicleId) || (Array.isArray(b.assignedVehicleIds) && b.assignedVehicleIds.some((id) => ids.has(id)))
+      );
+      const activeBookings = linkedBookings.filter((b) => ACTIVE_RESERVATION_STATUSES.includes(b.status));
+      const activeHolds = holds.filter((h) => Array.isArray(h.vehicleIds) && h.vehicleIds.some((id) => ids.has(id)));
+      const maintRefs = maints.filter((m) => ids.has(m.vehicleId));
+      const actionType =
+        activeBookings.length > 0 || activeHolds.length > 0
+          ? 'blocked'
+          : linkedBookings.length > 0 || maintRefs.length > 0
+            ? 'archive_only'
+            : 'permanent_delete';
+      return {
+        entityType,
+        targetId,
+        title: entityType === 'vehicle' ? `${unit.name} (${relatedUnits.length} unit/s)` : `${unit.name} · ${unit.registrationNumber || unit.id}`,
+        actionType,
+        reason:
+          actionType === 'blocked'
+            ? `Cannot remove while ${activeBookings.length} active booking(s) or ${activeHolds.length} checkout hold(s) exist.`
+            : actionType === 'archive_only'
+              ? `Preserving ${linkedBookings.length} historical booking(s) & ${maintRefs.length} service log(s): unit(s) will be safely archived.`
+              : 'No bookings or service history found; safe for permanent deletion.',
+        requiresDoubleConfirm: linkedBookings.length > 0 || relatedUnits.length > 1 || actionType === 'permanent_delete',
+        impactCounts: {
+          bookings: linkedBookings.length,
+          activeBookings: activeBookings.length,
+          payments: 0,
+          invoices: 0,
+          kycDocs: 0,
+          activeHolds: activeHolds.length,
+          storageFiles: 0,
+        },
+      };
+    }
+
+    if (entityType === 'customer' || entityType === 'staff') {
+      const u = usersSnap.docs.map((d) => d.data() as UserProfile).find((x) => x.uid === targetId);
+      if (!u) return null;
+      if (u.role === 'super_admin' || u.role === 'master_admin') {
+        return {
+          entityType,
+          targetId,
+          title: u.displayName,
+          actionType: 'blocked',
+          reason: 'Primary Owner and Master Admin identities cannot be deleted here.',
+          requiresDoubleConfirm: true,
+          impactCounts: { bookings: 0, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 0 },
+        };
+      }
+      const linkedBk = bookings.filter((b) => b.userId === targetId);
+      const activeBk = linkedBk.filter((b) => ACTIVE_RESERVATION_STATUSES.includes(b.status));
+      const linkedPay = payments.filter((p) => p.userId === targetId);
+      const linkedInv = invoices.filter((i) => i.userId === targetId);
+      const linkedDocs = kycDocs.filter((d) => d.userId === targetId);
+      const actionType =
+        activeBk.length > 0
+          ? 'blocked'
+          : linkedBk.length > 0 || linkedPay.length > 0 || linkedInv.length > 0
+            ? 'archive_only'
+            : 'permanent_delete';
+      return {
+        entityType,
+        targetId,
+        title: `${u.displayName} (${u.email || u.uid})`,
+        actionType,
+        reason:
+          actionType === 'blocked'
+            ? `Blocked: ${activeBk.length} active reservation(s) exist for this account.`
+            : actionType === 'archive_only'
+              ? `Account has ${linkedBk.length} booking(s) and ${linkedPay.length + linkedInv.length} financial record(s); will be suspended & archived rather than wiped.`
+              : 'Zero transactional history; account and uploaded KYC files can be permanently removed.',
+        requiresDoubleConfirm: true,
+        impactCounts: {
+          bookings: linkedBk.length,
+          activeBookings: activeBk.length,
+          payments: linkedPay.length,
+          invoices: linkedInv.length,
+          kycDocs: linkedDocs.length,
+          activeHolds: holds.filter((h) => h.userId === targetId).length,
+          storageFiles: linkedDocs.length,
+        },
+      };
+    }
+
+    if (entityType === 'kyc_document') {
+      const docItem = kycDocs.find((d) => d.id === targetId);
+      if (!docItem) return null;
+      const activeBk = bookings.filter((b) => b.userId === docItem.userId && ACTIVE_RESERVATION_STATUSES.includes(b.status));
+      const actionType = activeBk.length > 0 ? 'blocked' : 'permanent_delete';
+      return {
+        entityType,
+        targetId,
+        title: `${docItem.label} (${docItem.customerName || docItem.userId})`,
+        actionType,
+        reason:
+          actionType === 'blocked'
+            ? `Cannot purge KYC document while ${activeBk.length} active booking(s) are open.`
+            : 'Removes private document metadata, encrypted blob, and Firebase Storage object.',
+        requiresDoubleConfirm: true,
+        impactCounts: { bookings: 0, activeBookings: activeBk.length, payments: 0, invoices: 0, kycDocs: 1, activeHolds: 0, storageFiles: 1 },
+      };
+    }
+
+    if (entityType === 'offer') {
+      const off = offersSnap.docs.map((d) => d.data() as Offer).find((o) => o.id === targetId);
+      if (!off) return null;
+      return {
+        entityType,
+        targetId,
+        title: off.title,
+        actionType: 'permanent_delete',
+        reason: 'Promotional offer banner can be deleted immediately without affecting existing bookings.',
+        requiresDoubleConfirm: false,
+        impactCounts: { bookings: 0, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 0 },
+      };
+    }
+
+    if (entityType === 'coupon') {
+      const cpn = couponsSnap.docs.map((d) => d.data() as Coupon).find((c) => c.id === targetId);
+      if (!cpn) return null;
+      const usedInBk = bookings.filter((b) => b.pricing?.couponCode === cpn.code).length;
+      return {
+        entityType,
+        targetId,
+        title: cpn.code,
+        actionType: usedInBk > 0 ? 'archive_only' : 'permanent_delete',
+        reason: usedInBk > 0 ? `Used in ${usedInBk} booking(s): will be deactivated instead of deleted.` : 'Unused coupon; safe to permanently delete.',
+        requiresDoubleConfirm: usedInBk > 0,
+        impactCounts: { bookings: usedInBk, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 0 },
+      };
+    }
+
+    if (entityType === 'social_link') {
+      const sp = (settings.socialProfiles || []).find((s) => s.id === targetId);
+      if (!sp) return null;
+      return {
+        entityType,
+        targetId,
+        title: `${sp.displayName} (${sp.url || 'Unset'})`,
+        actionType: 'permanent_delete',
+        reason: 'Removes social profile link from website header/footer & socialLinks collection.',
+        requiresDoubleConfirm: false,
+        impactCounts: { bookings: 0, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 0 },
+      };
+    }
+
+    if (entityType === 'vehicle_image') {
+      // targetId format: `${vehicleId}::${imageIndex}`
+      const [vId, idxStr] = targetId.split('::');
+      const v = vehicles.find((x) => x.id === vId);
+      const idx = Number(idxStr);
+      if (!v || !Array.isArray(v.images) || !Number.isFinite(idx) || !v.images[idx]) return null;
+      return {
+        entityType,
+        targetId,
+        title: `${v.name} — Image #${idx + 1}`,
+        actionType: v.images.length <= 1 ? 'blocked' : 'permanent_delete',
+        reason: v.images.length <= 1 ? 'At least 1 image must remain on a vehicle listing.' : 'Removes image URL from vehicle gallery.',
+        requiresDoubleConfirm: false,
+        impactCounts: { bookings: 0, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 1 },
+      };
+    }
+
+    if (entityType === 'cms_setting') {
+      const cmsTargetMap: Record<string, string> = {
+        hero_banner_custom_image: 'Custom Hero Banner Image',
+        office_gallery_reset: 'Custom Office Gallery Images',
+        custom_testimonials_clear: 'Testimonials List',
+      };
+      const title = cmsTargetMap[targetId];
+      if (!title) return null;
+      return {
+        entityType,
+        targetId,
+        title,
+        actionType: 'permanent_delete',
+        reason: 'Clears optional CMS media/override record while preserving core business details.',
+        requiresDoubleConfirm: true,
+        impactCounts: { bookings: 0, activeBookings: 0, payments: 0, invoices: 0, kycDocs: 0, activeHolds: 0, storageFiles: 0 },
+      };
+    }
+
+    return null;
+  }
+
+  app.get('/api/admin/data-management/summary', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (req.authUser!.profile.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Owner (super_admin) authorization is required for Data Management.' });
+      }
+
+      const [vehSnap, bkSnap, docsSnap, offersSnap, couponsSnap, usersSnap, settingsSnap, migSnap, auditSnap] =
+        await Promise.all([
+          db.collection('vehicles').get(),
+          db.collection('bookings').get(),
+          db.collection('customer_documents').get(),
+          db.collection('offers').get(),
+          db.collection('coupons').get(),
+          db.collection('users').get(),
+          db.collection('company_settings').doc('default').get(),
+          db.collection('migrationJobs').orderBy('completedAt', 'desc').limit(10).get(),
+          db.collection('audit_logs').where('module', '==', 'Data Management').orderBy('timestamp', 'desc').limit(30).get(),
+        ]);
+
+      const vehicles = vehSnap.docs.map((d) => d.data() as Vehicle);
+      const bookings = bkSnap.docs.map((d) => d.data() as Booking);
+      const kycDocs = docsSnap.docs.map((d) => d.data() as CustomerDocumentRecord);
+      const offers = offersSnap.docs.map((d) => d.data() as Offer);
+      const coupons = couponsSnap.docs.map((d) => d.data() as Coupon);
+      const users = usersSnap.docs.map((d) => d.data() as UserProfile);
+      const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+
+      const entities: DataManagementEntityItem[] = [];
+
+      // Grouped vehicle models
+      const byModel = new Map<string, Vehicle[]>();
+      for (const v of vehicles) {
+        const mk = buildModelKey(v);
+        const list = byModel.get(mk) || [];
+        list.push(v);
+        byModel.set(mk, list);
+      }
+      for (const [mk, units] of byModel.entries()) {
+        const rep = units[0];
+        const refCount = bookings.filter((b) => units.some((u) => u.id === b.vehicleId || b.assignedVehicleIds?.includes(u.id))).length;
+        entities.push({
+          id: rep.id,
+          entityType: 'vehicle',
+          title: rep.name,
+          subtitle: `${units.filter((u) => !u.archived).length} active unit(s) · Model Key: ${mk}`,
+          status: units.every((u) => u.archived) ? 'Archived' : 'Active',
+          branchId: rep.branchId,
+          isDemo: rep.id.startsWith('veh-'),
+          archived: units.every((u) => u.archived),
+          hasProtectedHistory: refCount > 0,
+        });
+      }
+
+      // Individual physical units
+      for (const v of vehicles) {
+        const refCount = bookings.filter((b) => b.vehicleId === v.id || b.assignedVehicleIds?.includes(v.id)).length;
+        entities.push({
+          id: v.id,
+          entityType: 'vehicle_unit',
+          title: `${v.name} (${v.registrationNumber || v.unitCode || v.id})`,
+          subtitle: `${v.branchName} · ₹${v.pricePerDay}/day`,
+          status: v.archived ? 'Archived' : v.status,
+          branchId: v.branchId,
+          isDemo: v.id.startsWith('veh-'),
+          archived: Boolean(v.archived),
+          hasProtectedHistory: refCount > 0,
+        });
+
+        // Vehicle images
+        (v.images || []).forEach((img, idx) => {
+          entities.push({
+            id: `${v.id}::${idx}`,
+            entityType: 'vehicle_image',
+            title: `${v.name} — Image #${idx + 1}`,
+            subtitle: img.length > 60 ? `${img.slice(0, 60)}…` : img,
+            status: v.images.length > 1 ? 'Removable' : 'Primary Required',
+            isDemo: v.id.startsWith('veh-'),
+          });
+        });
+      }
+
+      for (const u of users) {
+        if (u.role === 'super_admin' || u.role === 'master_admin') continue;
+        const bkCount = bookings.filter((b) => b.userId === u.uid).length;
+        entities.push({
+          id: u.uid,
+          entityType: u.role === 'customer' ? 'customer' : 'staff',
+          title: u.displayName,
+          subtitle: `${u.email || u.phone || u.uid} · Role: ${u.role}`,
+          status: u.accountStatus,
+          branchId: u.branchId,
+          createdAt: u.createdAt,
+          isDemo: u.uid.startsWith('demo-') || u.uid.endsWith('-001'),
+          archived: u.accountStatus === 'suspended',
+          hasProtectedHistory: bkCount > 0,
+        });
+      }
+
+      for (const o of offers) {
+        entities.push({
+          id: o.id,
+          entityType: 'offer',
+          title: o.title,
+          subtitle: `${o.offerType} · ${o.startDate || ''} to ${o.endDate || ''}`,
+          status: o.active ? 'Active' : 'Inactive',
+          createdAt: o.createdAt,
+          isDemo: o.id.startsWith('offer-'),
+        });
+      }
+
+      for (const c of coupons) {
+        entities.push({
+          id: c.id,
+          entityType: 'coupon',
+          title: c.code,
+          subtitle: `${c.discountType === 'percent' ? `${c.discountValue}%` : `₹${c.discountValue}`} off · Used ${c.usedCount || 0}x`,
+          status: c.active ? 'Active' : 'Inactive',
+          createdAt: c.createdAt,
+          isDemo: c.id.startsWith('cpn-'),
+        });
+      }
+
+      for (const sp of settings.socialProfiles || []) {
+        entities.push({
+          id: sp.id,
+          entityType: 'social_link',
+          title: sp.displayName,
+          subtitle: sp.url || 'No URL',
+          status: sp.enabled ? 'Enabled' : 'Disabled',
+          isDemo: sp.id.startsWith('soc-'),
+        });
+      }
+
+      for (const docItem of kycDocs) {
+        entities.push({
+          id: docItem.id,
+          entityType: 'kyc_document',
+          title: `${docItem.label} — ${docItem.customerName || docItem.userId}`,
+          subtitle: `${docItem.fileName} (${Math.round(docItem.sizeBytes / 1024)} KB)`,
+          status: docItem.status,
+          createdAt: docItem.uploadedAt,
+        });
+      }
+
+      entities.push(
+        {
+          id: 'hero_banner_custom_image',
+          entityType: 'cms_setting',
+          title: 'Reset Custom Hero Banner Image',
+          subtitle: settings.heroBannerImage || 'Default hero image',
+          status: 'Active',
+        },
+        {
+          id: 'office_gallery_reset',
+          entityType: 'cms_setting',
+          title: 'Clear Custom Office Gallery Images',
+          subtitle: `${(settings.officeImages || []).length} configured image(s)`,
+          status: 'Active',
+        }
+      );
+
+      const kycStorageBytes = kycDocs.reduce((acc, d) => acc + Number(d.sizeBytes || 0), 0);
+      res.json({
+        firebaseStatus: getFirebaseBackendStatus(),
+        storageMetrics: {
+          totalVehicles: vehicles.filter((v) => !v.archived).length,
+          totalBookings: bookings.length,
+          totalUsers: users.length,
+          kycDocumentCount: kycDocs.length,
+          kycStorageBytes,
+          demoRecordCount: entities.filter((e) => e.isDemo).length,
+        },
+        entities,
+        migrationJobs: migSnap.docs.map((d) => d.data()),
+        auditLogs: auditSnap.docs.map((d) => d.data()),
+      });
+    } catch (err) {
+      console.error('Data management summary error:', err);
+      res.status(500).json({ error: 'Failed to load Owner Data Management console.' });
+    }
+  });
+
+  app.post('/api/admin/data-management/preview', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (req.authUser!.profile.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only Owner (super_admin) can preview deletion impact.' });
+      }
+      const { entityType, targetId } = req.body || {};
+      const preview = await computeDeleteImpact(entityType, String(targetId || ''));
+      if (!preview) return res.status(404).json({ error: 'Target record not found.' });
+      res.json({ preview });
+    } catch {
+      res.status(500).json({ error: 'Failed to calculate deletion impact.' });
+    }
+  });
+
+  app.post('/api/admin/data-management/delete', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      if (actor.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only Owner (super_admin) can permanently delete or archive data.' });
+      }
+      const { entityType, targetId, confirmed, doubleConfirmed } = req.body || {};
+      if (!confirmed) {
+        return res.status(400).json({ error: 'Deletion confirmation is required.' });
+      }
+
+      const preview = await computeDeleteImpact(entityType, String(targetId || ''));
+      if (!preview) return res.status(404).json({ error: 'Target record not found.' });
+      if (preview.actionType === 'blocked') {
+        return res.status(409).json({ error: preview.reason, preview });
+      }
+      if (preview.requiresDoubleConfirm && !doubleConfirmed) {
+        return res.status(400).json({ error: 'Double confirmation is required for this high-impact operation.', preview });
+      }
+
+      const now = new Date().toISOString();
+      const cleanId = String(targetId);
+      const bucket = getAdminStorageBucket();
+
+      if (entityType === 'vehicle_unit' || entityType === 'vehicle') {
+        const allVeh = (await db.collection('vehicles').get()).docs.map((d) => d.data() as Vehicle);
+        const baseUnit = allVeh.find((v) => v.id === cleanId)!;
+        const units =
+          entityType === 'vehicle'
+            ? allVeh.filter((v) => buildModelKey(v) === buildModelKey(baseUnit))
+            : [baseUnit];
+
+        for (const u of units) {
+          if (preview.actionType === 'archive_only') {
+            await db.collection('vehicles').doc(u.id).update({ archived: true, status: 'Inactive', updatedAt: now });
+          } else {
+            await db.collection('vehicles').doc(u.id).delete();
+            await db.collection('vehicle_private').doc(u.id).delete();
+          }
+        }
+      } else if (entityType === 'vehicle_image') {
+        const [vId, idxStr] = cleanId.split('::');
+        const vRef = db.collection('vehicles').doc(vId);
+        const vSnap = await vRef.get();
+        if (vSnap.exists) {
+          const v = vSnap.data() as Vehicle;
+          const idx = Number(idxStr);
+          const nextImages = (v.images || []).filter((_, i) => i !== idx);
+          if (nextImages.length > 0) {
+            await vRef.update({ images: nextImages, updatedAt: now });
+          }
+        }
+      } else if (entityType === 'customer' || entityType === 'staff') {
+        if (preview.actionType === 'archive_only') {
+          await db.collection('users').doc(cleanId).update({ accountStatus: 'suspended', active: false, updatedAt: now });
+          await revokeAllUserSessions(cleanId);
+        } else {
+          // Delete unused customer KYC documents + storage objects
+          const custDocs = await db.collection('customer_documents').where('userId', '==', cleanId).get();
+          for (const cd of custDocs.docs) {
+            const meta = cd.data() as CustomerDocumentRecord;
+            if (bucket && meta.storagePath) {
+              await bucket.file(meta.storagePath).delete().catch(() => undefined);
+            }
+            await db.collection('kyc_document_blobs').doc(cd.id).delete();
+            await cd.ref.delete();
+          }
+          await db.collection('users').doc(cleanId).collection('private').doc('info').delete();
+          await db.collection('users').doc(cleanId).delete();
+          await db.collection('admins').doc(cleanId).delete();
+          await db.collection('auth_credentials').doc(cleanId).delete();
+          await revokeAllUserSessions(cleanId);
+        }
+      } else if (entityType === 'kyc_document') {
+        const docSnap = await db.collection('customer_documents').doc(cleanId).get();
+        if (docSnap.exists) {
+          const meta = docSnap.data() as CustomerDocumentRecord;
+          if (bucket && meta.storagePath) {
+            await bucket.file(meta.storagePath).delete().catch(() => undefined);
+          }
+          await db.collection('kyc_document_blobs').doc(cleanId).delete();
+          await docSnap.ref.delete();
+        }
+      } else if (entityType === 'offer') {
+        await db.collection('offers').doc(cleanId).delete();
+      } else if (entityType === 'coupon') {
+        if (preview.actionType === 'archive_only') {
+          await db.collection('coupons').doc(cleanId).update({ active: false, updatedAt: now });
+        } else {
+          await db.collection('coupons').doc(cleanId).delete();
+        }
+      } else if (entityType === 'social_link') {
+        const sRef = db.collection('company_settings').doc('default');
+        const sSnap = await sRef.get();
+        if (sSnap.exists) {
+          const settings = sSnap.data() as CompanySettings;
+          const nextProfiles = (settings.socialProfiles || []).filter((p) => p.id !== cleanId);
+          await sRef.update({ socialProfiles: nextProfiles, updatedAt: now });
+        }
+      } else if (entityType === 'cms_setting') {
+        const sRef = db.collection('company_settings').doc('default');
+        if (cleanId === 'hero_banner_custom_image') {
+          await sRef.update({ heroBannerImage: 'hero', updatedAt: now });
+        } else if (cleanId === 'office_gallery_reset') {
+          await sRef.update({ officeImages: ['hero'], updatedAt: now });
+        }
+      }
+
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Data Management',
+        action: preview.actionType === 'archive_only' ? 'OWNER_ARCHIVE_ENTITY' : 'OWNER_DELETE_ENTITY',
+        targetType: entityType,
+        targetId: cleanId,
+        details: `${preview.actionType === 'archive_only' ? 'Archived' : 'Deleted'} ${preview.title}. Reason: ${preview.reason}`,
+      });
+
+      res.json({ success: true, actionTaken: preview.actionType, preview });
+    } catch (err) {
+      console.error('Data management delete error:', err);
+      res.status(500).json({ error: 'Failed to execute Owner data control action.' });
+    }
+  });
+
+  app.post('/api/admin/migration/run', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      if (actor.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only Owner (super_admin) can execute Firebase migration jobs.' });
+      }
+      const { report, clientBundle } = await runFirebaseMigration({
+        actorUid: actor.uid,
+        actorEmail: actor.email || req.authUser!.email,
+        dryRun: Boolean(req.body?.dryRun),
+      });
+
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Data Management',
+        action: 'RUN_FIREBASE_MIGRATION',
+        targetType: 'migration_job',
+        targetId: report.id,
+        details: report.validationSummary,
+      });
+
+      res.json({
+        report,
+        clientBundle: req.body?.includeClientBundle ? clientBundle : undefined,
+        firebaseStatus: getFirebaseBackendStatus(),
+      });
+    } catch (err: any) {
+      console.error('Migration runner error:', err);
+      res.status(500).json({ error: err?.message || 'Migration execution failed.' });
+    }
+  });
+
+  app.post('/api/admin/migration/record-client-job', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      if (actor.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only Owner (super_admin) can record migration reports.' });
+      }
+      const report = req.body?.report;
+      if (!report || !report.id) {
+        return res.status(400).json({ error: 'Migration job report payload is required.' });
+      }
+      await db.collection('migrationJobs').doc(String(report.id)).set(report);
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Data Management',
+        action: 'RECORD_CLIENT_FIREBASE_MIGRATION',
+        targetType: 'migration_job',
+        targetId: String(report.id),
+        details: String(report.validationSummary || 'Completed Owner browser Firebase batch sync.'),
+      });
+      res.json({ success: true, report });
+    } catch {
+      res.status(500).json({ error: 'Failed to store migration job report.' });
     }
   });
 

@@ -1,0 +1,75 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Global Default Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(customerId) {
+      return isSignedIn() && request.auth.uid == customerId;
+    }
+
+    function isAuthorizedAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        request.auth.token.role in ['super_admin', 'kyc_executive', 'operations_staff', 'branch_manager'] ||
+        ((request.auth.token.email == 'nileshbarela08@gmail.com' ||
+          request.auth.token.email == 'barelanilesh483@gmail.com' ||
+          request.auth.token.email == 'nbgamer126@gmail.com') &&
+          request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidKycFile() {
+      return request.resource != null &&
+        request.resource.size <= 5 * 1024 * 1024 &&
+        (
+          request.resource.contentType.matches('image/(jpeg|jpg|png|webp)') ||
+          request.resource.contentType == 'application/pdf'
+        );
+    }
+
+    // Private Customer KYC Driving Licence & Aadhaar Uploads
+    match /customer-documents/{customerId}/driving-license/{fileName} {
+      allow read: if isOwner(customerId) || isAuthorizedAdmin();
+      allow create, update: if isOwner(customerId) && isValidKycFile();
+      allow delete: if isOwner(customerId) || isAuthorizedAdmin();
+    }
+
+    match /customer-documents/{customerId}/aadhaar/{fileName} {
+      allow read: if isOwner(customerId) || isAuthorizedAdmin();
+      allow create, update: if isOwner(customerId) && isValidKycFile();
+      allow delete: if isOwner(customerId) || isAuthorizedAdmin();
+    }
+
+    // Customer UPI payment proof screenshots (private to owner and Finance/Admin)
+    match /payment-proofs/{customerId}/{bookingId}/{fileName} {
+      allow read: if isOwner(customerId) || isAuthorizedAdmin();
+      allow create, update: if isOwner(customerId) &&
+        request.resource != null &&
+        request.resource.size <= 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Company brand & UPI QR assets (Admin write, public read)
+    match /company-assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthorizedAdmin() && request.resource != null && request.resource.size <= 5 * 1024 * 1024 && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Vehicle public showroom media (Admin write, public read)
+    match /vehicle-media/{vehicleId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthorizedAdmin() && request.resource != null && request.resource.size <= 5 * 1024 * 1024 && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuthorizedAdmin();
+    }
+  }
+}

@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
+import { useLanguage } from '../context/LanguageContext';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { apiFetch, formatINR } from '../lib/api';
 import { downloadRentalAgreementPdf } from '../lib/pdfExport';
 import { canAccessAdminConsole, hasAdminPermission } from '../lib/permissions';
@@ -51,6 +53,7 @@ const ACCESSORY_OPTIONS = [
 export const StaffDashboard: React.FC = () => {
   const { profile, loading: authLoading, logout } = useAuth();
   const { settings } = useCatalog();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const [tab, setTab] = useState<'bookings' | 'kyc' | 'tickets'>('bookings');
   const [data, setData] = useState<OverviewPayload | null>(null);
@@ -323,6 +326,7 @@ export const StaffDashboard: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 font-sans">
+              <LanguageSwitcher variant="dark" />
               {canOpenEnterpriseConsole && (
                 <button
                   type="button"
@@ -330,7 +334,7 @@ export const StaffDashboard: React.FC = () => {
                   className="px-3.5 py-2 bg-gold text-obsidian hover:bg-gold-bright rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
                   <LayoutDashboard className="w-3.5 h-3.5" />
-                  Enterprise Console
+                  {t('nav.console')}
                 </button>
               )}
               <button
@@ -339,7 +343,7 @@ export const StaffDashboard: React.FC = () => {
                 className="px-3 py-2 border border-white/20 rounded-lg text-xs font-semibold hover:border-gold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-gold" />
-                Refresh
+                {t('common.refresh')}
               </button>
               <button
                 type="button"
@@ -347,7 +351,7 @@ export const StaffDashboard: React.FC = () => {
                 className="px-3 py-2 bg-white/10 hover:bg-white/15 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               >
                 <LogOut className="w-3.5 h-3.5 text-gold" />
-                Sign Out
+                {t('nav.signOut')}
               </button>
             </div>
           </div>

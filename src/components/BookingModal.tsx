@@ -17,9 +17,18 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
+import { useLanguage } from '../context/LanguageContext';
 import { apiFetch, formatINR } from '../lib/api';
+import { KycDocumentsUploader, hasAllMandatoryKycDocs } from './KycDocumentsUploader';
 import { LocationMapPicker, type LocationSelection } from './LocationMapPicker';
-import type { PaymentMode, PricingBreakdown, Vehicle, VehicleAvailabilitySummary } from '../types';
+import type {
+  BookingConsentsPayload,
+  CustomerDocumentRecord,
+  PaymentMode,
+  PricingBreakdown,
+  Vehicle,
+  VehicleAvailabilitySummary,
+} from '../types';
 
 interface BookingModalProps {
   vehicle: Vehicle;
@@ -38,6 +47,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 }) => {
   const { profile, firebaseUser } = useAuth();
   const { branches, activeBranches, insurancePackages, settings, isPreviewMode } = useCatalog();
+  const { language, t } = useLanguage();
   const navigate = useNavigate();
 
   const hub =
@@ -86,7 +96,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       ? 'Cash'
       : 'UPI'
   );
+  const [accuracyConfirmed, setAccuracyConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [rentalRulesAccepted, setRentalRulesAccepted] = useState(false);
+  const [cancellationRefundAccepted, setCancellationRefundAccepted] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+
+  const [kycDocuments, setKycDocuments] = useState<CustomerDocumentRecord[]>([]);
+  const [kycDocsLoading, setKycDocsLoading] = useState(false);
+  const [kycLicenseNumber, setKycLicenseNumber] = useState('');
+  const [kycLicenseExpiry, setKycLicenseExpiry] = useState('');
+  const [kycAadhaarNumber, setKycAadhaarNumber] = useState('');
 
   const [pricing, setPricing] = useState<PricingBreakdown | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -125,6 +146,25 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   useEffect(() => {
     void refreshLiveAvailability();
   }, [refreshLiveAvailability]);
+
+  useEffect(() => {
+    if (!firebaseUser) return;
+    let active = true;
+    setKycDocsLoading(true);
+    void apiFetch<{ documents: CustomerDocumentRecord[] }>('/api/kyc/documents')
+      .then((res) => {
+        if (active) setKycDocuments(res.documents || []);
+      })
+      .catch(() => {
+        if (active) setKycDocuments([]);
+      })
+      .finally(() => {
+        if (active) setKycDocsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [firebaseUser]);
 
   useEffect(() => {
     let active = true;
@@ -223,6 +263,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
   };
 
+  const mandatoryKycUploaded = hasAllMandatoryKycDocs(kycDocuments);
+  const allRequiredConsentsChecked =
+    accuracyConfirmed &&
+    termsAccepted &&
+    privacyAccepted &&
+    rentalRulesAccepted &&
+    cancellationRefundAccepted;
+
   const handleConfirmAndPay = async () => {
     if (isPreviewMode) {
       toast.info('Preview Mode: Booking creation is disabled while previewing as Owner.');
@@ -231,6 +279,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (!firebaseUser || !profile) {
       toast.info('Please sign in or register to complete your booking.');
       navigate('/login', { state: { redirectTo: `/vehicles/${vehicle.id}` } });
+      return;
+    }
+    if (!mandatoryKycUploaded) {
+      toast.error('Please upload Driving Licence (Front & Back) and Aadhaar Card before confirming booking.');
       return;
     }
     if (liveAvailableUnits < quantity) {
@@ -242,8 +294,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       toast.error(location.serviceReason || 'Selected location is outside serviceable coverage.');
       return;
     }
-    if (!termsAccepted) {
-      toast.error('Please accept the Self-Drive Rental Agreement v2025.1 and cancellation policy.');
+    if (!allRequiredConsentsChecked) {
+      toast.error('Please read and tick all 5 mandatory booking confirmations before proceeding.');
       return;
     }
 
@@ -251,6 +303,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setConflictMessage(null);
     try {
       const idempotencyKey = `bk-${profile.uid}-${vehicle.id}-q${quantity}-${startDate}-${endDate}`;
+      const consentsPayload: BookingConsentsPayload = {
+        accuracyConfirmed,
+        termsAccepted,
+        privacyAccepted,
+        rentalRulesAccepted,
+        cancellationRefundAccepted,
+        marketingConsent,
+        language,
+      };
       const createRes = await apiFetch<{
         booking: { id: string; bookingReference: string; pricing: PricingBreakdown };
       }>('/api/bookings', {
@@ -279,6 +340,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           paymentMode,
           paymentMethod,
           termsAccepted: true,
+          consents: consentsPayload,
+          language,
         }),
       });
 
@@ -317,7 +380,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       : [{ key: 'UPI' as const, label: 'Manual UPI QR + UTR' }];
 
   const advancePct = settings?.advancePaymentPercent ?? 30;
-  const holdMins = settings?.holdDurationMinutes ?? 20;
+  const holdMins = settings?.holdDurationMinutes ?? 15;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -534,6 +597,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   className="w-full px-3 py-2 text-xs bg-obsidian border border-white/15 rounded-lg text-white font-mono uppercase focus:outline-none focus:border-gold placeholder:text-ivory/35"
                 />
               </div>
+
+              {/* Mandatory Customer KYC Document Verification */}
+              <div className="p-4 rounded-xl bg-obsidian/80 border border-white/15 space-y-3">
+                <h3 className="text-sm font-semibold text-white">
+                  3. {t('kyc.title')}
+                </h3>
+                {!firebaseUser ? (
+                  <p className="text-xs text-amber-200">
+                    Sign in to upload your Driving Licence (Front & Back) and Aadhaar Card before confirming this booking.
+                  </p>
+                ) : kycDocsLoading ? (
+                  <p className="text-xs text-ivory/60">Checking your uploaded KYC vault...</p>
+                ) : (
+                  <KycDocumentsUploader
+                    documents={kycDocuments}
+                    onDocumentsChange={setKycDocuments}
+                    licenseNumber={kycLicenseNumber}
+                    licenseExpiry={kycLicenseExpiry}
+                    aadhaarNumber={kycAadhaarNumber}
+                    onLicenseNumberChange={setKycLicenseNumber}
+                    onLicenseExpiryChange={setKycLicenseExpiry}
+                    onAadhaarNumberChange={setKycAadhaarNumber}
+                    showMetadataInputs
+                    disabled={isPreviewMode}
+                  />
+                )}
+              </div>
             </div>
           </div>
 
@@ -721,34 +811,93 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 )}
               </div>
 
-              {/* Rental Agreement Summary */}
-              <div className="p-3 rounded-lg bg-navy-deep border border-white/10 space-y-2 text-[11px]">
+              {/* 5 Mandatory Consents + 1 Optional Marketing Consent (Never pre-checked) */}
+              <div className="p-3.5 rounded-lg bg-navy-deep border border-white/10 space-y-2.5 text-[11px]">
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="inline-flex items-center gap-1.5">
                     <FileCheck2 className="w-3.5 h-3.5 text-gold" />
-                    Self-Drive Rental Agreement (v2025.1)
+                    Self-Drive Agreements & Consents (v2025.1)
                   </span>
                 </div>
                 <p className="text-ivory/65 leading-relaxed">
                   {settings?.rentalRulesSummary ||
                     'Valid original Driving Licence & KYC clearance mandatory before key handover. Full-to-full fuel policy applies. Security deposit refunds post clean return inspection.'}
                 </p>
-                <label className="flex items-start gap-2 text-xs text-white cursor-pointer pt-1">
-                  <input
-                    type="checkbox"
-                    checked={termsAccepted}
-                    onChange={(e) => setTermsAccepted(e.target.checked)}
-                    className="mt-0.5 accent-gold"
-                  />
-                  <span>
-                    I accept the Self-Drive Rental Agreement v2025.1, Cancellation Policy, and Privacy Notice.
-                  </span>
-                </label>
+
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-start gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={accuracyConfirmed}
+                      onChange={(e) => setAccuracyConfirmed(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.accuracy')} <span className="text-gold">*</span></span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={termsAccepted}
+                      onChange={(e) => setTermsAccepted(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.terms')} <span className="text-gold">*</span></span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={privacyAccepted}
+                      onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.privacy')} <span className="text-gold">*</span></span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rentalRulesAccepted}
+                      onChange={(e) => setRentalRulesAccepted(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.rentalRules')} <span className="text-gold">*</span></span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={cancellationRefundAccepted}
+                      onChange={(e) => setCancellationRefundAccepted(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.cancellation')} <span className="text-gold">*</span></span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-xs text-ivory/70 cursor-pointer pt-1 border-t border-white/10">
+                    <input
+                      type="checkbox"
+                      checked={marketingConsent}
+                      onChange={(e) => setMarketingConsent(e.target.checked)}
+                      className="mt-0.5 accent-gold shrink-0"
+                    />
+                    <span>{t('consent.marketingOptional')}</span>
+                  </label>
+                </div>
               </div>
 
               <button
                 type="button"
-                disabled={submitting || !location.serviceable || !pricing || isPreviewMode || liveAvailableUnits < quantity}
+                disabled={
+                  submitting ||
+                  !location.serviceable ||
+                  !pricing ||
+                  isPreviewMode ||
+                  liveAvailableUnits < quantity ||
+                  (Boolean(firebaseUser) && !mandatoryKycUploaded) ||
+                  !allRequiredConsentsChecked
+                }
                 onClick={() => void handleConfirmAndPay()}
                 className="w-full py-3 px-4 bg-gold text-obsidian text-sm font-semibold rounded-xl hover:bg-gold-bright transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
               >
@@ -757,13 +906,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   ? 'Booking Disabled in Preview Mode'
                   : liveAvailableUnits < quantity
                     ? 'Insufficient Units for Dates'
-                    : submitting
-                      ? 'Reserving Inventory...'
-                      : pricing
-                        ? paymentMethod === 'UPI'
-                          ? `Reserve (${formatINR(pricing.amountDueNow)}) & Pay via UPI`
-                          : `Confirm Reservation (${formatINR(pricing.amountDueNow)})`
-                        : 'Reserve & Proceed'}
+                    : Boolean(firebaseUser) && !mandatoryKycUploaded
+                      ? 'Upload Mandatory KYC Docs First'
+                      : !allRequiredConsentsChecked
+                        ? 'Confirm All 5 Checkboxes Above'
+                        : submitting
+                          ? 'Reserving Inventory...'
+                          : pricing
+                            ? paymentMethod === 'UPI'
+                              ? `Reserve (${formatINR(pricing.amountDueNow)}) & Pay via UPI`
+                              : `Confirm Reservation (${formatINR(pricing.amountDueNow)})`
+                            : 'Reserve & Proceed'}
               </button>
 
               {profile && profile.kycStatus !== 'Verified' && (

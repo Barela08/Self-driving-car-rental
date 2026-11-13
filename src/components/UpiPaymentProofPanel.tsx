@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { toast } from 'sonner';
 import {
@@ -11,17 +12,20 @@ import {
   Upload,
 } from 'lucide-react';
 import { apiFetch, formatINR } from '../lib/api';
+import { useLanguage } from '../context/LanguageContext';
 
 interface UpiPaymentProofPanelProps {
   bookingId: string;
   bookingReference: string;
   amountDue: number;
+  balanceDueAtPickup?: number;
   upiId: string;
   upiMerchantName: string;
   upiEnabled?: boolean;
   upiStaticQrImage?: string;
   upiPaymentInstructions?: string;
   transactionRef?: string;
+  showFullCheckoutLink?: boolean;
   onSubmitted: () => void;
   onSkip?: () => void;
 }
@@ -36,15 +40,18 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
   bookingId,
   bookingReference,
   amountDue,
+  balanceDueAtPickup = 0,
   upiId,
   upiMerchantName,
   upiEnabled = true,
   upiStaticQrImage,
   upiPaymentInstructions,
   transactionRef,
+  showFullCheckoutLink = false,
   onSubmitted,
   onSkip,
 }) => {
+  const { t } = useLanguage();
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrMode, setQrMode] = useState<'dynamic' | 'static'>('dynamic');
   const [utr, setUtr] = useState('');
@@ -97,8 +104,8 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2_000_000) {
-      toast.error('Please upload a screenshot smaller than 2 MB.');
+    if (file.size > 5_000_000) {
+      toast.error('Please upload a screenshot smaller than 5 MB.');
       return;
     }
     setFileName(file.name);
@@ -156,7 +163,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
 
   if (!upiEnabled) {
     return (
-      <div className="bg-alabaster border border-black/15 rounded-xl p-5 space-y-2 text-xs">
+      <div className="bg-alabaster border border-black/15 rounded-xl p-5 space-y-2 text-xs text-ink">
         <p className="font-semibold text-amber-800 flex items-center gap-1.5">
           <AlertTriangle className="w-4 h-4" />
           UPI Payments Temporarily Disabled
@@ -169,19 +176,37 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
   }
 
   return (
-    <div className="bg-alabaster border border-black/15 rounded-xl p-5 space-y-4">
+    <div className="bg-alabaster border border-black/15 rounded-xl p-4 sm:p-5 space-y-4 text-ink">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-black/10 pb-3">
         <div>
-          <p className="text-xs font-semibold text-gold-hover uppercase tracking-wider">Official UPI QR Checkout</p>
+          <p className="text-[11px] font-semibold text-gold-hover uppercase tracking-wider">
+            {t('pay.checkoutTitle')}
+          </p>
           <h4 className="font-display text-lg font-semibold text-ink">
-            Pay {formatINR(amountDue)} for {bookingReference}
+            {t('pay.advanceAmount')}: {formatINR(amountDue)} · {bookingReference}
           </h4>
+          {balanceDueAtPickup > 0 && (
+            <p className="text-[11px] font-mono text-slate-muted">
+              {t('pay.remainingBalance')}: {formatINR(balanceDueAtPickup)}
+            </p>
+          )}
         </div>
-        <span className="font-mono text-xs text-slate-muted">Status: Pending Verification</span>
+        <div className="flex flex-col sm:items-end gap-1">
+          <span className="font-mono text-[11px] text-slate-muted">Status: Awaiting Verification</span>
+          {showFullCheckoutLink && (
+            <Link
+              to={`/bookings/${bookingId}/pay`}
+              className="text-[11px] font-semibold text-gold-hover hover:underline inline-flex items-center gap-1"
+            >
+              {t('pay.openFullCheckout')}
+              <ExternalLink className="w-3 h-3" />
+            </Link>
+          )}
+        </div>
       </div>
 
-      <div className="grid sm:grid-cols-12 gap-5 items-start">
-        <div className="sm:col-span-5 flex flex-col items-center justify-center bg-white border border-black/10 rounded-xl p-4 space-y-2.5">
+      <div className="grid sm:grid-cols-12 gap-4 items-start">
+        <div className="sm:col-span-5 flex flex-col items-center justify-center bg-white border border-black/10 rounded-xl p-3.5 space-y-2.5">
           {upiStaticQrImage && (
             <div className="grid grid-cols-2 w-full p-0.5 bg-alabaster border border-black/10 rounded-lg text-[11px] font-semibold">
               <button
@@ -216,14 +241,15 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
           )}
 
           <div className="w-full space-y-1 text-center text-[11px]">
-            <p className="text-slate-muted">Company UPI ID</p>
+            <p className="text-slate-muted">{t('pay.upiIdLabel')}</p>
             <div className="flex items-center justify-center gap-1.5">
               <p className="font-mono text-xs font-semibold text-ink select-all">{upiId}</p>
               <button
                 type="button"
-                onClick={() => void handleCopy(upiId, 'UPI ID')}
+                onClick={() => void handleCopy(upiId, t('pay.upiIdLabel'))}
                 className="p-1 border border-black/15 rounded hover:border-gold cursor-pointer"
-                title="Copy UPI ID"
+                title={t('pay.copyUpi')}
+                aria-label={t('pay.copyUpi')}
               >
                 <Copy className="w-3 h-3" />
               </button>
@@ -250,20 +276,20 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
             className="w-full py-2.5 px-3 bg-gold text-obsidian font-semibold rounded-lg hover:bg-gold-bright inline-flex items-center justify-center gap-1.5"
           >
             <Smartphone className="w-4 h-4" />
-            Open UPI App (Auto-Fill {formatINR(amountDue)})
+            {t('pay.payUsingUpi')} ({formatINR(amountDue)})
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
 
           <p className="text-slate-muted leading-relaxed">
             {upiPaymentInstructions
               ? upiPaymentInstructions.split('\n')[0]
-              : 'Scan the QR using GPay, PhonePe, Paytm, or BHIM. Enter your UTR number, paid amount, and upload the receipt screenshot below.'}{' '}
-            <strong className="text-ink">Payment is confirmed only after Finance verifies your UTR.</strong>
+              : ''}{' '}
+            <strong className="text-ink">{t('pay.pendingNotice')}</strong>
           </p>
 
           <div className="grid sm:grid-cols-2 gap-2.5">
             <div>
-              <label className="block font-semibold text-slate-muted mb-1">UPI UTR / Reference *</label>
+              <label className="block font-semibold text-slate-muted mb-1">{t('pay.utrLabel')}</label>
               <input
                 type="text"
                 required
@@ -276,7 +302,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-muted mb-1">Paid Amount (INR) *</label>
+              <label className="block font-semibold text-slate-muted mb-1">{t('pay.paidAmountLabel')}</label>
               <input
                 type="number"
                 required
@@ -288,7 +314,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-muted mb-1">Paid Date & Time *</label>
+              <label className="block font-semibold text-slate-muted mb-1">{t('pay.paidAtLabel')}</label>
               <input
                 type="datetime-local"
                 required
@@ -298,7 +324,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-muted mb-1">Payer UPI ID (Optional)</label>
+              <label className="block font-semibold text-slate-muted mb-1">{t('pay.payerUpiLabel')}</label>
               <input
                 type="text"
                 value={payerUpiId}
@@ -310,7 +336,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
           </div>
 
           <div>
-            <label className="block font-semibold text-slate-muted mb-1">Upload Payment Screenshot *</label>
+            <label className="block font-semibold text-slate-muted mb-1">{t('pay.uploadProofLabel')}</label>
             <label className="flex items-center gap-2 px-3 py-2 bg-white border border-black/15 rounded-lg cursor-pointer hover:border-gold">
               <Upload className="w-4 h-4 text-gold-hover shrink-0" />
               <span className="truncate text-ink">{fileName || 'Select PNG/JPG receipt screenshot...'}</span>
@@ -325,7 +351,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
               className="px-4 py-2.5 bg-obsidian text-white font-semibold rounded-lg hover:bg-graphite inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               <CheckCircle2 className="w-4 h-4 text-gold" />
-              {submitting ? 'Submitting Proof...' : 'Submit Payment Proof'}
+              {submitting ? 'Submitting Proof...' : t('pay.submitProof')}
             </button>
             {onSkip && (
               <button

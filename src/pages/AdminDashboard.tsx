@@ -20,6 +20,7 @@ import { AdminReportsPanel } from '../components/admin/AdminReportsPanel';
 import { AdminIntegrationsPanel } from '../components/admin/AdminIntegrationsPanel';
 import { AdminAuditHistoryPanel } from '../components/admin/AdminAuditHistoryPanel';
 import { AdminAiAuthPanel } from '../components/admin/AdminAiAuthPanel';
+import { AdminDataManagementPanel } from '../components/admin/AdminDataManagementPanel';
 import { UserPreviewModal } from '../components/admin/UserPreviewModal';
 import { PaymentSettingsAdminPanel } from '../components/PaymentSettingsAdminPanel';
 import type { AdminOverviewPayload, AdminTabKey } from '../components/admin/adminTypes';
@@ -190,6 +191,8 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
       case 'website_settings':
       case 'coupons_offers':
         return canWebsiteSettings;
+      case 'data_management':
+        return isOwner;
       default:
         return false;
     }
@@ -294,6 +297,7 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
                 profile={profile}
                 roles={roles}
                 kycQueue={data.kycQueue}
+                customerDocuments={data.customerDocuments || []}
                 onReload={handleFullReload}
               />
             )}
@@ -398,6 +402,14 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
                 campaigns={data.campaigns}
                 customers={customerUsers}
                 vehicles={data.vehicles}
+                onReload={handleFullReload}
+              />
+            )}
+
+            {tab === 'data_management' && isOwner && (
+              <AdminDataManagementPanel
+                profile={profile}
+                initialData={data}
                 onReload={handleFullReload}
               />
             )}

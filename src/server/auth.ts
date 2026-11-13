@@ -34,7 +34,7 @@ const SESSION_SECRET =
     .update(`elitedrive:${firebaseConfig.projectId}:${firebaseConfig.appId}`)
     .digest('hex');
 
-const BOOTSTRAP_OWNER_EMAILS = ['barelanilesh483@gmail.com', 'nbgamer126@gmail.com'];
+const BOOTSTRAP_OWNER_EMAILS = ['nileshbarela08@gmail.com', 'barelanilesh483@gmail.com', 'nbgamer126@gmail.com'];
 
 interface SessionPayload {
   uid: string;

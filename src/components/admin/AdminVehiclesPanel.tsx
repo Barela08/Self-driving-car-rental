@@ -99,6 +99,35 @@ const MAINTENANCE_TYPES: VehicleMaintenanceRecord['type'][] = [
 ];
 const PRESET_KEYS = ['verna', 'thar', 'nexon_ev', 'hycross', 'swift', 'hero'];
 
+interface PhysicalUnitInspection {
+  vehicleId: string;
+  unitCode: string;
+  registrationNumber: string;
+  name: string;
+  modelKey: string;
+  branchId: string;
+  branchName: string;
+  status: VehicleStatus;
+  maintenanceStatus: string;
+  archived: boolean;
+  activeBookingCount: number;
+  historicalBookingCount: number;
+  activeHoldCount: number;
+  activeMaintenanceCount: number;
+  hasProtectedHistory: boolean;
+  canRetire: boolean;
+  blockReason: string | null;
+}
+
+function deriveModelKey(v: Vehicle): string {
+  if (v.modelKey && v.modelKey.trim()) return v.modelKey.trim().toLowerCase();
+  const base = `${v.brand || ''} ${v.model || v.name || ''}`.trim() || v.name || v.id;
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
   profile,
   roles,
@@ -214,6 +243,16 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
   const [fitnessExpiry, setFitnessExpiry] = useState('2028-06-30');
   const [lastOdometerKm, setLastOdometerKm] = useState('12000');
   const [serviceNotes, setServiceNotes] = useState('');
+
+  // Edit mode model quantity & physical unit control
+  const [editModelKey, setEditModelKey] = useState('');
+  const [editSourceBranchId, setEditSourceBranchId] = useState('');
+  const [modelUnits, setModelUnits] = useState<PhysicalUnitInspection[]>([]);
+  const [modelUnitsLoading, setModelUnitsLoading] = useState(false);
+  const [initialModelQty, setInitialModelQty] = useState(1);
+  const [minAllowedQty, setMinAllowedQty] = useState(1);
+  const [editQuantity, setEditQuantity] = useState('1');
+  const [selectedRetireIds, setSelectedRetireIds] = useState<string[]>([]);
 
   const privateMap = useMemo(() => {
     const map: Record<string, VehiclePrivateDetails> = {};
@@ -390,7 +429,48 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
     setFitnessExpiry(v.documents?.fitnessExpiry || priv?.permitExpiry || '2028-06-30');
     setLastOdometerKm(String(priv?.lastOdometerKm ?? 12000));
     setServiceNotes(priv?.serviceNotes || '');
+
+    const derivedMk = deriveModelKey(v);
+    setEditModelKey(derivedMk);
+    setEditSourceBranchId(v.branchId);
+    setModelUnits([]);
+    setSelectedRetireIds([]);
+    const localCount = Math.max(
+      1,
+      vehicles.filter(
+        (item) => !item.archived && deriveModelKey(item) === derivedMk && item.branchId === v.branchId
+      ).length
+    );
+    setInitialModelQty(localCount);
+    setMinAllowedQty(1);
+    setEditQuantity(String(localCount));
     setModalOpen(true);
+
+    setModelUnitsLoading(true);
+    void apiFetch<{
+      modelKey: string;
+      branchId: string;
+      totalUnits: number;
+      occupiedCount: number;
+      minAllowedQuantity: number;
+      units: PhysicalUnitInspection[];
+    }>(
+      `/api/admin/vehicles/model-units?modelKey=${encodeURIComponent(derivedMk)}&branchId=${encodeURIComponent(
+        v.branchId
+      )}`
+    )
+      .then((res) => {
+        setModelUnits(res.units || []);
+        setInitialModelQty(Math.max(1, res.totalUnits || localCount));
+        setMinAllowedQty(Math.max(1, res.minAllowedQuantity || 1));
+        setEditQuantity(String(Math.max(1, res.totalUnits || localCount)));
+      })
+      .catch(() => {
+        // Keep local fallback unit count silently if endpoint call errors transiently
+      })
+      .finally(() => {
+        setModelUnitsLoading(false);
+      });
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -486,11 +566,53 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
       }
 
       if (editingId) {
+        const parsedTargetQty = Math.floor(Number(editQuantity || initialModelQty));
+        if (!Number.isFinite(parsedTargetQty) || parsedTargetQty < 1 || parsedTargetQty > 50) {
+          toast.error('Total Number of Cars must be between 1 and 50.');
+          setBusy(false);
+          return;
+        }
+        if (parsedTargetQty < minAllowedQty) {
+          toast.error(
+            `Cannot reduce quantity below ${minAllowedQty} because active bookings, holds, or workshop locks exist.`
+          );
+          setBusy(false);
+          return;
+        }
+        const deltaDown = initialModelQty - parsedTargetQty;
+        if (deltaDown > 0 && selectedRetireIds.length !== deltaDown) {
+          toast.error(`Select exactly ${deltaDown} unallocated physical unit(s) to retire.`);
+          setBusy(false);
+          return;
+        }
+
         await apiFetch(`/api/admin/vehicles/${editingId}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
-        toast.success(`Updated ${name}`);
+
+        if (parsedTargetQty !== initialModelQty && editModelKey) {
+          const qtyRes = await apiFetch<{
+            previousQuantity: number;
+            newQuantity: number;
+            createdCount: number;
+            retiredCount: number;
+          }>('/api/admin/vehicles/model-quantity', {
+            method: 'PUT',
+            body: JSON.stringify({
+              modelKey: editModelKey,
+              branchId: editSourceBranchId || branchId,
+              targetQuantity: parsedTargetQty,
+              ...(deltaDown > 0 ? { retireVehicleIds: selectedRetireIds } : {}),
+              templateBody: payload,
+            }),
+          });
+          toast.success(
+            `Updated ${name} and scaled fleet quantity (${qtyRes.previousQuantity} -> ${qtyRes.newQuantity} units)`
+          );
+        } else {
+          toast.success(`Updated ${name}`);
+        }
       } else {
         const count = Math.min(20, Math.max(1, Number(unitCount || 1)));
         payload.unitCount = count;
@@ -1270,10 +1392,10 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
             </div>
 
             <div className="p-6 max-h-[75vh] overflow-y-auto space-y-6">
-              {!editingId && (
+              {!editingId ? (
                 <div className="p-4 rounded-xl bg-alabaster border border-gold/40 grid sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block font-semibold text-ink mb-1">Physical Units to Add (1–20)</label>
+                    <label className="block font-semibold text-ink mb-1">Total Number of Cars (1–20)</label>
                     <input
                       type="number"
                       min={1}
@@ -1295,6 +1417,116 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
                       className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono uppercase"
                     />
                   </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-alabaster border border-gold/40 space-y-3">
+                  <div className="grid sm:grid-cols-3 gap-3 items-end">
+                    <div>
+                      <label className="block font-semibold text-ink mb-1">
+                        Total Number of Cars (Model Quantity)
+                      </label>
+                      <input
+                        type="number"
+                        min={minAllowedQty}
+                        max={50}
+                        value={editQuantity}
+                        onChange={(e) => {
+                          setEditQuantity(e.target.value);
+                          setSelectedRetireIds([]);
+                        }}
+                        className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono font-semibold"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 text-[11px] text-slate-muted space-y-0.5">
+                      <p className="font-semibold text-ink">
+                        Active Branch Inventory: {initialModelQty} physical unit(s) · Min safe quantity: {minAllowedQty}
+                      </p>
+                      <p>
+                        Increasing quantity automatically appends sequential physical units. Decreasing quantity
+                        requires selecting free (unbooked) units below; booked, held, or workshop units are protected.
+                      </p>
+                    </div>
+                  </div>
+
+                  {modelUnitsLoading ? (
+                    <p className="text-[11px] text-slate-muted">Checking active bookings & physical unit locks...</p>
+                  ) : modelUnits.length > 0 ? (
+                    <div className="space-y-2">
+                      {(() => {
+                        const parsedQty = Math.floor(Number(editQuantity || initialModelQty));
+                        const needRetire = Math.max(0, initialModelQty - parsedQty);
+                        return (
+                          <>
+                            {needRetire > 0 && (
+                              <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                                Select exact {needRetire} free physical unit(s) to retire ({selectedRetireIds.length}/{needRetire} selected).
+                              </p>
+                            )}
+                            <div className="grid sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                              {modelUnits.map((u) => {
+                                const isChecked = selectedRetireIds.includes(u.vehicleId);
+                                const isEditingSelf = u.vehicleId === editingId;
+                                const canPickForRetire = needRetire > 0 && u.canRetire && !isEditingSelf;
+                                return (
+                                  <label
+                                    key={u.vehicleId}
+                                    className={`p-2 rounded-lg border flex items-center justify-between gap-2 text-[11px] ${
+                                      isChecked
+                                        ? 'bg-red-50 border-red-300'
+                                        : u.canRetire
+                                          ? 'bg-white border-black/10'
+                                          : 'bg-slate-100 border-black/10 opacity-85'
+                                    } ${canPickForRetire ? 'cursor-pointer' : ''}`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {needRetire > 0 && (
+                                        <input
+                                          type="checkbox"
+                                          disabled={!canPickForRetire}
+                                          checked={isChecked}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              if (selectedRetireIds.length >= needRetire) {
+                                                toast.error(`You only need to select ${needRetire} unit(s).`);
+                                                return;
+                                              }
+                                              setSelectedRetireIds((prev) => [...prev, u.vehicleId]);
+                                            } else {
+                                              setSelectedRetireIds((prev) => prev.filter((id) => id !== u.vehicleId));
+                                            }
+                                          }}
+                                          className="accent-red-700"
+                                        />
+                                      )}
+                                      <div className="min-w-0">
+                                        <p className="font-mono font-semibold text-ink truncate">
+                                          {u.registrationNumber} ({u.unitCode})
+                                        </p>
+                                        <p className="text-[10px] text-slate-muted truncate">
+                                          {u.status}
+                                          {isEditingSelf ? ' · Currently editing' : ''}
+                                          {u.blockReason ? ` · ${u.blockReason}` : ''}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span
+                                      className={`px-2 py-0.5 rounded font-semibold shrink-0 ${
+                                        u.canRetire
+                                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                          : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      }`}
+                                    >
+                                      {u.canRetire ? 'Free' : 'Locked'}
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
                 </div>
               )}
 

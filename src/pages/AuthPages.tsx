@@ -21,6 +21,7 @@ import { auth } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { apiFetch } from '../lib/api';
 import { canAccessAdminConsole, canAccessMasterConsole } from '../lib/permissions';
 
@@ -397,9 +398,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
         <div className="p-6 bg-obsidian border-b border-white/10">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-gold font-medium uppercase tracking-wider">{brandName}</p>
-            {portal !== 'customer' && (
-              <KeyRound className="w-4 h-4 text-gold" />
-            )}
+            <div className="flex items-center gap-2">
+              {portal !== 'customer' && <LanguageSwitcher variant="dark" />}
+              {portal !== 'customer' && <KeyRound className="w-4 h-4 text-gold" />}
+            </div>
           </div>
           <h1 className="font-display text-2xl font-semibold text-white mt-1">{portalHeading}</h1>
         </div>
@@ -507,7 +509,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {portal === 'customer' && (
+              {(portal === 'customer' || portal === 'admin') && (
                 <>
                   <div className="relative py-1 text-center">
                     <span className="bg-navy-deep px-2 text-[11px] text-ivory/50 relative z-10">
@@ -521,7 +523,9 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     onClick={() => void handleGoogle()}
                     className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer"
                   >
-                    Continue with Google Account
+                    {portal === 'admin'
+                      ? 'Continue with Authorized Owner Google Account'
+                      : 'Continue with Google Account'}
                   </button>
                 </>
               )}
@@ -530,11 +534,11 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 <div className="p-3 rounded-xl bg-obsidian border border-white/10 text-[11px] text-ivory/70 space-y-1">
                   <p className="font-semibold text-gold">Role-Isolated Portal Access</p>
                   {portal === 'master' ? (
-                    <p className="font-mono">Master Admin: master@elitedrive.in / Master123</p>
+                    <p>Sign in with your authorized Platform Master Admin email and provisioned credentials.</p>
                   ) : portal === 'admin' ? (
-                    <p className="font-mono">Business Owner: admin@gmail.com / Admin123</p>
+                    <p>Sign in with your Business Owner Google account or authorized Console Admin credentials.</p>
                   ) : (
-                    <p className="font-mono">Operations Staff: staff@gmail.com / Staff123</p>
+                    <p>Sign in with your branch operations staff credentials provisioned by your administrator.</p>
                   )}
                 </div>
               )}

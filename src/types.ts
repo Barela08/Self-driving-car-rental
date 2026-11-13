@@ -135,12 +135,76 @@ export type CanonicalPaymentStatus =
 
 export type KycStatus =
   | 'Not Started'
+  | 'Uploaded'
   | 'Pending'
   | 'Under Review'
   | 'Verified'
   | 'Rejected'
   | 'Resubmission Required'
   | 'Expired';
+
+export type CustomerDocumentType = 'dl_front' | 'dl_back' | 'aadhaar';
+
+export type CustomerDocumentStatus =
+  | 'Not Uploaded'
+  | 'Uploaded'
+  | 'Pending Verification'
+  | 'Verified'
+  | 'Rejected'
+  | 'Resubmission Required';
+
+export interface CustomerDocumentRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  customerName?: string;
+  docType: CustomerDocumentType;
+  label: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  downloadProxyUrl: string;
+  maskedNumber?: string;
+  licenseNumber?: string;
+  licenseExpiry?: string;
+  status: CustomerDocumentStatus;
+  rejectionReason?: string;
+  reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  uploadedAt: string;
+  updatedAt: string;
+}
+
+export interface BookingConsentsPayload {
+  accuracyConfirmed: boolean;
+  termsAccepted: boolean;
+  privacyAccepted: boolean;
+  rentalRulesAccepted: boolean;
+  cancellationRefundAccepted: boolean;
+  marketingConsent: boolean;
+  policyVersion?: string;
+  language?: SupportedLanguage;
+  acceptedAt?: string;
+}
+
+export interface ConsentRecord {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  userId: string;
+  accuracyConfirmed: boolean;
+  termsAccepted: boolean;
+  privacyAccepted: boolean;
+  rentalRulesAccepted: boolean;
+  cancellationRefundAccepted: boolean;
+  marketingConsent: boolean;
+  policyVersion: string;
+  language: SupportedLanguage;
+  acceptedAt: string;
+  createdAt: string;
+}
 
 export interface City {
   id: string;
@@ -354,6 +418,14 @@ export interface Booking {
   canonicalPaymentStatus?: CanonicalPaymentStatus;
   paymentMethod: 'UPI' | 'Card' | 'NetBanking' | 'Cash';
   kycStatusSnapshot: KycStatus;
+  kycDocumentIds?: string[];
+  kycDocumentsSnapshot?: {
+    dlFrontStatus: CustomerDocumentStatus;
+    dlBackStatus: CustomerDocumentStatus;
+    aadhaarStatus: CustomerDocumentStatus;
+    aadhaarMasked?: string;
+    licenseNumber?: string;
+  };
   quantity?: number;
   assignedVehicleIds?: string[];
   assignedVehicleRegs?: string[];
@@ -361,6 +433,7 @@ export interface Booking {
   holdExpiresAt?: string;
   rentalAgreementAcceptedAt?: string;
   rentalAgreementVersion?: string;
+  consents?: BookingConsentsPayload;
   accessoriesChecklist?: string[];
   pricing: PricingBreakdown;
   handoverOtp?: string;
@@ -530,6 +603,10 @@ export interface KycVerification {
   idProofType?: 'Aadhaar' | 'Passport' | 'Voter ID' | 'PAN';
   idProofNumberMasked?: string;
   documentStorageRef?: string;
+  dlFrontDocId?: string;
+  dlBackDocId?: string;
+  aadhaarDocId?: string;
+  uploadedDocumentsCount?: number;
   selfieCaptured?: boolean;
   branchId?: string;
   branchName?: string;
@@ -549,6 +626,114 @@ export interface KycVerification {
     notes: string;
   }[];
   updatedAt: string;
+}
+
+export interface VehicleModelRecord {
+  id: string;
+  modelKey: string;
+  name: string;
+  brand: string;
+  model: string;
+  category: VehicleCategory;
+  transmission: 'Manual' | 'Automatic';
+  fuelType: 'Petrol' | 'Diesel' | 'Electric' | 'Hybrid' | 'CNG';
+  seats: number;
+  totalQuantity: number;
+  activeQuantity: number;
+  branchIds: string[];
+  unitIds: string[];
+  pricePerDay: number;
+  securityDeposit: number;
+  representativeVehicleId: string;
+  images: string[];
+  isDemo?: boolean;
+  dataOrigin?: 'DEMO' | 'LIVE';
+  updatedAt: string;
+}
+
+export interface VehicleCategoryRecord {
+  id: string;
+  name: VehicleCategory;
+  slug: string;
+  description: string;
+  vehicleCount: number;
+  active: boolean;
+}
+
+export interface MigrationCollectionStat {
+  collection: string;
+  sourceCount: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  duplicates: number;
+  notes?: string;
+  error?: string;
+}
+
+export interface MigrationJobReport {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  actorUid: string;
+  actorEmail?: string;
+  mode: 'server_admin_sdk' | 'client_owner_auth' | 'dry_run_validation';
+  firebaseWriteSucceeded: boolean;
+  backupPath: string;
+  backupCreated: boolean;
+  projectId: string;
+  databaseId: string;
+  totalSourceRecords: number;
+  totalMigrated: number;
+  totalFailed: number;
+  totalSkipped: number;
+  totalDuplicates: number;
+  validationPassed: boolean;
+  validationSummary: string;
+  missingConfiguration?: string | null;
+  collections: MigrationCollectionStat[];
+}
+
+export interface DataManagementEntityItem {
+  id: string;
+  entityType:
+    | 'vehicle'
+    | 'vehicle_unit'
+    | 'vehicle_image'
+    | 'customer'
+    | 'staff'
+    | 'offer'
+    | 'coupon'
+    | 'social_link'
+    | 'cms_setting'
+    | 'kyc_document';
+  title: string;
+  subtitle: string;
+  status: string;
+  branchId?: string;
+  createdAt?: string;
+  isDemo?: boolean;
+  archived?: boolean;
+  hasProtectedHistory?: boolean;
+  protectedReason?: string;
+}
+
+export interface DeleteImpactPreview {
+  entityType: DataManagementEntityItem['entityType'];
+  targetId: string;
+  title: string;
+  actionType: 'permanent_delete' | 'archive_only' | 'blocked';
+  reason: string;
+  requiresDoubleConfirm: boolean;
+  impactCounts: {
+    bookings: number;
+    activeBookings: number;
+    payments: number;
+    invoices: number;
+    kycDocs: number;
+    activeHolds: number;
+    storageFiles: number;
+  };
 }
 
 export interface InsurancePackage {
@@ -926,10 +1111,12 @@ export interface CompanySettings {
 export interface AuthOtpConfig {
   id: string;
   demoOtpEnabled: boolean;
-  demoOtpCodeMasked: string;
+  demoOtpCodeMasked?: string;
   firebasePhoneAuthEnabled: boolean;
   whatsappOtpEnabled: boolean;
   authorizedTestPhones: string[];
+  otpExpirySeconds?: number;
+  otpMaxAttempts?: number;
   environmentMode: 'development' | 'production';
   updatedByUid?: string;
   updatedByName?: string;
@@ -940,21 +1127,27 @@ export interface OtpVerificationLog {
   id: string;
   phone: string;
   purpose: OtpPurpose;
-  channel: 'demo_test_otp' | 'firebase_phone_auth' | 'whatsapp_disabled';
-  outcome: 'sent' | 'verified' | 'rejected' | 'error';
-  details: string;
-  timestamp: string;
+  channel: 'demo_otp' | 'firebase_phone' | 'whatsapp' | 'demo_test_otp' | 'firebase_phone_auth' | 'whatsapp_disabled';
+  status: 'sent' | 'verified' | 'failed' | 'expired' | 'rejected' | 'error';
+  challengeId?: string;
+  userId?: string;
+  isDemoMode?: boolean;
+  detail: string;
+  details?: string;
+  createdAt: string;
+  timestamp?: string;
 }
 
 export interface AiAssistantConfig {
   id: string;
   enabled: boolean;
   bookingEnabled: boolean;
-  provider: 'google_gemini';
+  provider: 'google_gemini' | 'custom_endpoint';
   modelName: string;
   endpointUrl: string;
   systemInstructions: string;
   maxOutputTokens: number;
+  hasApiKeyConfigured?: boolean;
   hasServerSecretKey?: boolean;
   allowedLanguages: SupportedLanguage[];
   updatedByUid?: string;
@@ -964,28 +1157,37 @@ export interface AiAssistantConfig {
 
 export interface AiUsageLog {
   id: string;
-  sessionId: string;
+  sessionId?: string;
   userId?: string;
   language: SupportedLanguage;
   modelName: string;
-  promptSummary: string;
-  toolsCalled: string[];
-  status: 'success' | 'error' | 'blocked';
+  promptPreview: string;
+  promptSummary?: string;
+  toolsUsed: string[];
+  toolsCalled?: string[];
+  status: 'success' | 'fallback' | 'error' | 'blocked';
   errorMessage?: string;
   latencyMs: number;
-  timestamp: string;
+  createdAt: string;
+  timestamp?: string;
 }
 
 export interface PlatformTenantConfig {
   id: string;
-  name: string;
+  businessName: string;
+  name?: string;
   slug: string;
-  city: string;
+  primaryCity: string;
+  city?: string;
   ownerUid?: string;
   ownerEmail: string;
   ownerName: string;
   status: 'active' | 'suspended';
-  features: {
+  aiAssistantEnabled: boolean;
+  demoOtpEnabled: boolean;
+  whatsappAutomationEnabled: boolean;
+  firebasePhoneAuthEnabled: boolean;
+  features?: {
     whatsappEnabled: boolean;
     aiAssistantEnabled: boolean;
     demoOtpEnabled: boolean;
@@ -1165,7 +1367,7 @@ export interface PaymentAuditLog {
   timestamp: string;
 }
 
-export type OtpPurpose = 'registration' | 'login' | 'password_recovery' | 'verification';
+export type OtpPurpose = 'registration' | 'login' | 'password_recovery' | 'verification' | 'ai_booking';
 
 export interface CustomRole {
   id: string;
@@ -1239,7 +1441,7 @@ export interface StaffLoginHistory {
 }
 
 export interface IntegrationStatusItem {
-  key: 'google_maps' | 'razorpay' | 'firebase' | 'whatsapp' | 'fcm_push' | 'gemini_ai';
+  key: 'google_maps' | 'manual_upi' | 'firebase' | 'whatsapp' | 'fcm_push' | 'gemini_ai';
   name: string;
   category: string;
   status: 'Connected' | 'Configuration Required' | 'Disconnected' | 'Error';

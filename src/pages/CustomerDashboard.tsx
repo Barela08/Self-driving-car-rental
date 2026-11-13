@@ -27,8 +27,10 @@ import { apiFetch, formatINR } from '../lib/api';
 import { canAccessAdminConsole, canAccessMasterConsole } from '../lib/permissions';
 import { downloadBookingInvoicePdf, downloadRentalAgreementPdf } from '../lib/pdfExport';
 import { resolveVehicleImage } from '../lib/mediaAssets';
+import { KycDocumentsUploader } from '../components/KycDocumentsUploader';
 import type {
   Booking,
+  CustomerDocumentRecord,
   CustomerReview,
   CustomerSubscription,
   InvoiceRecord,
@@ -49,6 +51,7 @@ interface DashboardPayload {
   privateInfo: UserPrivateInfo | null;
   bookings: Booking[];
   kycList: KycVerification[];
+  customerDocuments?: CustomerDocumentRecord[];
   payments: PaymentRecord[];
   paymentProofs?: PaymentProof[];
   invoices: InvoiceRecord[];
@@ -83,7 +86,7 @@ export const CustomerDashboard: React.FC = () => {
   const [idProofType, setIdProofType] = useState<'Aadhaar' | 'Passport' | 'Voter ID' | 'PAN'>('Aadhaar');
   const [idProofNumber, setIdProofNumber] = useState('');
   const [selfieCaptured, setSelfieCaptured] = useState(false);
-  const [docFileName, setDocFileName] = useState('');
+  const [customerDocuments, setCustomerDocuments] = useState<CustomerDocumentRecord[]>([]);
   const [kycBranchId, setKycBranchId] = useState('');
   const [appointmentDate, setAppointmentDate] = useState('');
   const [appointmentSlot, setAppointmentSlot] = useState('10:00 AM - 12:00 PM');
@@ -123,6 +126,7 @@ export const CustomerDashboard: React.FC = () => {
     try {
       const payload = await apiFetch<DashboardPayload>('/api/me/dashboard');
       setData(payload);
+      setCustomerDocuments(payload.customerDocuments || []);
       setEditName(profile?.displayName || '');
       setEditPhone(payload.privateInfo?.phone || '');
       setMarketingConsent(Boolean(payload.privateInfo?.marketingConsent));
@@ -1072,21 +1076,24 @@ export const CustomerDashboard: React.FC = () => {
                             />
                           </div>
                         </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-ivory/70 mb-1">
-                            Upload DL & ID Scan (Private Encrypted Storage)
-                          </label>
-                          <input
-                            type="file"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            onChange={(e) => setDocFileName(e.target.files?.[0]?.name || '')}
-                            className="w-full text-xs border border-white/15 rounded-lg p-2 bg-obsidian text-ivory"
+                        <div className="p-4 rounded-xl bg-obsidian border border-white/15">
+                          <KycDocumentsUploader
+                            documents={customerDocuments}
+                            onDocumentsChange={(nextDocs) => {
+                              setCustomerDocuments(nextDocs);
+                              void refreshProfile();
+                            }}
+                            licenseNumber={licenseNumber}
+                            licenseExpiry={licenseExpiry}
+                            aadhaarNumber={idProofType === 'Aadhaar' ? idProofNumber : ''}
+                            onLicenseNumberChange={setLicenseNumber}
+                            onLicenseExpiryChange={setLicenseExpiry}
+                            onAadhaarNumberChange={(val) => {
+                              setIdProofType('Aadhaar');
+                              setIdProofNumber(val);
+                            }}
+                            disabled={isPreviewMode}
                           />
-                          {docFileName && (
-                            <p className="text-[11px] text-emerald-400 mt-1">
-                              Selected: {docFileName} (Private encrypted vault)
-                            </p>
-                          )}
                         </div>
                         <label className="flex items-start gap-2 text-xs text-ivory cursor-pointer">
                           <input
