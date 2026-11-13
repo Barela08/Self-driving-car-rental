@@ -23,6 +23,7 @@ import { apiFetch } from '../../lib/api';
 import { resolveVehicleImage } from '../../lib/mediaAssets';
 import { hasAdminPermission } from '../../lib/permissions';
 import { AdminCouponsOffersPanel } from './AdminCouponsOffersPanel';
+import { SOCIAL_PLATFORM_CATALOG, SocialIcon } from '../SocialIcon';
 import type {
   CompanySettings,
   Coupon,
@@ -43,6 +44,7 @@ interface AdminWebsiteSettingsPanelProps {
   roles?: CustomRole[];
   settings: CompanySettings | null;
   initialSubTab?: 'cms' | 'business' | 'coupons_offers' | 'reviews';
+  sectionMode?: 'all' | 'website' | 'branding' | 'social';
   coupons?: Coupon[];
   offers?: Offer[];
   campaigns?: NotificationCampaign[];
@@ -94,6 +96,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
   roles,
   settings,
   initialSubTab = 'cms',
+  sectionMode = 'all',
   coupons = [],
   offers = [],
   campaigns = [],
@@ -119,8 +122,12 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    setSubTab(initialSubTab);
-  }, [initialSubTab]);
+    if (sectionMode === 'branding' || sectionMode === 'social') {
+      setSubTab('cms');
+    } else {
+      setSubTab(initialSubTab);
+    }
+  }, [initialSubTab, sectionMode]);
 
   const loadReviews = useCallback(async () => {
     setReviewsLoading(true);
@@ -180,12 +187,12 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
   const [businessHours, setBusinessHours] = useState('');
 
   // Primary Hub & Delivery Zones
-  const [operatingCityName, setOperatingCityName] = useState('Mumbai');
-  const [operatingCityState, setOperatingCityState] = useState('Maharashtra');
+  const [operatingCityName, setOperatingCityName] = useState('');
+  const [operatingCityState, setOperatingCityState] = useState('');
   const [officeName, setOfficeName] = useState('');
   const [businessAddress, setBusinessAddress] = useState('');
-  const [hubLat, setHubLat] = useState('19.0607');
-  const [hubLng, setHubLng] = useState('72.8362');
+  const [hubLat, setHubLat] = useState('');
+  const [hubLng, setHubLng] = useState('');
   const [serviceRadiusKm, setServiceRadiusKm] = useState('35');
   const [baseDeliveryFee, setBaseDeliveryFee] = useState('299');
   const [perKmDeliveryFee, setPerKmDeliveryFee] = useState('25');
@@ -247,12 +254,12 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
     setWhatsappNumber(settings.whatsappNumber || '');
     setBusinessHours(settings.businessHours || '');
 
-    setOperatingCityName(settings.operatingCityName || 'Mumbai');
-    setOperatingCityState(settings.operatingCityState || 'Maharashtra');
+    setOperatingCityName(settings.operatingCityName || '');
+    setOperatingCityState(settings.operatingCityState || '');
     setOfficeName(settings.officeName || '');
     setBusinessAddress(settings.businessAddress || '');
-    setHubLat(String(settings.hubLat ?? 19.0607));
-    setHubLng(String(settings.hubLng ?? 72.8362));
+    setHubLat(typeof settings.hubLat === 'number' && Number.isFinite(settings.hubLat) ? String(settings.hubLat) : '');
+    setHubLng(typeof settings.hubLng === 'number' && Number.isFinite(settings.hubLng) ? String(settings.hubLng) : '');
     setServiceRadiusKm(String(settings.serviceRadiusKm ?? 35));
     setBaseDeliveryFee(String(settings.baseDeliveryFee ?? 299));
     setPerKmDeliveryFee(String(settings.perKmDeliveryFee ?? 25));
@@ -523,56 +530,58 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
   return (
     <div className="space-y-6 text-xs">
       {/* Sub-Tabs */}
-      <div className="bg-white border border-black/10 rounded-xl p-3 flex flex-wrap gap-2">
-        {canManageWebsite && (
-          <>
+      {(sectionMode === 'all' || sectionMode === 'website') && (
+        <div className="bg-white border border-black/10 rounded-xl p-3 flex flex-wrap gap-2">
+          {canManageWebsite && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSubTab('cms')}
+                className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                  subTab === 'cms' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                {sectionMode === 'website' ? 'Storefront Copy, Policies & FAQs' : 'Website, Brand & CMS'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubTab('business')}
+                className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                  subTab === 'business' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
+                }`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                Business, Tax & Booking Rules
+              </button>
+            </>
+          )}
+          {canManagePromos && (
             <button
               type="button"
-              onClick={() => setSubTab('cms')}
+              onClick={() => setSubTab('coupons_offers')}
               className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                subTab === 'cms' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
+                subTab === 'coupons_offers' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
               }`}
             >
-              <Globe className="w-3.5 h-3.5" />
-              Website, Brand & CMS
+              <Ticket className="w-3.5 h-3.5" />
+              Coupons, Offers & Campaigns
             </button>
+          )}
+          {canManageWebsite && (
             <button
               type="button"
-              onClick={() => setSubTab('business')}
+              onClick={() => setSubTab('reviews')}
               className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                subTab === 'business' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
+                subTab === 'reviews' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
               }`}
             >
-              <MapPin className="w-3.5 h-3.5" />
-              Business, Tax & Booking Rules
+              <MessageSquare className="w-3.5 h-3.5" />
+              Verified Reviews
             </button>
-          </>
-        )}
-        {canManagePromos && (
-          <button
-            type="button"
-            onClick={() => setSubTab('coupons_offers')}
-            className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-              subTab === 'coupons_offers' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
-            }`}
-          >
-            <Ticket className="w-3.5 h-3.5" />
-            Coupons, Offers & Campaigns
-          </button>
-        )}
-        {canManageWebsite && (
-          <button
-            type="button"
-            onClick={() => setSubTab('reviews')}
-            className={`px-3.5 py-2 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-              subTab === 'reviews' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink border border-black/10'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            Verified Reviews
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {subTab === 'reviews' && canManageWebsite && (
         <div className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
@@ -669,13 +678,13 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
         <form onSubmit={(e) => void handleSaveSettings(e)} className="space-y-6">
           {subTab === 'cms' && (
             <>
-              {/* 1. Business Brand, Theme Colors & Identity */}
-              <div className="bg-white border border-black/10 rounded-xl p-6 space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Palette className="w-4 h-4 text-gold-hover" />
-                    <h2 className="font-display text-xl font-semibold">1. Brand Identity, Theme Palette & Logos</h2>
-                  </div>
+              {(sectionMode === 'all' || sectionMode === 'branding') && (
+                <div className="bg-white border border-black/10 rounded-xl p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Palette className="w-4 h-4 text-gold-hover" />
+                      <h2 className="font-display text-xl font-semibold">1. Brand Identity, Theme Palette & Logos</h2>
+                    </div>
                   <span className="text-[11px] font-medium text-slate-muted">
                     Propagates live to Header, Footer, Favicon & CSS Theme Tokens
                   </span>
@@ -828,10 +837,13 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                   </div>
                 </div>
               </div>
+              )}
 
               {/* 2. Office Showcase & Dynamic 12-Platform Social Media Builder */}
+              {(sectionMode === 'all' || sectionMode === 'branding' || sectionMode === 'social') && (
               <div className="grid lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-4 bg-white border border-black/10 rounded-xl p-6 space-y-3">
+                {(sectionMode === 'all' || sectionMode === 'branding') && (
+                <div className={`${sectionMode === 'branding' ? 'lg:col-span-12' : 'lg:col-span-4'} bg-white border border-black/10 rounded-xl p-6 space-y-3`}>
                   <div className="flex items-center justify-between">
                     <h2 className="font-display text-xl font-semibold">2. Showroom Images</h2>
                     <label className="px-3 py-1.5 bg-alabaster border border-black/15 rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer hover:border-gold">
@@ -846,7 +858,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                       />
                     </label>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {officeImages.map((img, i) => (
                       <div key={i} className="relative rounded-lg overflow-hidden border border-black/10">
                         <img
@@ -868,38 +880,75 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                     ))}
                   </div>
                 </div>
+                )}
 
-                <div className="lg:col-span-8 bg-white border border-black/10 rounded-xl p-6 space-y-4">
+                {(sectionMode === 'all' || sectionMode === 'social') && (
+                <div className={`${sectionMode === 'social' ? 'lg:col-span-12' : 'lg:col-span-8'} bg-white border border-black/10 rounded-xl p-6 space-y-4`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Share2 className="w-4 h-4 text-gold-hover" />
                       <h2 className="font-display text-xl font-semibold">
-                        3. Social Media Builder ({socialProfiles.filter((s) => s.enabled).length} Active)
+                        Social Media Icon Builder ({socialProfiles.filter((s) => s.enabled).length} Active)
                       </h2>
                     </div>
                     <span className="text-[11px] text-slate-muted">
-                      Only enabled links appear in Customer Footer & Contact sections.
+                      Select an icon below, enter your URL, and Save to publish to the Customer Footer & Contact sections.
                     </span>
                   </div>
 
+                  {/* Clickable Visual 12-Platform Icon Selector */}
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-muted">
+                      1. Choose Platform Icon
+                    </p>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                      {SOCIAL_PLATFORM_CATALOG.map((plat) => {
+                        const selected = newSocialPlatform === plat.platform;
+                        return (
+                          <button
+                            key={plat.platform}
+                            type="button"
+                            onClick={() => {
+                              setNewSocialPlatform(plat.platform);
+                              setNewSocialLabel(plat.label);
+                            }}
+                            className={`p-2.5 rounded-xl border flex flex-col items-center gap-1.5 text-center transition-colors cursor-pointer ${
+                              selected
+                                ? 'bg-obsidian text-gold border-obsidian'
+                                : 'bg-alabaster text-ink border-black/10 hover:border-gold'
+                            }`}
+                          >
+                            <SocialIcon platform={plat.platform} className="w-5 h-5" />
+                            <span className="text-[11px] font-semibold leading-tight truncate w-full">
+                              {plat.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Add Social Link Form */}
-                  <div className="grid sm:grid-cols-12 gap-2 p-3 rounded-xl bg-alabaster border border-black/10">
-                    <select
-                      value={newSocialPlatform}
-                      onChange={(e) => {
-                        const key = e.target.value as SocialPlatformKey;
-                        setNewSocialPlatform(key);
-                        const match = SOCIAL_PLATFORMS.find((p) => p.key === key);
-                        if (match) setNewSocialLabel(match.label);
-                      }}
-                      className="sm:col-span-3 px-2.5 py-2 bg-white border border-black/15 rounded-lg font-medium"
-                    >
-                      {SOCIAL_PLATFORMS.map((p) => (
-                        <option key={p.key} value={p.key}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="grid sm:grid-cols-12 gap-2 p-3 rounded-xl bg-alabaster border border-black/10 items-center">
+                    <div className="sm:col-span-3 flex items-center gap-2 px-2.5 py-2 bg-white border border-black/15 rounded-lg">
+                      <SocialIcon platform={newSocialPlatform} className="w-4 h-4 text-gold-hover shrink-0" />
+                      <select
+                        value={newSocialPlatform}
+                        onChange={(e) => {
+                          const key = e.target.value as SocialPlatformKey;
+                          setNewSocialPlatform(key);
+                          const match = SOCIAL_PLATFORMS.find((p) => p.key === key);
+                          if (match) setNewSocialLabel(match.label);
+                        }}
+                        className="w-full bg-transparent font-medium focus:outline-none"
+                      >
+                        {SOCIAL_PLATFORMS.map((p) => (
+                          <option key={p.key} value={p.key}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <input
                       type="text"
                       placeholder="Display Label"
@@ -936,8 +985,11 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                             item.enabled ? 'bg-white border-black/10' : 'bg-alabaster/70 border-black/10 opacity-70'
                           }`}
                         >
-                          <div className="sm:col-span-2 font-semibold uppercase tracking-wider text-[11px] text-ink">
-                            {item.platform}
+                          <div className="sm:col-span-2 flex items-center gap-2 font-semibold uppercase tracking-wider text-[11px] text-ink">
+                            <span className="p-1.5 rounded-lg bg-alabaster border border-black/10 text-gold-hover shrink-0">
+                              <SocialIcon platform={item.platform} className="w-4 h-4" />
+                            </span>
+                            <span className="truncate">{item.platform}</span>
                           </div>
                           <input
                             type="text"
@@ -1008,17 +1060,19 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                     </div>
                   )}
                 </div>
+                )}
               </div>
+              )}
 
-              {/* 4. Multilingual Storefront Copy, Policies, How It Works & FAQs */}
-              <div className="bg-white border border-black/10 rounded-xl p-6 space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Languages className="w-4 h-4 text-gold-hover" />
-                    <h2 className="font-display text-xl font-semibold">
-                      4. Multilingual Storefront Copy, Policies & Help Content
-                    </h2>
-                  </div>
+              {(sectionMode === 'all' || sectionMode === 'website') && (
+                <div className="bg-white border border-black/10 rounded-xl p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Languages className="w-4 h-4 text-gold-hover" />
+                      <h2 className="font-display text-xl font-semibold">
+                        4. Multilingual Storefront Copy, Policies & Help Content
+                      </h2>
+                    </div>
                   <div className="flex items-center gap-1 p-1 bg-alabaster rounded-lg border border-black/10">
                     {CMS_LANGUAGES.map((langOpt) => (
                       <button
@@ -1282,6 +1336,7 @@ export const AdminWebsiteSettingsPanel: React.FC<AdminWebsiteSettingsPanelProps>
                   ))}
                 </div>
               </div>
+              )}
             </>
           )}
 

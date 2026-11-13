@@ -9,10 +9,17 @@ interface AdminRolesPanelProps {
   actor: UserProfile;
   roles: CustomRole[];
   users: UserProfile[];
+  apiBase?: '/api/admin' | '/api/master';
   onReload: () => Promise<void>;
 }
 
-export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, users, onReload }) => {
+export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({
+  actor,
+  roles,
+  users,
+  apiBase = '/api/admin',
+  onReload,
+}) => {
   const canManageRoles =
     actor.role === 'super_admin' ||
     hasAdminPermission(actor, 'manage_roles', roles) ||
@@ -76,13 +83,13 @@ export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, 
     setBusy(true);
     try {
       if (creating) {
-        await apiFetch('/api/admin/roles', {
+        await apiFetch(`${apiBase}/roles`, {
           method: 'POST',
           body: JSON.stringify({ name, description, branchScope, color, permissions: selectedPerms }),
         });
         toast.success(`Created role "${name}"`);
       } else if (editingRole) {
-        await apiFetch(`/api/admin/roles/${editingRole.id}`, {
+        await apiFetch(`${apiBase}/roles/${editingRole.id}`, {
           method: 'PUT',
           body: JSON.stringify({ name, description, branchScope, color, permissions: selectedPerms }),
         });
@@ -101,7 +108,7 @@ export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, 
   const handleDuplicate = async (role: CustomRole) => {
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/roles/${role.id}/duplicate`, { method: 'POST' });
+      await apiFetch(`${apiBase}/roles/${role.id}/duplicate`, { method: 'POST' });
       toast.success(`Duplicated "${role.name}"`);
       await onReload();
     } catch (err: any) {
@@ -115,7 +122,7 @@ export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, 
     if (role.slug === 'super_admin') return;
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/roles/${role.id}`, {
+      await apiFetch(`${apiBase}/roles/${role.id}`, {
         method: 'PUT',
         body: JSON.stringify({ active: !role.active }),
       });
@@ -138,7 +145,7 @@ export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, 
     }
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/roles/${role.id}`, { method: 'DELETE' });
+      await apiFetch(`${apiBase}/roles/${role.id}`, { method: 'DELETE' });
       toast.success(`Deleted role "${role.name}"`);
       await onReload();
     } catch (err: any) {
@@ -152,7 +159,7 @@ export const AdminRolesPanel: React.FC<AdminRolesPanelProps> = ({ actor, roles, 
     if (!deleteTarget || !reassignRoleId) return;
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/roles/${deleteTarget.role.id}?reassignRoleId=${encodeURIComponent(reassignRoleId)}`, {
+      await apiFetch(`${apiBase}/roles/${deleteTarget.role.id}?reassignRoleId=${encodeURIComponent(reassignRoleId)}`, {
         method: 'DELETE',
         body: JSON.stringify({ reassignRoleId }),
       });

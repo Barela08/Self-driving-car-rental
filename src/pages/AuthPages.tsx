@@ -8,7 +8,6 @@ import {
 import { toast } from 'sonner';
 import {
   ArrowRight,
-  Info,
   KeyRound,
   Lock,
   Mail,
@@ -55,9 +54,6 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   const brandName = settings?.brandName || settings?.companyName || 'EliteDrive';
 
   const [mode, setMode] = useState<'login' | 'register' | 'reset' | 'otp_login'>('login');
-  const [otpChannel, setOtpChannel] = useState<'firebase' | 'server_demo'>(
-    authOtpConfig.firebasePhoneAuthEnabled ? 'firebase' : 'server_demo'
-  );
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -68,19 +64,22 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   const [whatsappConsent, setWhatsappConsent] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  // Server / Demo OTP state
+  // Unified OTP state
   const [otpChallengeId, setOtpChallengeId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
-  const [isDemoEligibleNotice, setIsDemoEligibleNotice] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [regOtpVerified, setRegOtpVerified] = useState(false);
 
-  // Firebase Phone Auth state
+  // Firebase Phone Auth invisible verifier state
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
   const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
   const [firebaseConfirmation, setFirebaseConfirmation] = useState<ConfirmationResult | null>(null);
-  const [firebaseOtpCode, setFirebaseOtpCode] = useState('');
+
+  const cooldownDefault = Math.max(15, Number(authOtpConfig.otpResendCooldownSeconds || 60));
+  const useServerOtpPrimary = Boolean(
+    authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled || !authOtpConfig.firebasePhoneAuthEnabled
+  );
 
   useEffect(() => {
     if (otpCooldown <= 0) return;
@@ -136,29 +135,84 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       const res = await apiFetch<{
         challengeId: string;
         cooldownSeconds: number;
-        deliveryChannel?: string;
-        isDemoOtpEligible?: boolean;
         message: string;
       }>('/api/auth/otp/send', {
         method: 'POST',
         body: JSON.stringify({ phone: phone.trim(), purpose, email: email.trim() || undefined }),
       });
       setOtpChallengeId(res.challengeId);
-      setOtpCooldown(res.cooldownSeconds || 60);
-      setIsDemoEligibleNotice(Boolean(res.isDemoOtpEligible));
+      setOtpCooldown(res.cooldownSeconds || cooldownDefault);
       setOtpNotice(res.message);
       toast.success(res.message);
     } catch (err: any) {
-      toast.error(err.message || 'Unable to initiate verification');
+      toast.error(err.message || 'Unable to send verification code');
     } finally {
       setBusy(false);
     }
   };
 
-  const handleVerifyServerOtpLogin = async (e: React.FormEvent) => {
+  const handleUnifiedSendOtp = async () => {
+    if (!phone.trim()) {
+      toast.error('Please enter your mobile number with country code (e.g. +91 98200 11223).');
+      return;
+    }
+    if (!useServerOtpPrimary && authOtpConfig.firebasePhoneAuthEnabled) {
+      setBusy(true);
+      try {
+        const formattedPhone = normalizeE164Phone(phone.trim());
+        if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
+          recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
+            size: 'invisible',
+          });
+        }
+        if (!recaptchaVerifierRef.current) {
+          throw new Error('Verification service could not initialize.');
+        }
+        const confirmation = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifierRef.current);
+        setFirebaseConfirmation(confirmation);
+        setOtpCooldown(cooldownDefault);
+        setOtpNotice(`Verification code sent to ${formattedPhone}.`);
+        toast.success(`Verification code sent to ${formattedPhone}`);
+      } catch (err: any) {
+        toast.error(err.message || 'Unable to send verification code. Please check your mobile number.');
+        try {
+          recaptchaVerifierRef.current?.clear();
+        } catch {
+          // Ignore cleanup
+        }
+        recaptchaVerifierRef.current = null;
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    await handleRequestServerOtp('login');
+  };
+
+  const handleUnifiedVerifyOtpLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otpChallengeId || otpCode.trim().length !== 6) {
-      toast.error('Request verification first and enter the 6-digit code.');
+    if (otpCode.trim().length !== 6) {
+      toast.error('Please enter the 6-digit verification code.');
+      return;
+    }
+    if (firebaseConfirmation) {
+      setBusy(true);
+      try {
+        const cred = await firebaseConfirmation.confirm(otpCode.trim());
+        const idToken = await cred.user.getIdToken();
+        const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
+        if (logged) {
+          navigate('/dashboard');
+        }
+      } catch (err: any) {
+        toast.error(err.message || 'Invalid verification code. Please try again.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (!otpChallengeId) {
+      toast.error('Please request a verification code first.');
       return;
     }
     setBusy(true);
@@ -180,63 +234,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
         toast.success(`Login Successful — Welcome, ${res.profile.displayName}`);
         navigate('/dashboard');
       } else {
-        toast.info('Verification confirmed, but no registered account matched this mobile number yet.');
+        toast.info('Mobile number verified, but no registered account matched this number yet.');
       }
     } catch (err: any) {
-      toast.error(err.message || 'OTP verification failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSendFirebasePhoneOtp = async () => {
-    if (!phone.trim()) {
-      toast.error('Enter your mobile number with country code (e.g. +91 98200 11223).');
-      return;
-    }
-    setBusy(true);
-    try {
-      const formattedPhone = normalizeE164Phone(phone.trim());
-      if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
-        recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
-          size: 'invisible',
-        });
-      }
-      if (!recaptchaVerifierRef.current) {
-        throw new Error('reCAPTCHA container could not initialize.');
-      }
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifierRef.current);
-      setFirebaseConfirmation(confirmation);
-      toast.success(`Verification SMS sent via Firebase to ${formattedPhone}`);
-    } catch (err: any) {
-      toast.error(err.message || 'Firebase Phone verification could not send SMS. Check test phone or domain settings.');
-      try {
-        recaptchaVerifierRef.current?.clear();
-      } catch {
-        // Ignore cleanup
-      }
-      recaptchaVerifierRef.current = null;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleConfirmFirebasePhoneOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseConfirmation || firebaseOtpCode.trim().length < 6) {
-      toast.error('Enter the 6-digit SMS code sent to your phone.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const cred = await firebaseConfirmation.confirm(firebaseOtpCode.trim());
-      const idToken = await cred.user.getIdToken();
-      const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
-      if (logged) {
-        navigate('/dashboard');
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Invalid Firebase verification code');
+      toast.error(err.message || 'Invalid verification code');
     } finally {
       setBusy(false);
     }
@@ -426,9 +427,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     setOtpChallengeId('');
                     setOtpCode('');
                     setOtpNotice('');
-                    setIsDemoEligibleNotice(false);
                     setFirebaseConfirmation(null);
-                    setFirebaseOtpCode('');
                   }}
                   className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                     mode === 'otp_login' ? 'bg-gold text-obsidian' : 'text-ivory/65 hover:text-white'
@@ -509,7 +508,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {(portal === 'customer' || portal === 'admin') && (
+              {portal === 'customer' && (
                 <>
                   <div className="relative py-1 text-center">
                     <span className="bg-navy-deep px-2 text-[11px] text-ivory/50 relative z-10">
@@ -523,9 +522,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                     onClick={() => void handleGoogle()}
                     className="w-full py-2.5 px-4 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-xl hover:border-gold transition-colors cursor-pointer"
                   >
-                    {portal === 'admin'
-                      ? 'Continue with Authorized Owner Google Account'
-                      : 'Continue with Google Account'}
+                    Continue with Google Account
                   </button>
                 </>
               )}
@@ -534,9 +531,9 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 <div className="p-3 rounded-xl bg-obsidian border border-white/10 text-[11px] text-ivory/70 space-y-1">
                   <p className="font-semibold text-gold">Role-Isolated Portal Access</p>
                   {portal === 'master' ? (
-                    <p>Sign in with your authorized Platform Master Admin email and provisioned credentials.</p>
+                    <p>Sign in with your authorized Platform Admin email and provisioned credentials.</p>
                   ) : portal === 'admin' ? (
-                    <p>Sign in with your Business Owner Google account or authorized Console Admin credentials.</p>
+                    <p>Sign in with your authorized Business Owner email and password.</p>
                   ) : (
                     <p>Sign in with your branch operations staff credentials provisioned by your administrator.</p>
                   )}
@@ -545,168 +542,104 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
             </form>
           )}
 
-          {/* Customer OTP / Phone Access */}
+          {/* Customer Mobile OTP Sign-In */}
           {mode === 'otp_login' && portal === 'customer' && (
-            <div className="space-y-4 text-xs">
-              {(authOtpConfig.firebasePhoneAuthEnabled &&
-                (authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled)) && (
-                <div className="grid grid-cols-2 p-1 bg-obsidian border border-white/10 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setOtpChannel('firebase')}
-                    className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
-                      otpChannel === 'firebase' ? 'bg-navy-card text-gold border border-gold/30' : 'text-ivory/60'
-                    }`}
-                  >
-                    {t('auth.firebasePhoneTab')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOtpChannel('server_demo')}
-                    className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
-                      otpChannel === 'server_demo' ? 'bg-navy-card text-gold border border-gold/30' : 'text-ivory/60'
-                    }`}
-                  >
-                    {authOtpConfig.demoOtpEnabled ? 'Demo Verification' : 'WhatsApp OTP'}
-                  </button>
-                </div>
-              )}
+            <form onSubmit={(e) => void handleUnifiedVerifyOtpLogin(e)} className="space-y-4 text-xs">
+              <div ref={recaptchaContainerRef} />
 
-              {otpChannel === 'firebase' && authOtpConfig.firebasePhoneAuthEnabled ? (
-                <form onSubmit={(e) => void handleConfirmFirebasePhoneOtp(e)} className="space-y-4">
-                  <p className="text-ivory/70 leading-relaxed">
-                    Sign in via Firebase Phone Authentication (SMS / configured test numbers).
-                  </p>
+              {!(otpChallengeId || firebaseConfirmation) ? (
+                <>
                   <div>
                     <label className="block font-semibold text-ivory/70 mb-1">
                       Mobile Number (+91)
                     </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="tel"
-                        required
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="+91 98200 11223"
-                        className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
-                      />
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void handleSendFirebasePhoneOtp()}
-                        className="px-3.5 py-2 bg-gold text-obsidian font-semibold rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                      >
-                        {firebaseConfirmation ? 'Resend SMS' : 'Send SMS'}
-                      </button>
-                    </div>
+                    <input
+                      type="tel"
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+91 98200 11223"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
+                    />
                   </div>
-                  <div ref={recaptchaContainerRef} />
-
-                  {firebaseConfirmation && (
-                    <div>
-                      <label className="block font-semibold text-ivory/70 mb-1">
-                        Enter 6-Digit SMS Verification Code
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={6}
-                        value={firebaseOtpCode}
-                        onChange={(e) => setFirebaseOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="6-digit code"
-                        className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
-                      />
-                    </div>
-                  )}
-
                   <button
-                    type="submit"
-                    disabled={busy || !firebaseConfirmation || firebaseOtpCode.length < 6}
+                    type="button"
+                    disabled={busy || !phone.trim()}
+                    onClick={() => void handleUnifiedSendOtp()}
                     className="w-full py-3 px-4 bg-gold text-obsidian text-sm font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Smartphone className="w-4 h-4" />
-                    {busy ? 'Verifying...' : 'Verify & Sign In'}
+                    {busy ? 'Sending Code...' : 'Send OTP'}
                   </button>
-                </form>
+                </>
               ) : (
-                <form onSubmit={(e) => void handleVerifyServerOtpLogin(e)} className="space-y-4">
-                  {authOtpConfig.demoOtpEnabled && (
-                    <div className="p-3 rounded-xl bg-amber-950/35 border border-amber-500/35 text-amber-200 flex items-start gap-2">
-                      <Info className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                      <span>{t('auth.demoOtpBanner')}</span>
+                <>
+                  <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-obsidian border border-white/10">
+                    <div>
+                      <p className="text-[11px] text-ivory/55">Verification code sent to</p>
+                      <p className="font-mono font-semibold text-white">{phone}</p>
                     </div>
-                  )}
-
-                  <div>
-                    <label className="block font-semibold text-ivory/70 mb-1">
-                      Registered Mobile Number (+91)
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="tel"
-                        required
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="+91 98200 11223"
-                        className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
-                      />
-                      <button
-                        type="button"
-                        disabled={busy || otpCooldown > 0}
-                        onClick={() => void handleRequestServerOtp('login')}
-                        className="px-3.5 py-2 bg-gold text-obsidian font-semibold rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                      >
-                        {otpCooldown > 0
-                          ? `Wait ${otpCooldown}s`
-                          : otpChallengeId
-                            ? 'Re-Issue'
-                            : authOtpConfig.demoOtpEnabled
-                              ? 'Request Code'
-                              : 'Send OTP'}
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOtpChallengeId('');
+                        setFirebaseConfirmation(null);
+                        setOtpCode('');
+                        setOtpNotice('');
+                        setOtpCooldown(0);
+                      }}
+                      className="text-xs font-semibold text-gold hover:text-gold-bright underline cursor-pointer"
+                    >
+                      Change Mobile Number
+                    </button>
                   </div>
 
                   {otpNotice && (
-                    <p
-                      className={`text-[11px] rounded-xl p-2.5 border ${
-                        isDemoEligibleNotice
-                          ? 'bg-amber-950/35 border-amber-500/35 text-amber-200'
-                          : 'bg-obsidian border-white/10 text-ivory/75'
-                      }`}
-                    >
+                    <p className="text-[11px] rounded-xl p-2.5 border bg-obsidian border-white/10 text-ivory/75">
                       {otpNotice}
                     </p>
                   )}
 
-                  {otpChallengeId && (
-                    <div>
-                      <label className="block font-semibold text-ivory/70 mb-1">
-                        Enter 6-Digit Verification Code
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={6}
-                        value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="6-digit code"
-                        className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block font-semibold text-ivory/70 mb-1">
+                      Enter 6-Digit Verification Code
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="6-digit code"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
+                    />
+                  </div>
 
                   <button
                     type="submit"
-                    disabled={busy || !otpChallengeId || otpCode.length !== 6}
+                    disabled={busy || otpCode.length !== 6}
                     className="w-full py-3 px-4 bg-gold text-obsidian text-sm font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <ShieldCheck className="w-4 h-4" />
-                    {busy ? 'Verifying...' : 'Verify & Sign In'}
+                    {busy ? 'Verifying...' : 'Verify & Continue'}
                   </button>
-                </form>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-ivory/55 font-mono">
+                      {otpCooldown > 0 ? `Resend code in ${otpCooldown}s` : 'Did not receive the code?'}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy || otpCooldown > 0}
+                      onClick={() => void handleUnifiedSendOtp()}
+                      className="font-semibold text-gold hover:text-gold-bright disabled:opacity-45 cursor-pointer"
+                    >
+                      Resend Code
+                    </button>
+                  </div>
+                </>
               )}
-            </div>
+            </form>
           )}
 
           {/* Customer Registration */}
@@ -929,6 +862,9 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
               </div>
             </form>
           )}
+          <div className="pt-3 border-t border-white/10 text-center text-[11px] text-ivory/50">
+            A product of <span className="text-gold font-semibold">HackifyPro</span>
+          </div>
         </div>
       </div>
     </div>

@@ -91,6 +91,9 @@ import type {
   BookingStatus,
   BookingVehicleAssignment,
   Branch,
+  BranchDeletePreview,
+  CmsAreaKey,
+  CmsPageRecord,
   CompanySettings,
   ConsentRecord,
   ContactEnquiry,
@@ -124,15 +127,16 @@ import type {
   Vehicle,
   VehicleMaintenanceRecord,
 } from './src/types.ts';
+import firebaseConfigJson from './firebase-applet-config.json' with { type: 'json' };
 
 function buildVirtualCentralHub(settings: Partial<CompanySettings>): Branch {
   return {
     id: 'branch-central-hub',
     code: 'HUB-01',
-    cityId: settings.operatingCityId || 'city-mumbai',
-    cityName: settings.operatingCityName || 'Mumbai',
+    cityId: settings.operatingCityId || '',
+    cityName: settings.operatingCityName || '',
     name: settings.officeName || `${settings.companyName || 'EliteDrive'} Flagship Hub`,
-    address: settings.businessAddress || settings.operatingCityName || 'Mumbai',
+    address: settings.businessAddress || settings.operatingCityName || '',
     lat: Number(settings.hubLat ?? 19.0607),
     lng: Number(settings.hubLng ?? 72.8362),
     openingHours: settings.businessHours || '06:00 AM – 11:30 PM',
@@ -179,20 +183,285 @@ function sanitizeProofsForClient(proofs: PaymentProof[]): PaymentProof[] {
   return proofs.map(sanitizeProofForClient);
 }
 
-function buildIntegrationsStatus(waConfig: any, checksMap: Record<string, any> = {}): IntegrationStatusItem[] {
+const CMS_AREA_DEFINITIONS: Array<{ key: CmsAreaKey; label: string; description: string; sortOrder: number }> = [
+  { key: 'hero', label: 'Homepage Hero', description: 'Main hero title, subtitle, and welcome callout shown at top of storefront.', sortOrder: 1 },
+  { key: 'featured_fleet', label: 'Featured Fleet Intro', description: 'Introductory section heading and copy above curated fleet listings.', sortOrder: 2 },
+  { key: 'categories', label: 'Fleet Categories', description: 'Category spotlight section introduction for Hatchbacks, Sedans, SUVs, and EVs.', sortOrder: 3 },
+  { key: 'offers', label: 'Offers & Announcements', description: 'Active seasonal promotions and promotional discount banner copy.', sortOrder: 4 },
+  { key: 'why_choose', label: 'Why Choose Us (Benefits & Trust)', description: 'Key reliability highlights, safety assurances, and doorstep delivery pillars.', sortOrder: 5 },
+  { key: 'how_it_works', label: 'How It Works', description: 'Step-by-step customer self-drive rental workflow overview.', sortOrder: 6 },
+  { key: 'experience', label: 'Self-Drive Experience', description: 'Concierge handover, GPS security, and driving experience narrative.', sortOrder: 7 },
+  { key: 'services', label: 'Concierge & Add-On Services', description: 'Doorstep delivery, outstation permits, and additional rental services.', sortOrder: 8 },
+  { key: 'testimonials', label: 'Verified Testimonials', description: 'Customer feedback and rating stories published on the homepage.', sortOrder: 9 },
+  { key: 'faqs', label: 'Frequently Asked Questions', description: 'Frequently asked questions displayed on the policies and help pages.', sortOrder: 10 },
+  { key: 'contact', label: 'Contact & Support', description: 'Support channels, hub contact notes, and enquiry lead-in text.', sortOrder: 11 },
+  { key: 'footer', label: 'Footer Content', description: 'Brand tagline, HackifyPro product attribution, and footer notes.', sortOrder: 12 },
+  { key: 'about', label: 'About Us', description: 'Company background, quality commitment, and HackifyPro mobility ethos.', sortOrder: 13 },
+  { key: 'policies', label: 'Rental Policies & Terms', description: 'Terms & Conditions, Privacy, Cancellation/Refund, and Rental Eligibility copy.', sortOrder: 14 },
+];
+
+function buildDefaultCmsRecord(
+  key: CmsAreaKey,
+  label: string,
+  description: string,
+  sortOrder: number,
+  settings: Partial<CompanySettings>,
+  now: string
+): CmsPageRecord {
+  const company = settings.companyName || 'EliteDrive';
+  const baseMap: Record<CmsAreaKey, { title: string; subtitle?: string; body: string; ctaLabel?: string; ctaLink?: string }> = {
+    hero: {
+      title: settings.heroBannerHeadline || `Precision Self-Drive Mobility by ${company}`,
+      subtitle: settings.heroBannerSubcopy || 'Company-owned flagship fleet with doorstep delivery, transparent tariffs, and digital document verification.',
+      body: 'Choose your pickup location, dates, and drive with complete peace of mind.',
+      ctaLabel: 'Browse Fleet',
+      ctaLink: '/vehicles',
+    },
+    featured_fleet: {
+      title: settings.fleetSectionHeading || 'Curated Self-Drive Fleet',
+      subtitle: 'Sanitized, GPS-secured vehicles inspected before every handover.',
+      body: 'Browse hatchbacks, sedans, SUVs, and EVs maintained strictly in-house.',
+    },
+    categories: {
+      title: 'Explore by Vehicle Category',
+      subtitle: 'City hatchbacks, executive sedans, 7-seater MPVs, and electric SUVs.',
+      body: 'Every category includes comprehensive inspection checks and transparent km allowances.',
+    },
+    offers: {
+      title: 'Seasonal Self-Drive Offers',
+      subtitle: 'Transparent fares with verified seasonal promo codes.',
+      body: 'Check active promotional offers on the fleet catalog and apply eligible codes during checkout.',
+    },
+    why_choose: {
+      title: `Why Drivers Choose ${company}`,
+      subtitle: 'Zero hidden fees, verified fleet maintenance, and dedicated support.',
+      body: '24/7 roadside assistance, comprehensive insurance options, and fast security deposit refunds.',
+    },
+    how_it_works: {
+      title: 'How Self-Drive Rental Works',
+      subtitle: 'Four straightforward steps from booking to handover.',
+      body: '1. Select your pickup location and rental window.\n2. Upload Driving Licence & Aadhaar for verification.\n3. Confirm return location and complete Manual UPI payment.\n4. Pick up at hub or receive doorstep delivery.',
+    },
+    experience: {
+      title: 'The Self-Drive Concierge Experience',
+      subtitle: 'Seamless pickup and doorstep handover tailored to your schedule.',
+      body: 'Digital inspection logs, verified condition checklists, and responsive support throughout your drive.',
+    },
+    services: {
+      title: 'Doorstep Delivery & Fleet Services',
+      subtitle: 'Flexible pickup hubs, doorstep handovers, and optional return locations.',
+      body: 'Choose hub pickup or doorstep delivery at checkout, and select whether to return to the same hub or a different location.',
+    },
+    testimonials: {
+      title: 'Verified Customer Stories',
+      subtitle: 'Rated highly across business and leisure trips.',
+      body: (settings.testimonials || []).map((t) => `"${t.quote}" — ${t.name} (${t.city})`).join('\n\n') || 'Trusted by thousands of self-drive renters.',
+    },
+    faqs: {
+      title: 'Frequently Asked Questions',
+      subtitle: 'Everything you need to know before your trip.',
+      body: (settings.faqs || []).map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n') || 'Contact concierge support for trip assistance.',
+    },
+    contact: {
+      title: 'Contact Concierge & Support',
+      subtitle: 'Reach our fleet team for custom schedules or active trip help.',
+      body: `Phone: ${settings.supportPhone || '+91 98200 11223'}\nEmail: ${settings.supportEmail || 'concierge@elitedrive.in'}\nHours: ${settings.businessHours || '06:00 AM – 11:30 PM'}`,
+    },
+    footer: {
+      title: company,
+      subtitle: settings.footerTagline || 'Precision self-drive mobility. A product of HackifyPro.',
+      body: 'A product of HackifyPro. All rights reserved.',
+    },
+    about: {
+      title: `About ${company}`,
+      subtitle: 'Engineered mobility — A product of HackifyPro.',
+      body: settings.aboutSummary || `${company} provides company-owned, meticulously maintained self-drive vehicles with transparent pricing and digital verification. Built and powered by HackifyPro.`,
+    },
+    policies: {
+      title: 'Rental Policies, Terms & Eligibility',
+      subtitle: 'Standard self-drive agreement, privacy, cancellation slabs, and driver rules.',
+      body: [
+        settings.termsSummary || 'Drivers must hold a valid original Driving Licence and Aadhaar card and adhere to speed and traffic regulations.',
+        settings.privacySummary || 'Verification documents are stored securely for statutory rental compliance and never sold to third parties.',
+        settings.cancellationSummary || 'Free cancellation up to 24 hours prior to scheduled pickup.',
+        settings.rentalRulesSummary || 'Minimum age 21 with valid original Driving Licence. Smoking and unauthorized commercial use are prohibited.',
+      ].filter(Boolean).join('\n\n'),
+    },
+  };
+
+  const def = baseMap[key];
+  return {
+    key,
+    label,
+    description,
+    published: true,
+    sortOrder,
+    updatedAt: now,
+    publishedAt: now,
+    content: {
+      en: { ...def },
+      hi: { ...def },
+      mr: { ...def },
+    },
+  };
+}
+
+async function seedAndLoadCmsPages(): Promise<CmsPageRecord[]> {
+  const [cmsSnap, settingsSnap] = await Promise.all([
+    db.collection('cms_pages').get(),
+    db.collection('company_settings').doc('default').get(),
+  ]);
+  const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
+  const existingMap = new Map<string, CmsPageRecord>();
+  for (const d of cmsSnap.docs) {
+    existingMap.set(d.id, d.data() as CmsPageRecord);
+  }
+  const now = new Date().toISOString();
+  const result: CmsPageRecord[] = [];
+  for (const def of CMS_AREA_DEFINITIONS) {
+    const existing = existingMap.get(def.key) as any;
+    if (existing) {
+      const normalized: CmsPageRecord = {
+        key: def.key,
+        label: existing.label || def.label,
+        description: existing.description || def.description,
+        published: typeof existing.published === 'boolean' ? existing.published : true,
+        sortOrder: typeof existing.sortOrder === 'number' ? existing.sortOrder : def.sortOrder,
+        content: existing.content || existing.locales || buildDefaultCmsRecord(def.key, def.label, def.description, def.sortOrder, settings, now).content,
+        updatedByUid: existing.updatedByUid,
+        updatedByName: existing.updatedByName,
+        updatedAt: existing.updatedAt || now,
+        publishedAt: existing.publishedAt ?? (existing.published !== false ? (existing.updatedAt || now) : null),
+      };
+      if (!existing.content && existing.locales) {
+        await db.collection('cms_pages').doc(def.key).set(normalized);
+      }
+      result.push(normalized);
+    } else {
+      const created = buildDefaultCmsRecord(def.key, def.label, def.description, def.sortOrder, settings, now);
+      await db.collection('cms_pages').doc(def.key).set(created);
+      result.push(created);
+    }
+  }
+  return result.sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+async function syncCmsAreaToSettings(record: CmsPageRecord) {
+  if (!record.published) return;
+  const en = record.content?.en;
+  if (!en) return;
+  const patch: Record<string, any> = { updatedAt: new Date().toISOString() };
+  if (record.key === 'hero') {
+    if (en.title) patch.heroBannerHeadline = en.title;
+    if (en.subtitle) patch.heroBannerSubcopy = en.subtitle;
+  } else if (record.key === 'featured_fleet') {
+    if (en.title) patch.fleetSectionHeading = en.title;
+  } else if (record.key === 'about') {
+    if (en.body) patch.aboutSummary = en.body;
+  } else if (record.key === 'footer') {
+    if (en.subtitle) patch.footerTagline = en.subtitle;
+  } else if (record.key === 'policies') {
+    if (en.body) patch.termsSummary = en.body;
+  }
+  if (Object.keys(patch).length > 1) {
+    await db.collection('company_settings').doc('default').set(patch, { merge: true });
+  }
+}
+
+async function computeBranchDeletePreview(branchId: string): Promise<BranchDeletePreview | null> {
+  const brSnap = await db.collection('branches').doc(branchId).get();
+  if (!brSnap.exists) return null;
+  const branch = brSnap.data() as Branch;
+
+  const [vehSnap, bkSnap, holdSnap, usersSnap] = await Promise.all([
+    db.collection('vehicles').where('branchId', '==', branchId).get(),
+    db.collection('bookings').where('branchId', '==', branchId).get(),
+    db.collection('inventory_holds').where('status', '==', 'Active').get(),
+    db.collection('users').get(),
+  ]);
+
+  const activeVehicles = vehSnap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.archived);
+  const bookings = bkSnap.docs.map((d) => d.data() as Booking);
+  const activeBookings = bookings.filter((b) => ACTIVE_RESERVATION_STATUSES.includes(b.status));
+  const activeHolds = holdSnap.docs
+    .map((d) => d.data() as InventoryHold)
+    .filter((h) => h.branchId === branchId && new Date(h.expiresAt).getTime() > Date.now());
+  const historicalBookings = bookings.filter((b) => !ACTIVE_RESERVATION_STATUSES.includes(b.status));
+  const affectedStaff = usersSnap.docs
+    .map((d) => d.data() as UserProfile)
+    .filter((u) => u.role !== 'customer' && (u.branchId === branchId || (Array.isArray(u.branchIds) && u.branchIds.includes(branchId))));
+
+  const isCentralHub = branchId === 'branch-central-hub';
+  const totalActiveBk = activeBookings.length + activeHolds.length;
+  let canDelete = true;
+  let blockReason: string | null = null;
+  const consequences: string[] = [];
+
+  if (isCentralHub) {
+    canDelete = false;
+    blockReason = 'Primary Central Hub cannot be deleted.';
+    consequences.push('Central Hub is required as fallback operating location.');
+  }
+  if (activeVehicles.length > 0) {
+    canDelete = false;
+    blockReason = blockReason || `Reassign ${activeVehicles.length} active vehicle(s) before deleting this branch.`;
+    consequences.push(`${activeVehicles.length} active fleet unit(s) currently depend on this branch.`);
+  }
+  if (totalActiveBk > 0) {
+    canDelete = false;
+    blockReason = blockReason || `Complete or cancel ${totalActiveBk} active booking(s)/hold(s) before deletion.`;
+    consequences.push(`${totalActiveBk} active reservation(s) or checkout hold(s) are open at this branch.`);
+  }
+  if (affectedStaff.length > 0) {
+    consequences.push(`${affectedStaff.length} staff assignment(s) referencing this branch will be unlinked.`);
+  }
+  if (historicalBookings.length > 0) {
+    consequences.push(`${historicalBookings.length} historical booking(s) will remain safely preserved with branch name snapshots.`);
+  }
+  if (consequences.length === 0) {
+    consequences.push('Branch has zero active vehicles, active bookings, or holds and can be permanently removed.');
+  }
+
+  return {
+    branchId: branch.id,
+    branchName: branch.name,
+    cityName: branch.cityName || '',
+    isCentralHub,
+    affectedVehiclesCount: activeVehicles.length,
+    activeVehiclesCount: activeVehicles.length,
+    totalBookingsCount: bookings.length,
+    activeBookingsCount: totalActiveBk,
+    historicalBookingsCount: historicalBookings.length,
+    staffCount: affectedStaff.length,
+    affectedStaffCount: affectedStaff.length,
+    canDelete,
+    blockReason,
+    consequences,
+  };
+}
+
+function buildIntegrationsStatus(
+  waConfig: any,
+  checksMap: Record<string, any> = {},
+  authOtpCfg?: any
+): IntegrationStatusItem[] {
   const now = new Date().toISOString();
   const hasMapsKey = Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY);
   const hasFcmVapid = Boolean(process.env.VITE_FCM_VAPID_KEY);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+  const hasRecaptcha = Boolean(process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SECRET_KEY);
+  const storageBucket = getAdminStorageBucket();
+  const waConnected = waConfig?.connectionStatus === 'Connected';
+  const otpActive = Boolean(waConnected || authOtpCfg?.firebasePhoneAuthEnabled || authOtpCfg?.demoOtpEnabled);
 
   return [
     {
       key: 'firebase',
-      name: 'Firebase Auth & Firestore Storage',
+      name: 'Firebase Auth & Firestore Database',
       category: 'Identity & Database',
       status: 'Connected',
       configured: true,
-      description: 'Active session synchronization, Google Sign-In verification, and persistent catalog/booking storage.',
+      description: `Connected to Firebase project ${firebaseConfigJson.projectId} (${firebaseConfigJson.firestoreDatabaseId || '(default)'}).`,
       requiredEnvVars: [],
       presentEnvVars: ['firebase-applet-config.json'],
       lastCheckedAt: checksMap.firebase?.checkedAt || now,
@@ -200,43 +469,66 @@ function buildIntegrationsStatus(waConfig: any, checksMap: Record<string, any> =
     },
     {
       key: 'google_maps',
-      name: 'Google Maps Platform (Places & Geocoding)',
-      category: 'Geolocation & Coverage',
+      name: 'Google Maps Platform (Maps JS, Places & Geocoding)',
+      category: 'Geolocation & Map Picker',
       status: hasMapsKey ? 'Connected' : 'Configuration Required',
       configured: hasMapsKey,
-      description: 'Interactive doorstep pickup pin, place autocomplete, and branch coverage radius calculation.',
+      description: 'Interactive Ola/Uber-style map picker, Places autocomplete, reverse geocoding, and delivery radius checks.',
       requiredEnvVars: ['VITE_GOOGLE_MAPS_API_KEY', 'GOOGLE_MAPS_API_KEY'],
       presentEnvVars: [
         ...(process.env.VITE_GOOGLE_MAPS_API_KEY ? ['VITE_GOOGLE_MAPS_API_KEY'] : []),
         ...(process.env.GOOGLE_MAPS_API_KEY ? ['GOOGLE_MAPS_API_KEY'] : []),
       ],
       lastCheckedAt: checksMap.google_maps?.checkedAt || now,
-      lastError: hasMapsKey ? checksMap.google_maps?.lastError || null : 'Missing VITE_GOOGLE_MAPS_API_KEY / GOOGLE_MAPS_API_KEY.',
+      lastError: hasMapsKey ? checksMap.google_maps?.lastError || null : 'Missing Google Maps API key in runtime environment.',
     },
     {
-      key: 'manual_upi',
-      name: 'Manual UPI QR & Bank UTR Verification',
-      category: 'Payments & Refunds',
-      status: 'Connected',
-      configured: true,
-      description: 'Third-party online payment gateways are completely disabled. Direct Company UPI ID / QR + UTR + Screenshot Finance verification is active.',
+      key: 'google_auth',
+      name: 'Google Auth (Firebase Google OAuth)',
+      category: 'Customer Authentication',
+      status: firebaseConfigJson.authDomain ? 'Connected' : 'Configuration Required',
+      configured: Boolean(firebaseConfigJson.authDomain),
+      description: 'Customer-only Google Sign-In with automatic redirect fallback and email deduplication.',
       requiredEnvVars: [],
-      presentEnvVars: ['company_settings.upiId'],
-      lastCheckedAt: checksMap.manual_upi?.checkedAt || now,
-      lastError: null,
+      presentEnvVars: [firebaseConfigJson.authDomain].filter(Boolean),
+      lastCheckedAt: checksMap.google_auth?.checkedAt || now,
+      lastError: checksMap.google_auth?.lastError || null,
+    },
+    {
+      key: 'recaptcha_appcheck',
+      name: 'reCAPTCHA / Firebase App Check',
+      category: 'Abuse & Bot Protection',
+      status: hasRecaptcha ? 'Connected' : 'Configuration Required',
+      configured: hasRecaptcha,
+      description: 'Optional request verification and bot protection for customer authentication flows.',
+      requiredEnvVars: ['VITE_RECAPTCHA_SITE_KEY'],
+      presentEnvVars: hasRecaptcha ? ['VITE_RECAPTCHA_SITE_KEY'] : [],
+      lastCheckedAt: checksMap.recaptcha_appcheck?.checkedAt || now,
+      lastError: hasRecaptcha ? checksMap.recaptcha_appcheck?.lastError || null : 'Optional App Check site key not set.',
+    },
+    {
+      key: 'gemini_ai',
+      name: 'Gemini AI API',
+      category: 'AI Concierge',
+      status: hasGemini ? 'Connected' : 'Configuration Required',
+      configured: hasGemini,
+      description: 'Powers conversational fleet recommendations and tool-grounded rental quotes.',
+      requiredEnvVars: ['GEMINI_API_KEY'],
+      presentEnvVars: hasGemini ? ['GEMINI_API_KEY'] : [],
+      lastCheckedAt: checksMap.gemini_ai?.checkedAt || now,
+      lastError: hasGemini ? checksMap.gemini_ai?.lastError || null : 'GEMINI_API_KEY is not configured.',
     },
     {
       key: 'whatsapp',
-      name: 'Meta WhatsApp Cloud API',
-      category: 'Messaging & OTP',
-      status:
-        waConfig?.connectionStatus === 'Connected'
-          ? 'Connected'
-          : waConfig?.hasAccessTokenSecret && waConfig?.phoneNumberId
-            ? 'Disconnected'
-            : 'Configuration Required',
+      name: 'WhatsApp Business Cloud API',
+      category: 'Messaging & Alerts',
+      status: waConnected
+        ? 'Connected'
+        : waConfig?.hasAccessTokenSecret && waConfig?.phoneNumberId
+          ? 'Disconnected'
+          : 'Configuration Required',
       configured: Boolean(waConfig?.hasAccessTokenSecret && waConfig?.phoneNumberId),
-      description: 'Official booking alerts, OTP authentication, staff dispatch alerts, and delivery status webhooks.',
+      description: 'Booking notifications, staff dispatch alerts, and verified template delivery.',
       requiredEnvVars: ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_WABA_ID', 'WHATSAPP_VERIFY_TOKEN'],
       presentEnvVars: [
         ...(waConfig?.hasAccessTokenSecret ? ['WHATSAPP_ACCESS_TOKEN'] : []),
@@ -246,34 +538,57 @@ function buildIntegrationsStatus(waConfig: any, checksMap: Record<string, any> =
       ],
       lastCheckedAt: waConfig?.lastVerifiedAt || checksMap.whatsapp?.checkedAt || now,
       lastError: waConfig?.lastError || null,
-      metadata: {
-        connectionStatus: waConfig?.connectionStatus || 'Disconnected',
-        zeroBudgetEnforced: Boolean(waConfig?.zeroBudgetEnforced),
-      },
     },
     {
-      key: 'fcm_push',
-      name: 'Firebase Cloud Messaging (Web Push)',
-      category: 'Push Notifications',
-      status: hasFcmVapid ? 'Connected' : 'Configuration Required',
-      configured: hasFcmVapid,
-      description: 'Browser push alerts for booking confirmations, KYC approvals, and promotional campaigns.',
+      key: 'otp_provider',
+      name: 'Mobile OTP Verification Service',
+      category: 'Customer OTP',
+      status: otpActive ? 'Connected' : 'Configuration Required',
+      configured: otpActive,
+      description: 'Controls mobile number verification, resend cooldowns, attempt limits, and authorized non-prod test numbers.',
+      requiredEnvVars: [],
+      presentEnvVars: [
+        ...(authOtpCfg?.firebasePhoneAuthEnabled ? ['firebasePhoneAuth'] : []),
+        ...(authOtpCfg?.whatsappOtpEnabled ? ['whatsappOtp'] : []),
+      ],
+      lastCheckedAt: checksMap.otp_provider?.checkedAt || now,
+      lastError: checksMap.otp_provider?.lastError || null,
+    },
+    {
+      key: 'notifications',
+      name: 'Push & In-App Notification Engine',
+      category: 'Notifications',
+      status: hasFcmVapid ? 'Connected' : 'Connected',
+      configured: true,
+      description: hasFcmVapid ? 'In-app real-time alerts and FCM Web Push VAPID configured.' : 'In-app Firestore notifications active; FCM VAPID optional.',
       requiredEnvVars: ['VITE_FCM_VAPID_KEY'],
-      presentEnvVars: hasFcmVapid ? ['VITE_FCM_VAPID_KEY'] : [],
-      lastCheckedAt: checksMap.fcm_push?.checkedAt || now,
-      lastError: hasFcmVapid ? checksMap.fcm_push?.lastError || null : 'VITE_FCM_VAPID_KEY not set; in-app notifications active.',
+      presentEnvVars: hasFcmVapid ? ['VITE_FCM_VAPID_KEY'] : ['firestore_notifications'],
+      lastCheckedAt: checksMap.notifications?.checkedAt || now,
+      lastError: checksMap.notifications?.lastError || null,
     },
     {
-      key: 'gemini_ai',
-      name: 'Gemini Server Intelligence',
-      category: 'AI Operations',
-      status: hasGemini ? 'Connected' : 'Configuration Required',
-      configured: hasGemini,
-      description: 'Optional server-side intelligence key reserved for backend automation.',
-      requiredEnvVars: ['GEMINI_API_KEY'],
-      presentEnvVars: hasGemini ? ['GEMINI_API_KEY'] : [],
-      lastCheckedAt: checksMap.gemini_ai?.checkedAt || now,
-      lastError: hasGemini ? checksMap.gemini_ai?.lastError || null : 'GEMINI_API_KEY is optional and not configured.',
+      key: 'storage',
+      name: 'Firebase Cloud Storage',
+      category: 'Documents & Media',
+      status: storageBucket ? 'Connected' : 'Connected',
+      configured: Boolean(firebaseConfigJson.storageBucket),
+      description: `Stores customer verification documents, payment proofs, and company UPI QR assets (${firebaseConfigJson.storageBucket}).`,
+      requiredEnvVars: [],
+      presentEnvVars: [firebaseConfigJson.storageBucket].filter(Boolean),
+      lastCheckedAt: checksMap.storage?.checkedAt || now,
+      lastError: checksMap.storage?.lastError || null,
+    },
+    {
+      key: 'cloud_functions',
+      name: 'Cloud Functions & Webhooks',
+      category: 'Serverless Hooks',
+      status: 'Connected',
+      configured: true,
+      description: 'Webhook endpoints and background hold-expiry / reminder handlers.',
+      requiredEnvVars: ['WHATSAPP_VERIFY_TOKEN'],
+      presentEnvVars: ['express_runtime_hooks'],
+      lastCheckedAt: checksMap.cloud_functions?.checkedAt || now,
+      lastError: checksMap.cloud_functions?.lastError || null,
     },
   ];
 }
@@ -431,6 +746,7 @@ async function startServer() {
         settingsSnap,
         authOtpCfg,
         aiCfg,
+        cmsPages,
       ] = await Promise.all([
         db.collection('cities').get(),
         db.collection('branches').get(),
@@ -442,6 +758,7 @@ async function startServer() {
         db.collection('company_settings').doc('default').get(),
         getAuthOtpConfig(),
         getAiConfig(),
+        seedAndLoadCmsPages(),
       ]);
 
       const nowMs = Date.now();
@@ -474,10 +791,12 @@ async function startServer() {
         coupons: activeCoupons,
         offers: activeOffers,
         settings: settingsSnap.exists ? settingsSnap.data() : null,
+        cmsPages: cmsPages.filter((p) => p.published),
         authOtpConfig: {
           demoOtpEnabled: authOtpCfg.demoOtpEnabled,
           firebasePhoneAuthEnabled: authOtpCfg.firebasePhoneAuthEnabled,
           whatsappOtpEnabled: authOtpCfg.whatsappOtpEnabled,
+          otpResendCooldownSeconds: authOtpCfg.otpResendCooldownSeconds || 60,
           environmentMode: authOtpCfg.environmentMode || 'development',
         },
         aiPublicConfig: {
@@ -489,6 +808,15 @@ async function startServer() {
     } catch (err: any) {
       console.error('Bootstrap error:', err);
       res.status(500).json({ error: 'Failed to load fleet catalog.' });
+    }
+  });
+
+  app.get('/api/public/cms', async (_req, res) => {
+    try {
+      const pages = await seedAndLoadCmsPages();
+      res.json({ pages: pages.filter((p) => p.published) });
+    } catch {
+      res.status(500).json({ error: 'Failed to load website CMS content.' });
     }
   });
 
@@ -553,7 +881,16 @@ async function startServer() {
         startDate,
         endDate,
         branchId,
-      });
+      }).map(({
+        totalUnits: _totalUnits,
+        eligibleUnits: _eligible,
+        occupiedUnits: _occ,
+        holdUnits: _hold,
+        maintenanceUnits: _maint,
+        unitIds: _unitIds,
+        availableVehicleIds: _availIds,
+        ...publicSummary
+      }) => publicSummary);
 
       res.json({ startDate, endDate, branchId: branchId || 'all', summaries });
     } catch (err) {
@@ -596,7 +933,22 @@ async function startServer() {
         endDate,
         branchId: vehicle.branchId,
       });
-      const summary = summaries.find((s) => s.modelKey === mk && s.branchId === vehicle.branchId) || summaries[0] || null;
+      const rawSummary = summaries.find((s) => s.modelKey === mk && s.branchId === vehicle.branchId) || summaries[0] || null;
+      const summary = rawSummary
+        ? (() => {
+            const {
+              totalUnits: _totalUnits,
+              eligibleUnits: _eligible,
+              occupiedUnits: _occ,
+              holdUnits: _hold,
+              maintenanceUnits: _maint,
+              unitIds: _unitIds,
+              availableVehicleIds: _availIds,
+              ...pub
+            } = rawSummary;
+            return pub;
+          })()
+        : null;
 
       // Public sanitized schedule windows (no customer PII)
       const nowMs = Date.now();
@@ -834,8 +1186,14 @@ async function startServer() {
     const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
       return res.json({
-        formattedAddress: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        formattedAddress: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        locality: '',
+        city: '',
+        state: '',
+        postalCode: '',
         placeId: null,
+        lat,
+        lng,
         addressComponents: [],
       });
     }
@@ -868,10 +1226,26 @@ async function startServer() {
 
       const data = await response.json();
       const first = data?.results?.[0];
+      const comps: any[] = Array.isArray(first?.addressComponents) ? first.addressComponents : [];
+      const findComp = (types: string[]) => {
+        const hit = comps.find((c) => Array.isArray(c?.types) && types.some((t) => c.types.includes(t)));
+        return String(hit?.longText || hit?.shortText || hit?.long_name || hit?.short_name || '').trim();
+      };
+      const locality = findComp(['sublocality_level_1', 'sublocality', 'neighborhood', 'sublocality_level_2']);
+      const city = findComp(['locality', 'administrative_area_level_2']);
+      const state = findComp(['administrative_area_level_1']);
+      const postalCode = findComp(['postal_code']);
+
       return res.json({
-        formattedAddress: first?.formattedAddress || `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        formattedAddress: first?.formattedAddress || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        locality,
+        city,
+        state,
+        postalCode,
         placeId: first?.placeId || null,
-        addressComponents: first?.addressComponents || [],
+        lat,
+        lng,
+        addressComponents: comps,
       });
     } catch (err) {
       console.error('Reverse geocode proxy exception:', err);
@@ -1358,18 +1732,61 @@ async function startServer() {
   });
 
   app.post('/api/auth/sync-google', requireAuth, async (req: AuthRequest, res) => {
-    const uid = req.authUser!.uid;
-    const now = new Date().toISOString();
-    await db.collection('users').doc(uid).update({ lastLoginAt: now });
-    req.authUser!.profile.lastLoginAt = now;
-    const tokenVersion = await getTokenVersion(uid);
-    const token = signSessionToken({
-      uid,
-      email: req.authUser!.email || '',
-      role: req.authUser!.profile.role,
-      tokenVersion,
-    });
-    res.json({ profile: req.authUser!.profile, token });
+    try {
+      const uid = req.authUser!.uid;
+      const email = String(req.authUser!.email || '').trim().toLowerCase();
+      let profile = req.authUser!.profile;
+      const now = new Date().toISOString();
+
+      // Strictly enforce customer-only access via Google Sign-In; prevent duplicate accounts by email
+      if (profile.role !== 'customer') {
+        return res.status(403).json({
+          error: 'Google Sign-In is available exclusively for Customer accounts. Staff and administrators must sign in with email and password.',
+        });
+      }
+
+      if (email) {
+        const existingCreds = await db.collection('auth_credentials').where('email', '==', email).get();
+        const otherCred = existingCreds.docs.find((d) => d.id !== uid);
+        if (otherCred) {
+          const existingUid = otherCred.id;
+          const existingSnap = await db.collection('users').doc(existingUid).get();
+          if (existingSnap.exists) {
+            const existingUser = existingSnap.data() as UserProfile;
+            if (existingUser.role !== 'customer') {
+              return res.status(403).json({
+                error: 'Google Sign-In cannot access Staff, Owner, or Admin accounts. Use the staff/admin portal login.',
+              });
+            }
+            // Merge display name cleanly and sign session under canonical customer UID
+            if (!existingUser.displayName && profile.displayName) {
+              await db.collection('users').doc(existingUid).update({ displayName: profile.displayName, updatedAt: now });
+              existingUser.displayName = profile.displayName;
+            }
+            profile = existingUser;
+          }
+        }
+      }
+
+      await db.collection('users').doc(profile.uid).update({
+        ...(email && !profile.email ? { email } : {}),
+        lastLoginAt: now,
+        updatedAt: now,
+      });
+      profile.lastLoginAt = now;
+
+      const tokenVersion = await getTokenVersion(profile.uid);
+      const token = signSessionToken({
+        uid: profile.uid,
+        email: email || profile.email || '',
+        role: 'customer',
+        tokenVersion,
+      });
+      res.json({ profile: { ...profile, role: 'customer' }, token });
+    } catch (err) {
+      console.error('Google sync error:', err);
+      res.status(500).json({ error: 'Unable to synchronize Google account.' });
+    }
   });
 
   app.post('/api/auth/sync-phone', requireAuth, async (req: AuthRequest, res) => {
@@ -1835,7 +2252,7 @@ async function startServer() {
       const bookingReference = `ED-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
       const holdId = `hold-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
       const holdMinutes = Math.max(5, Math.min(120, Number(settings.holdDurationMinutes || 15)));
-      const operatingCityName = hub.cityName || settings.operatingCityName || 'Mumbai';
+      const operatingCityName = hub.cityName || settings.operatingCityName || '';
       const resolvedBranchName =
         hub.id === 'branch-central-hub' ? (settings.officeName || hub.name) : hub.name;
       const modelKey = buildModelKey(vehicle);
@@ -1911,6 +2328,13 @@ async function startServer() {
               ? 'Pending Approval'
               : 'Pending Payment';
 
+          const cleanPickupAddress = String(pickupAddress || settings.businessAddress || hub.address || '').trim();
+          const cleanReturnAddress = String(returnAddress || cleanPickupAddress).trim();
+          const isDifferentReturn = Boolean(
+            req.body.isOneWay ||
+              (cleanReturnAddress && cleanPickupAddress && cleanReturnAddress !== cleanPickupAddress)
+          );
+
           const record: Booking & { idempotencyKey?: string } = {
             id: bookingId,
             bookingReference,
@@ -1924,22 +2348,19 @@ async function startServer() {
             vehicleImage: primaryUnit.images[0] || 'verna',
             branchId: hub.id,
             branchName: resolvedBranchName,
-            cityId: hub.cityId || settings.operatingCityId || 'city-mumbai',
+            cityId: hub.cityId || settings.operatingCityId || '',
             cityName: operatingCityName,
             returnBranchId: hub.id,
             returnBranchName: resolvedBranchName,
             bookingMode: primaryUnit.instantBooking ? 'instant' : 'approval',
             pickupMode: (pickupMode || 'branch') as PickupMode,
-            pickupAddress:
-              pickupMode === 'delivery'
-                ? pickupAddress || `${operatingCityName} Doorstep Pin`
-                : pickupAddress || settings.businessAddress || hub.address,
+            pickupAddress: cleanPickupAddress,
             pickupLat: resolvedPickupLat,
             pickupLng: resolvedPickupLng,
-            returnAddress: returnAddress || pickupAddress || settings.businessAddress || hub.address,
+            returnAddress: cleanReturnAddress,
             returnLat: resolvedReturnLat,
             returnLng: resolvedReturnLng,
-            isOneWay: false,
+            isOneWay: isDifferentReturn,
             startDate,
             endDate,
             durationLabel: `${pricing.durationDays}d (${pricing.durationHours}h)`,
@@ -4342,8 +4763,8 @@ async function startServer() {
       cancellationPolicy: body.cancellationPolicy || 'Free cancellation up to 24h before pickup',
       branchId: resolvedBranchId,
       branchName: resolvedBranchName,
-      cityId: branch?.cityId || settings.operatingCityId || 'city-mumbai',
-      cityName: branch?.cityName || settings.operatingCityName || 'Mumbai',
+      cityId: branch?.cityId || settings.operatingCityId || '',
+      cityName: branch?.cityName || settings.operatingCityName || '',
       instantBooking: Boolean(body.instantBooking ?? true),
       deliveryEligible: Boolean(body.deliveryEligible ?? true),
       oneWayEligible: false,
@@ -6156,22 +6577,22 @@ async function startServer() {
           actorUid: actor.uid,
           actorName: actor.displayName,
           actorRole: actor.role,
-          module: 'KYC Verification',
+          module: 'Document Verification',
           branchId: kyc.branchId,
           action: 'VIEW_KYC_DOCUMENT',
           targetType: 'kyc',
           targetId: req.params.id,
-          details: `Inspected private KYC documents for ${kyc.customerName}.`,
+          details: `Inspected private verification documents for ${kyc.customerName}.`,
         });
 
         res.json({ kyc });
       } catch {
-        res.status(500).json({ error: 'Failed to load KYC document bundle.' });
+        res.status(500).json({ error: 'Failed to load verification document bundle.' });
       }
     }
   );
 
-  // KYC Review (Approve / Reject / Resubmission Required / Under Review / Expired + History Timeline)
+  // Document Verification Review (Approve / Reject / Resubmission Required / Under Review / Expired + History Timeline)
   app.post(
     '/api/admin/kyc/:id/review',
     requireAuth,
@@ -6182,7 +6603,7 @@ async function startServer() {
         const { status, rejectionReason, reviewNotes } = req.body;
         const kycRef = db.collection('kyc_verifications').doc(req.params.id);
         const snap = await kycRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'KYC record not found.' });
+        if (!snap.exists) return res.status(404).json({ error: 'Verification record not found.' });
 
         const kyc = snap.data() as any;
         if (!assertBranchAccess(req, res, kyc.branchId)) return;
@@ -6242,23 +6663,23 @@ async function startServer() {
 
         await createNotification({
           userId: kyc.userId,
-          title: `KYC Status Updated: ${status}`,
+          title: `Document Verification Updated: ${status}`,
           body:
             status === 'Verified'
               ? 'Your Driving Licence and ID proof are verified. You are cleared for self-drive handovers.'
-              : rejectionReason || reviewNotes || `Your KYC status is now ${status}.`,
+              : rejectionReason || reviewNotes || `Your document verification status is now ${status}.`,
         });
 
         await writeAuditLog({
           actorUid: actor.uid,
           actorName: actor.displayName,
           actorRole: actor.role,
-          module: 'KYC Verification',
+          module: 'Document Verification',
           branchId: kyc.branchId,
           action: 'KYC_REVIEW',
           targetType: 'kyc',
           targetId: req.params.id,
-          details: `Set KYC status for ${kyc.customerName} to ${status}`,
+          details: `Set verification status for ${kyc.customerName} to ${status}`,
         });
 
         const updatedKyc = (await kycRef.get()).data() as any;
@@ -6697,26 +7118,28 @@ async function startServer() {
         const merged = mergedSnap.data() as CompanySettings;
 
         // Keep central operating city, central hub branch, and central hub vehicles aligned
-        const cityId = merged.operatingCityId || 'city-mumbai';
-        const cityName = merged.operatingCityName || 'Mumbai';
-        const cityState = merged.operatingCityState || 'Maharashtra';
+        const cityId = merged.operatingCityId || 'city-primary';
+        const cityName = merged.operatingCityName || '';
+        const cityState = merged.operatingCityState || '';
         const hubLat = Number(merged.hubLat ?? 19.0607);
         const hubLng = Number(merged.hubLng ?? 72.8362);
         const radiusKm = Number(merged.serviceRadiusKm ?? 35);
-        const officeName = merged.officeName || `${merged.companyName} ${cityName} Hub`;
-        const businessAddress = merged.businessAddress || `${cityName}, ${cityState}`;
+        const officeName = merged.officeName || `${merged.companyName}${cityName ? ` ${cityName}` : ''} Hub`;
+        const businessAddress = merged.businessAddress || [cityName, cityState].filter(Boolean).join(', ');
 
-        await db.collection('cities').doc(cityId).set(
-          {
-            id: cityId,
-            name: cityName,
-            state: cityState,
-            lat: hubLat,
-            lng: hubLng,
-            serviceable: true,
-          },
-          { merge: true }
-        );
+        if (cityName) {
+          await db.collection('cities').doc(cityId).set(
+            {
+              id: cityId,
+              name: cityName,
+              state: cityState,
+              lat: hubLat,
+              lng: hubLng,
+              serviceable: true,
+            },
+            { merge: true }
+          );
+        }
 
         await db.collection('branches').doc('branch-central-hub').set(
           {
@@ -7237,196 +7660,12 @@ async function startServer() {
 
   // All third-party online payment gateways have been permanently removed; Manual UPI QR + Finance UTR verification only.
 
-  // --- ADMIN WHATSAPP BUSINESS MANAGEMENT, EMPLOYEE NOTIFICATIONS, LOGS & REMINDERS ---
-  app.get(
-    '/api/admin/whatsapp',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (_req, res) => {
-      try {
-        const [config, templatesSnap, employeesSnap, logsSnap] = await Promise.all([
-          getWhatsAppConfig(),
-          db.collection('whatsapp_templates').get(),
-          db.collection('employee_notification_settings').get(),
-          db.collection('notification_logs').orderBy('createdAt', 'desc').limit(100).get(),
-        ]);
-
-        res.json({
-          config,
-          templates: templatesSnap.docs.map((d) => d.data()),
-          employees: employeesSnap.docs.map((d) => d.data()),
-          logs: logsSnap.docs.map((d) => d.data()),
-        });
-      } catch (err) {
-        console.error('WhatsApp overview error:', err);
-        res.status(500).json({ error: 'Failed to load WhatsApp integration console.' });
-      }
-    }
-  );
-
-  app.put(
-    '/api/admin/whatsapp/config',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (req: AuthRequest, res) => {
-      try {
-        const now = new Date().toISOString();
-        const {
-          businessPhoneNumber,
-          phoneNumberId,
-          wabaId,
-          monthlyBudgetInr,
-          zeroBudgetEnforced,
-          otpExpirySeconds,
-          otpMaxAttempts,
-          otpCooldownSeconds,
-          customerEventFlags,
-          accessTokenSecret,
-          appSecret,
-          verifyToken,
-        } = req.body;
-
-        if (accessTokenSecret || appSecret || verifyToken) {
-          await db
-            .collection('whatsapp_secrets')
-            .doc('default')
-            .set(
-              {
-                ...(accessTokenSecret ? { accessToken: String(accessTokenSecret).trim() } : {}),
-                ...(appSecret ? { appSecret: String(appSecret).trim() } : {}),
-                ...(verifyToken ? { verifyToken: String(verifyToken).trim() } : {}),
-                updatedAt: now,
-              },
-              { merge: true }
-            );
-        }
-
-        const secrets = await getWhatsAppSecrets();
-        await db
-          .collection('whatsapp_config')
-          .doc('default')
-          .set(
-            {
-              ...(businessPhoneNumber !== undefined ? { businessPhoneNumber: String(businessPhoneNumber).trim() } : {}),
-              ...(phoneNumberId !== undefined ? { phoneNumberId: String(phoneNumberId).trim() } : {}),
-              ...(wabaId !== undefined ? { wabaId: String(wabaId).trim() } : {}),
-              ...(monthlyBudgetInr !== undefined ? { monthlyBudgetInr: Math.max(0, Number(monthlyBudgetInr)) } : {}),
-              ...(typeof zeroBudgetEnforced === 'boolean' ? { zeroBudgetEnforced } : {}),
-              ...(otpExpirySeconds !== undefined ? { otpExpirySeconds: Math.max(60, Number(otpExpirySeconds)) } : {}),
-              ...(otpMaxAttempts !== undefined ? { otpMaxAttempts: Math.max(1, Number(otpMaxAttempts)) } : {}),
-              ...(otpCooldownSeconds !== undefined ? { otpCooldownSeconds: Math.max(15, Number(otpCooldownSeconds)) } : {}),
-              ...(customerEventFlags ? { customerEventFlags } : {}),
-              hasAccessTokenSecret: Boolean(secrets.accessToken),
-              hasAppSecret: Boolean(secrets.appSecret),
-              webhookVerifyTokenConfigured: Boolean(secrets.verifyToken),
-              updatedAt: now,
-            },
-            { merge: true }
-          );
-
-        await writeAuditLog({
-          actorUid: req.authUser!.uid,
-          actorRole: req.authUser!.profile.role,
-          action: 'UPDATE_WHATSAPP_CONFIG',
-          targetType: 'whatsapp_config',
-          targetId: 'default',
-          details: 'Updated WhatsApp Business configuration and budget policy.',
-        });
-
-        res.json({ config: await getWhatsAppConfig() });
-      } catch (err) {
-        res.status(500).json({ error: 'Failed to update WhatsApp configuration.' });
-      }
-    }
-  );
-
-  app.post(
-    '/api/admin/whatsapp/verify',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (req: AuthRequest, res) => {
-      try {
-        const config = await getWhatsAppConfig();
-        const result = await verifyLiveMetaConnection({
-          businessPhoneNumber: req.body.businessPhoneNumber || config.businessPhoneNumber,
-          phoneNumberId: req.body.phoneNumberId || config.phoneNumberId,
-          wabaId: req.body.wabaId || config.wabaId,
-          accessToken: req.body.accessTokenSecret,
-        });
-        await writeAuditLog({
-          actorUid: req.authUser!.uid,
-          actorRole: req.authUser!.profile.role,
-          action: 'VERIFY_WHATSAPP_META',
-          targetType: 'whatsapp_config',
-          targetId: 'default',
-          details: result.message,
-        });
-        res.json(result);
-      } catch (err) {
-        res.status(500).json({ error: 'Live Meta verification failed.' });
-      }
-    }
-  );
-
-  app.post(
-    '/api/admin/whatsapp/employees',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (req: AuthRequest, res) => {
-      try {
-        const { name, phone, department, whatsappEnabled, events } = req.body;
-        if (!name || !phone) return res.status(400).json({ error: 'Employee name and mobile number are required.' });
-        const id = `emp-notif-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
-        const doc: EmployeeNotificationSetting = {
-          id,
-          name: String(name).trim(),
-          phone: String(phone).trim(),
-          branchId: 'all',
-          department: department || 'operations',
-          whatsappEnabled: whatsappEnabled !== false,
-          events: Array.isArray(events) ? (events as NotificationEventKey[]) : ['booking_received'],
-          updatedAt: new Date().toISOString(),
-        };
-        await db.collection('employee_notification_settings').doc(id).set(doc);
-        res.json({ employee: doc });
-      } catch (err) {
-        res.status(500).json({ error: 'Failed to add employee notification rule.' });
-      }
-    }
-  );
-
-  app.put(
-    '/api/admin/whatsapp/employees/:id',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (req: AuthRequest, res) => {
-      try {
-        const ref = db.collection('employee_notification_settings').doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Employee notification record not found.' });
-        const updates = { ...req.body, branchId: 'all', updatedAt: new Date().toISOString() };
-        delete updates.id;
-        await ref.update(updates);
-        res.json({ employee: (await ref.get()).data() });
-      } catch (err) {
-        res.status(500).json({ error: 'Failed to update employee notification rule.' });
-      }
-    }
-  );
-
-  app.delete(
-    '/api/admin/whatsapp/employees/:id',
-    requireAuth,
-    requirePermission('manage_whatsapp'),
-    async (req: AuthRequest, res) => {
-      try {
-        await db.collection('employee_notification_settings').doc(req.params.id).delete();
-        res.json({ success: true });
-      } catch (err) {
-        res.status(500).json({ error: 'Failed to delete employee notification rule.' });
-      }
-    }
-  );
+  // --- WHATSAPP CLOUD API CONFIGURATION (MANAGED STRICTLY IN PLATFORM ADMIN CONSOLE) ---
+  app.all('/api/admin/whatsapp*', requireAuth, (_req, res) => {
+    return res.status(403).json({
+      error: 'Forbidden: WhatsApp Cloud API configuration is managed exclusively in the Platform Admin Console.',
+    });
+  });
 
   app.post(
     '/api/admin/reminders/run',
@@ -7442,270 +7681,42 @@ async function startServer() {
     }
   );
 
-  // --- ENTERPRISE ROLES & GRANULAR RBAC MANAGEMENT ---
+  // --- ROLES & PERMISSIONS (MANAGED STRICTLY IN PLATFORM ADMIN CONSOLE) ---
+  app.all('/api/admin/roles*', requireAuth, (_req, res) => {
+    return res.status(403).json({
+      error: 'Forbidden: Roles & Permissions are managed exclusively in the Platform Admin Console.',
+    });
+  });
+
+  // --- OWNER BUSINESS USER MANAGEMENT (SCOPED CUSTOMERS & STAFF ONLY, ZERO PASSWORDS) ---
   app.get(
-    '/api/admin/roles',
+    '/api/admin/users',
     requireAuth,
-    requirePermission(['view_roles', 'manage_roles', 'view_staff', 'manage_staff']),
-    async (_req, res) => {
-      try {
-        const roles = await loadRolesList();
-        res.json({ roles });
-      } catch {
-        res.status(500).json({ error: 'Failed to load roles.' });
-      }
-    }
-  );
-
-  app.post(
-    '/api/admin/roles',
-    requireAuth,
-    requirePermission(['manage_roles', 'manage_staff']),
+    requirePermission(['view_customers', 'manage_staff', 'edit_customers']),
     async (req: AuthRequest, res) => {
       try {
-        const actor = req.authUser!.profile;
-        const { name, slug, description, permissions, branchScope = 'assigned', color = '#C8A24D' } = req.body;
-        const cleanName = String(name || '').trim();
-        if (cleanName.length < 2) return res.status(400).json({ error: 'Role name is required.' });
-
-        const cleanSlug =
-          String(slug || cleanName)
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '') || `custom_${Date.now()}`;
-
-        const allRoles = await loadRolesList();
-        if (allRoles.some((r) => r.slug === cleanSlug || r.name.toLowerCase() === cleanName.toLowerCase())) {
-          return res.status(409).json({ error: `A role with name or key '${cleanSlug}' already exists.` });
-        }
-
-        const id = `role-${cleanSlug}-${Date.now().toString().slice(-4)}`;
-        const now = new Date().toISOString();
-        const roleDoc: CustomRole = {
-          id,
-          slug: cleanSlug,
-          name: cleanName,
-          description: String(description || 'Custom staff access role').trim(),
-          permissions: Array.isArray(permissions) ? permissions.filter((p): p is AdminPermission => ALL_ADMIN_PERMISSIONS.includes(p)) : [],
-          branchScope: branchScope === 'all' ? 'all' : 'assigned',
-          isSystem: false,
-          active: true,
-          color: String(color || '#C8A24D'),
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await db.collection('roles').doc(id).set(roleDoc);
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Roles & RBAC',
-          action: 'CREATE_ROLE',
-          targetType: 'role',
-          targetId: id,
-          details: `Created custom role "${roleDoc.name}" (${roleDoc.branchScope} scope, ${roleDoc.permissions.length} permissions).`,
-        });
-
-        res.json({ role: roleDoc });
-      } catch {
-        res.status(500).json({ error: 'Failed to create role.' });
-      }
-    }
-  );
-
-  app.put(
-    '/api/admin/roles/:id',
-    requireAuth,
-    requirePermission(['manage_roles', 'manage_staff']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const ref = db.collection('roles').doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Role not found.' });
-
-        const existing = snap.data() as CustomRole;
-        if (existing.slug === 'super_admin' && actor.role !== 'super_admin') {
-          return res.status(403).json({ error: 'Only Super Admin can inspect or modify Super Admin.' });
-        }
-        if (existing.slug === 'super_admin' && req.body.active === false) {
-          return res.status(400).json({ error: 'Super Admin system role cannot be deactivated.' });
-        }
-
-        const now = new Date().toISOString();
-        const nextPermissions =
-          existing.slug === 'super_admin'
-            ? [...ALL_ADMIN_PERMISSIONS]
-            : Array.isArray(req.body.permissions)
-              ? req.body.permissions.filter((p: any): p is AdminPermission => ALL_ADMIN_PERMISSIONS.includes(p))
-              : existing.permissions;
-
-        const nextName = req.body.name ? String(req.body.name).trim() : existing.name;
-        const nextScope: 'all' | 'assigned' =
-          existing.slug === 'super_admin'
-            ? 'all'
-            : req.body.branchScope === 'all' || req.body.branchScope === 'assigned'
-              ? req.body.branchScope
-              : existing.branchScope;
-        const nextActive = existing.slug === 'super_admin' ? true : typeof req.body.active === 'boolean' ? req.body.active : existing.active;
-
-        await ref.update({
-          name: nextName,
-          ...(req.body.description !== undefined ? { description: String(req.body.description).trim() } : {}),
-          ...(req.body.color !== undefined ? { color: String(req.body.color) } : {}),
-          permissions: nextPermissions,
-          branchScope: nextScope,
-          active: nextActive,
-          updatedAt: now,
-        });
-
-        // Sync role updates to staff users assigned this roleId or slug
         const usersSnap = await db.collection('users').get();
+        const users: Array<UserProfile & { email?: string; phone?: string }> = [];
         for (const uDoc of usersSnap.docs) {
           const u = uDoc.data() as UserProfile;
-          if (u.roleId === existing.id || (existing.isSystem && u.role === existing.slug)) {
-            await uDoc.ref.update({
-              roleId: existing.id,
-              roleName: nextName,
-              permissions: nextPermissions,
-              branchScope: nextScope,
-              updatedAt: now,
-            });
-          }
-        }
-
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Roles & RBAC',
-          action: 'UPDATE_ROLE',
-          targetType: 'role',
-          targetId: existing.id,
-          details: `Updated role "${nextName}" (active=${nextActive}, scope=${nextScope}, perms=${nextPermissions.length}).`,
-        });
-
-        res.json({ role: (await ref.get()).data() });
-      } catch {
-        res.status(500).json({ error: 'Failed to update role.' });
-      }
-    }
-  );
-
-  app.post(
-    '/api/admin/roles/:id/duplicate',
-    requireAuth,
-    requirePermission(['manage_roles', 'manage_staff']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const snap = await db.collection('roles').doc(req.params.id).get();
-        if (!snap.exists) return res.status(404).json({ error: 'Source role not found.' });
-        const source = snap.data() as CustomRole;
-
-        const now = new Date().toISOString();
-        const suffix = Date.now().toString().slice(-4);
-        const cloneId = `role-${source.slug}-copy-${suffix}`;
-        const clone: CustomRole = {
-          id: cloneId,
-          slug: `${source.slug}_copy_${suffix}`,
-          name: `${source.name} (Copy)`,
-          description: source.description,
-          permissions: [...source.permissions],
-          branchScope: source.branchScope,
-          isSystem: false,
-          active: true,
-          color: source.color || '#C8A24D',
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await db.collection('roles').doc(cloneId).set(clone);
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Roles & RBAC',
-          action: 'DUPLICATE_ROLE',
-          targetType: 'role',
-          targetId: cloneId,
-          details: `Duplicated role "${source.name}" -> "${clone.name}".`,
-        });
-
-        res.json({ role: clone });
-      } catch {
-        res.status(500).json({ error: 'Failed to duplicate role.' });
-      }
-    }
-  );
-
-  app.delete(
-    '/api/admin/roles/:id',
-    requireAuth,
-    requirePermission(['manage_roles', 'manage_staff']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const ref = db.collection('roles').doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Role not found.' });
-        const roleDoc = snap.data() as CustomRole;
-
-        if (roleDoc.isSystem || roleDoc.slug === 'super_admin') {
-          return res.status(400).json({ error: `System role '${roleDoc.name}' cannot be deleted. Deactivate custom roles instead.` });
-        }
-
-        const usersSnap = await db.collection('users').get();
-        const assignedUsers = usersSnap.docs
-          .map((d) => ({ ref: d.ref, data: d.data() as UserProfile }))
-          .filter((u) => u.data.roleId === roleDoc.id || u.data.role === roleDoc.slug);
-
-        const reassignRoleId = String(req.body?.reassignRoleId || req.query?.reassignRoleId || '').trim();
-        if (assignedUsers.length > 0 && !reassignRoleId) {
-          return res.status(409).json({
-            error: `Cannot delete role '${roleDoc.name}' because ${assignedUsers.length} staff member(s) are assigned to it. Select a replacement role first.`,
-            assignedCount: assignedUsers.length,
+          if (u.role === 'master_admin') continue;
+          const pSnap = await uDoc.ref.collection('private').doc('info').get();
+          const pData = pSnap.data() || {};
+          users.push({
+            ...u,
+            email: u.email || pData.email || '',
+            phone: u.phone || pData.phone || '',
           });
         }
-
-        if (assignedUsers.length > 0 && reassignRoleId) {
-          const targetSnap = await db.collection('roles').doc(reassignRoleId).get();
-          if (!targetSnap.exists) return res.status(404).json({ error: 'Reassignment target role not found.' });
-          const targetRole = targetSnap.data() as CustomRole;
-          const now = new Date().toISOString();
-          for (const u of assignedUsers) {
-            await u.ref.update({
-              role: targetRole.slug,
-              roleId: targetRole.id,
-              roleName: targetRole.name,
-              permissions: targetRole.permissions,
-              branchScope: targetRole.branchScope,
-              updatedAt: now,
-            });
-          }
-        }
-
-        await ref.delete();
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Roles & RBAC',
-          action: 'DELETE_ROLE',
-          targetType: 'role',
-          targetId: roleDoc.id,
-          details: `Deleted custom role "${roleDoc.name}" (reassigned ${assignedUsers.length} user(s)).`,
-        });
-
-        res.json({ success: true });
+        const scoped = filterByBranch(users, req.authUser!, (u) => (u.role === 'customer' ? undefined : u.branchId));
+        res.json({ users: scoped });
       } catch {
-        res.status(500).json({ error: 'Failed to delete role.' });
+        res.status(500).json({ error: 'Failed to load business users.' });
       }
     }
   );
 
-  // --- MULTI-BRANCH MANAGEMENT CRUD ---
+  // --- MULTI-BRANCH MANAGEMENT CRUD + DELETE IMPACT PREVIEW ---
   app.get(
     '/api/admin/branches',
     requireAuth,
@@ -7721,6 +7732,21 @@ async function startServer() {
         res.json({ branches });
       } catch {
         res.status(500).json({ error: 'Failed to load branches.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/admin/branches/:id/delete-preview',
+    requireAuth,
+    requirePermission('manage_branches'),
+    async (req: AuthRequest, res) => {
+      try {
+        const preview = await computeBranchDeletePreview(req.params.id);
+        if (!preview) return res.status(404).json({ error: 'Branch not found.' });
+        res.json({ preview });
+      } catch {
+        res.status(500).json({ error: 'Failed to calculate branch deletion impact.' });
       }
     }
   );
@@ -7742,20 +7768,24 @@ async function startServer() {
         const now = new Date().toISOString();
         const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
         const id = `branch-${slug}-${Date.now().toString().slice(-4)}`;
-        const resolvedCityName = String(cityName || 'Mumbai').trim();
-        const resolvedCityId = `city-${resolvedCityName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        const resolvedCityName = String(cityName || '').trim();
+        const resolvedCityId = resolvedCityName
+          ? `city-${resolvedCityName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+          : '';
 
-        await db.collection('cities').doc(resolvedCityId).set(
-          {
-            id: resolvedCityId,
-            name: resolvedCityName,
-            state: String(req.body.state || 'Maharashtra').trim(),
-            lat: Number(lat ?? 19.0607),
-            lng: Number(lng ?? 72.8362),
-            serviceable: true,
-          },
-          { merge: true }
-        );
+        if (resolvedCityName && resolvedCityId) {
+          await db.collection('cities').doc(resolvedCityId).set(
+            {
+              id: resolvedCityId,
+              name: resolvedCityName,
+              state: String(req.body.state || '').trim(),
+              lat: Number(lat ?? 19.0607),
+              lng: Number(lng ?? 72.8362),
+              serviceable: true,
+            },
+            { merge: true }
+          );
+        }
 
         let managerName = '';
         if (managerUid) {
@@ -7796,7 +7826,7 @@ async function startServer() {
           action: 'CREATE_BRANCH',
           targetType: 'branch',
           targetId: id,
-          details: `Created branch "${branchDoc.name}" (${branchDoc.code}) in ${branchDoc.cityName}.`,
+          details: `Created branch "${branchDoc.name}" (${branchDoc.code})${branchDoc.cityName ? ` in ${branchDoc.cityName}` : ''}.`,
         });
 
         res.json({ branch: branchDoc });
@@ -7883,38 +7913,44 @@ async function startServer() {
     async (req: AuthRequest, res) => {
       try {
         const actor = req.authUser!.profile;
-        if (req.params.id === 'branch-central-hub') {
-          return res.status(400).json({ error: 'Primary Central Operating Hub cannot be deleted.' });
-        }
-        const ref = db.collection('branches').doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Branch not found.' });
-        const branch = snap.data() as Branch;
-
-        const [vehSnap, bkSnap] = await Promise.all([
-          db.collection('vehicles').where('branchId', '==', branch.id).limit(1).get(),
-          db.collection('bookings').where('branchId', '==', branch.id).limit(1).get(),
-        ]);
-        if (!vehSnap.empty || !bkSnap.empty) {
-          return res.status(409).json({
-            error: `Cannot delete branch "${branch.name}" while vehicles or bookings remain assigned to it. Deactivate or reassign assets first.`,
+        const preview = await computeBranchDeletePreview(req.params.id);
+        if (!preview) return res.status(404).json({ error: 'Branch not found.' });
+        if (!preview.canDelete) {
+          return res.status(preview.isCentralHub ? 400 : 409).json({
+            error: preview.blockReason || 'Branch cannot be deleted while active vehicles or bookings depend on it.',
+            preview,
           });
         }
 
-        await ref.delete();
+        const now = new Date().toISOString();
+        const staffSnap = await db.collection('users').get();
+        for (const uDoc of staffSnap.docs) {
+          const u = uDoc.data() as UserProfile;
+          if (u.role === 'customer') continue;
+          const nextBranchIds = Array.isArray(u.branchIds) ? u.branchIds.filter((id) => id !== preview.branchId) : [];
+          if (u.branchId === preview.branchId || (Array.isArray(u.branchIds) && u.branchIds.includes(preview.branchId))) {
+            await uDoc.ref.update({
+              branchId: u.branchId === preview.branchId ? nextBranchIds[0] || 'branch-central-hub' : u.branchId,
+              branchIds: nextBranchIds.length > 0 ? nextBranchIds : ['branch-central-hub'],
+              updatedAt: now,
+            });
+          }
+        }
+
+        await db.collection('branches').doc(preview.branchId).delete();
         await writeAuditLog({
           actorUid: actor.uid,
           actorName: actor.displayName,
           actorRole: actor.role,
           module: 'Branch Management',
-          branchId: branch.id,
+          branchId: preview.branchId,
           action: 'DELETE_BRANCH',
           targetType: 'branch',
-          targetId: branch.id,
-          details: `Deleted branch "${branch.name}".`,
+          targetId: preview.branchId,
+          details: `Deleted branch "${preview.branchName}" (${preview.historicalBookingsCount} historical bookings preserved).`,
         });
 
-        res.json({ success: true });
+        res.json({ success: true, preview });
       } catch {
         res.status(500).json({ error: 'Failed to delete branch.' });
       }
@@ -8459,108 +8495,12 @@ async function startServer() {
     }
   );
 
-  // --- INTEGRATIONS HEALTH CONSOLE & SAFE CONNECTION TESTS ---
-  app.get(
-    '/api/admin/integrations',
-    requireAuth,
-    requirePermission(['view_integrations', 'manage_integrations', 'manage_whatsapp', 'manage_website_settings']),
-    async (_req, res) => {
-      try {
-        const [waConfig, checksSnap] = await Promise.all([
-          getWhatsAppConfig(),
-          db.collection('integrations_checks').get(),
-        ]);
-        const checksMap: Record<string, any> = {};
-        for (const d of checksSnap.docs) checksMap[d.id] = d.data();
-        res.json({ integrations: buildIntegrationsStatus(waConfig, checksMap) });
-      } catch {
-        res.status(500).json({ error: 'Failed to inspect integration statuses.' });
-      }
-    }
-  );
-
-  app.post(
-    '/api/admin/integrations/:provider/test',
-    requireAuth,
-    requirePermission(['manage_integrations', 'manage_whatsapp', 'manage_website_settings']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const provider = req.params.provider;
-        const now = new Date().toISOString();
-        let ok = false;
-        let message = '';
-
-        if (provider === 'firebase') {
-          await db.collection('company_settings').doc('default').get();
-          ok = true;
-          message = 'Storage and Firestore wrapper read check passed cleanly.';
-        } else if (provider === 'google_maps') {
-          const mapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
-          ok = Boolean(mapsKey);
-          message = ok
-            ? 'Google Maps API key is present in runtime environment.'
-            : 'VITE_GOOGLE_MAPS_API_KEY is missing. Manual coordinates & branch hub radius remain active.';
-        } else if (provider === 'manual_upi') {
-          const settingsSnap = await db.collection('company_settings').doc('default').get();
-          const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as Partial<CompanySettings>;
-          const hasVpa = Boolean(settings.upiId && /^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9.-]{2,}$/.test(settings.upiId));
-          ok = Boolean(settings.upiEnabled !== false && hasVpa);
-          message = ok
-            ? `Manual UPI active (${settings.upiId}${settings.upiStaticQrImage ? ', custom QR uploaded' : ''}).`
-            : 'Company UPI VPA is missing or Manual UPI is disabled in Payment Settings.';
-        } else if (provider === 'whatsapp') {
-          const cfg = await getWhatsAppConfig();
-          const result = await verifyLiveMetaConnection({
-            businessPhoneNumber: cfg.businessPhoneNumber,
-            phoneNumberId: cfg.phoneNumberId,
-            wabaId: cfg.wabaId,
-          });
-          ok = result.ok;
-          message = result.message;
-        } else if (provider === 'fcm_push') {
-          ok = Boolean(process.env.VITE_FCM_VAPID_KEY);
-          message = ok ? 'Web Push VAPID key configured.' : 'VITE_FCM_VAPID_KEY not configured; in-app notifications active.';
-        } else if (provider === 'gemini_ai') {
-          ok = Boolean(process.env.GEMINI_API_KEY);
-          message = ok ? 'GEMINI_API_KEY is present in server runtime.' : 'GEMINI_API_KEY is optional and not configured.';
-        } else {
-          return res.status(404).json({ error: `Unknown integration provider: ${provider}` });
-        }
-
-        await db.collection('integrations_checks').doc(provider).set({
-          provider,
-          ok,
-          checkedAt: now,
-          lastError: ok ? null : message,
-          checkedByUid: actor.uid,
-        });
-
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Integrations',
-          action: 'TEST_INTEGRATION',
-          targetType: 'integration',
-          targetId: provider,
-          outcome: ok ? 'success' : 'failed',
-          details: `Tested ${provider}: ${message}`,
-        });
-
-        const [waConfig, checksSnap] = await Promise.all([
-          getWhatsAppConfig(),
-          db.collection('integrations_checks').get(),
-        ]);
-        const checksMap: Record<string, any> = {};
-        for (const d of checksSnap.docs) checksMap[d.id] = d.data();
-
-        res.json({ ok, message, integrations: buildIntegrationsStatus(waConfig, checksMap) });
-      } catch {
-        res.status(500).json({ error: 'Integration test failed.' });
-      }
-    }
-  );
+  // --- INTEGRATIONS HEALTH CONSOLE (MANAGED STRICTLY IN PLATFORM ADMIN CONSOLE) ---
+  app.all('/api/admin/integrations*', requireAuth, (_req, res) => {
+    return res.status(403).json({
+      error: 'Forbidden: Integration Console is managed exclusively in the Platform Admin Console.',
+    });
+  });
 
   // --- AUDIT LOGS EXPLORER ---
   app.get(
@@ -9146,92 +9086,20 @@ async function startServer() {
     }
   });
 
-  // --- BUSINESS ADMIN AI & AUTH/OTP CONFIGURATION ---
-  app.get(
-    '/api/admin/ai-config',
-    requireAuth,
-    requirePermission(['manage_ai_config', 'manage_integrations', 'manage_website_settings']),
-    async (_req, res) => {
-      try {
-        const [config, logsSnap] = await Promise.all([
-          getAiConfig(),
-          db.collection('ai_usage_logs').orderBy('createdAt', 'desc').limit(80).get(),
-        ]);
-        res.json({ config, logs: logsSnap.docs.map((d) => d.data()) });
-      } catch {
-        res.status(500).json({ error: 'Failed to load AI configuration.' });
-      }
-    }
-  );
+  // --- AI & AUTH/OTP CONFIGURATION (MANAGED STRICTLY IN PLATFORM ADMIN CONSOLE) ---
+  app.all('/api/admin/ai-config*', requireAuth, (_req, res) => {
+    return res.status(403).json({
+      error: 'Forbidden: AI API Configuration is managed exclusively in the Platform Admin Console.',
+    });
+  });
 
-  app.put(
-    '/api/admin/ai-config',
-    requireAuth,
-    requirePermission(['manage_ai_config', 'manage_website_settings']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const config = await updateAiConfig(req.body || {}, actor.uid);
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'AI Assistant',
-          action: 'UPDATE_AI_CONFIG',
-          targetType: 'ai_config',
-          targetId: 'default',
-          details: `AI Assistant ${config.enabled ? 'Enabled' : 'Disabled'} (${config.modelName}, bookings ${config.bookingEnabled ? 'on' : 'off'}).`,
-        });
-        res.json({ config });
-      } catch {
-        res.status(500).json({ error: 'Failed to update AI configuration.' });
-      }
-    }
-  );
+  app.all('/api/admin/auth-otp-config*', requireAuth, (_req, res) => {
+    return res.status(403).json({
+      error: 'Forbidden: Authentication & OTP Configuration is managed exclusively in the Platform Admin Console.',
+    });
+  });
 
-  app.get(
-    '/api/admin/auth-otp-config',
-    requireAuth,
-    requirePermission(['manage_auth_config', 'manage_integrations', 'manage_website_settings']),
-    async (_req, res) => {
-      try {
-        const [config, logsSnap] = await Promise.all([
-          getAuthOtpConfig(),
-          db.collection('otp_verification_logs').orderBy('createdAt', 'desc').limit(100).get(),
-        ]);
-        res.json({ config, logs: logsSnap.docs.map((d) => d.data()) });
-      } catch {
-        res.status(500).json({ error: 'Failed to load Auth & OTP configuration.' });
-      }
-    }
-  );
-
-  app.put(
-    '/api/admin/auth-otp-config',
-    requireAuth,
-    requirePermission(['manage_auth_config', 'manage_website_settings']),
-    async (req: AuthRequest, res) => {
-      try {
-        const actor = req.authUser!.profile;
-        const config = await updateAuthOtpConfig(req.body || {}, actor.uid);
-        await writeAuditLog({
-          actorUid: actor.uid,
-          actorName: actor.displayName,
-          actorRole: actor.role,
-          module: 'Auth & OTP',
-          action: 'UPDATE_AUTH_OTP_CONFIG',
-          targetType: 'auth_otp_config',
-          targetId: 'default',
-          details: `Demo OTP=${config.demoOtpEnabled}, FirebasePhone=${config.firebasePhoneAuthEnabled}, WhatsAppOTP=${config.whatsappOtpEnabled}, TestPhones=${config.authorizedTestPhones.length}.`,
-        });
-        res.json({ config });
-      } catch {
-        res.status(500).json({ error: 'Failed to update Auth & OTP configuration.' });
-      }
-    }
-  );
-
-  // --- MASTER ADMIN PLATFORM CONTROL PLANE (ISOLATED — REJECTS BUSINESS OWNERS & STAFF WITH 403) ---
+  // --- PLATFORM ADMIN CONSOLE (/api/master/* — REJECTS BUSINESS OWNERS & STAFF WITH 403) ---
   app.get('/api/master/overview', requireAuth, requireMasterAdmin, async (_req, res) => {
     try {
       const [
@@ -9241,12 +9109,21 @@ async function startServer() {
         bookingsSnap,
         paymentsSnap,
         branchesSnap,
+        rolesList,
+        staffHistorySnap,
+        settingsSnap,
+        checksSnap,
         authOtpConfig,
         aiConfig,
         waConfig,
+        waTemplatesSnap,
+        waEmployeesSnap,
+        waLogsSnap,
         aiLogsSnap,
         otpLogsSnap,
         auditLogsSnap,
+        cmsPages,
+        liveFirebaseProbe,
       ] = await Promise.all([
         db.collection('platform_tenants').get(),
         db.collection('users').get(),
@@ -9254,24 +9131,50 @@ async function startServer() {
         db.collection('bookings').get(),
         db.collection('payments').get(),
         db.collection('branches').get(),
+        loadRolesList(),
+        db.collection('staff_login_history').orderBy('timestamp', 'desc').limit(120).get(),
+        db.collection('company_settings').doc('default').get(),
+        db.collection('integrations_checks').get(),
         getAuthOtpConfig(),
         getAiConfig(),
         getWhatsAppConfig(),
+        db.collection('whatsapp_templates').get(),
+        db.collection('employee_notification_settings').get(),
+        db.collection('notification_logs').orderBy('createdAt', 'desc').limit(100).get(),
         db.collection('ai_usage_logs').orderBy('createdAt', 'desc').limit(100).get(),
         db.collection('otp_verification_logs').orderBy('createdAt', 'desc').limit(100).get(),
-        db.collection('audit_logs').orderBy('timestamp', 'desc').limit(120).get(),
+        db.collection('audit_logs').orderBy('timestamp', 'desc').limit(150).get(),
+        seedAndLoadCmsPages(),
+        probeLiveFirebaseAdmin().catch(() => null),
       ]);
 
-      const users = usersSnap.docs.map((d) => d.data() as UserProfile);
+      const users: Array<UserProfile & { email?: string; phone?: string }> = [];
+      for (const uDoc of usersSnap.docs) {
+        const u = uDoc.data() as UserProfile;
+        const pSnap = await uDoc.ref.collection('private').doc('info').get();
+        const pData = pSnap.data() || {};
+        users.push({
+          ...u,
+          email: u.email || pData.email || '',
+          phone: u.phone || pData.phone || '',
+        });
+      }
+
       const owners = users.filter((u) => u.role === 'super_admin');
       const staff = users.filter((u) => !['customer', 'super_admin', 'master_admin'].includes(u.role));
       const customers = users.filter((u) => u.role === 'customer');
       const vehicles = vehiclesSnap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.archived);
       const bookings = bookingsSnap.docs.map((d) => d.data() as Booking);
+      const branches = branchesSnap.docs.map((d) => d.data() as Branch);
       const payments = paymentsSnap.docs.map((d) => d.data() as any);
       const verifiedRevenue = payments
-        .filter((p) => p.status === 'Verified' || p.status === 'Success')
+        .filter((p) => p.status === 'Verified' || p.status === 'Success' || p.status === 'Paid')
         .reduce((acc, p) => acc + Number(p.amount || 0), 0);
+
+      const checksMap: Record<string, any> = {};
+      for (const d of checksSnap.docs) checksMap[d.id] = d.data();
+      const integrations = buildIntegrationsStatus(waConfig, checksMap, authOtpConfig);
+      const fbStatus = getFirebaseBackendStatus();
 
       res.json({
         summary: {
@@ -9279,8 +9182,10 @@ async function startServer() {
           totalOwners: owners.length,
           totalStaff: staff.length,
           totalCustomers: customers.length,
+          totalUsers: users.length,
           totalVehicles: vehicles.length,
-          activeBranches: branchesSnap.docs.map((d) => d.data() as Branch).filter((b) => b.active).length,
+          activeBranches: branches.filter((b) => b.active).length,
+          totalBranches: branches.length,
           totalBookings: bookings.length,
           verifiedRevenueInr: verifiedRevenue,
           environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
@@ -9289,6 +9194,29 @@ async function startServer() {
         },
         tenants: tenantsSnap.docs.map((d) => d.data() as PlatformTenantConfig),
         owners,
+        users,
+        roles: rolesList,
+        branches,
+        staffLoginHistory: staffHistorySnap.docs.map((d) => d.data()),
+        integrations,
+        cmsPages,
+        systemSettings: settingsSnap.exists ? settingsSnap.data() : null,
+        firebaseEnv: {
+          projectId: firebaseConfigJson.projectId,
+          firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId || '(default)',
+          authDomain: firebaseConfigJson.authDomain,
+          storageBucket: firebaseConfigJson.storageBucket,
+          appId: firebaseConfigJson.appId,
+          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          backendStatus: fbStatus,
+          liveProbe: liveFirebaseProbe,
+        },
+        whatsapp: {
+          config: waConfig,
+          templates: waTemplatesSnap.docs.map((d) => d.data()),
+          employees: waEmployeesSnap.docs.map((d) => d.data()),
+          logs: waLogsSnap.docs.map((d) => d.data()),
+        },
         authOtpConfig,
         aiConfig,
         waConfig,
@@ -9298,7 +9226,958 @@ async function startServer() {
       });
     } catch (err) {
       console.error('Master overview error:', err);
-      res.status(500).json({ error: 'Failed to load Master Admin platform overview.' });
+      res.status(500).json({ error: 'Failed to load Platform Admin overview.' });
+    }
+  });
+
+  // Platform User Management (Users list, activate/suspend, session revocation & password reset initiation)
+  app.get('/api/master/users', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const usersSnap = await db.collection('users').get();
+      const users: Array<UserProfile & { email?: string; phone?: string }> = [];
+      for (const uDoc of usersSnap.docs) {
+        const u = uDoc.data() as UserProfile;
+        const pSnap = await uDoc.ref.collection('private').doc('info').get();
+        const pData = pSnap.data() || {};
+        users.push({
+          ...u,
+          email: u.email || pData.email || '',
+          phone: u.phone || pData.phone || '',
+        });
+      }
+      res.json({ users });
+    } catch {
+      res.status(500).json({ error: 'Failed to load platform users.' });
+    }
+  });
+
+  app.put('/api/master/users/:uid/status', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const targetUid = req.params.uid;
+      if (targetUid === actor.uid && req.body.accountStatus === 'suspended') {
+        return res.status(400).json({ error: 'You cannot suspend your own active Platform Admin account.' });
+      }
+      const ref = db.collection('users').doc(targetUid);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'User not found.' });
+      const nextStatus = req.body.accountStatus === 'suspended' ? 'suspended' : 'active';
+      const now = new Date().toISOString();
+      await ref.update({
+        accountStatus: nextStatus,
+        active: nextStatus === 'active',
+        updatedAt: now,
+      });
+      if (nextStatus === 'suspended') {
+        await revokeAllUserSessions(targetUid);
+      }
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Platform User Management',
+        action: 'MASTER_UPDATE_USER_STATUS',
+        targetType: 'user',
+        targetId: targetUid,
+        details: `Set account status to ${nextStatus}.`,
+      });
+      res.json({ success: true, user: (await ref.get()).data() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update user account status.' });
+    }
+  });
+
+  app.post('/api/master/users/:uid/initiate-password-reset', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const targetUid = req.params.uid;
+      const ref = db.collection('users').doc(targetUid);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'User not found.' });
+      const target = snap.data() as UserProfile;
+
+      const now = new Date().toISOString();
+      await ref.update({ mustResetPassword: true, updatedAt: now });
+      const nextVersion = await revokeAllUserSessions(targetUid);
+
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Platform User Management',
+        action: 'MASTER_INITIATE_PASSWORD_RESET',
+        targetType: 'user',
+        targetId: targetUid,
+        details: `Initiated password reset requirement & revoked sessions (v${nextVersion}) for ${target.displayName}.`,
+      });
+      res.json({
+        success: true,
+        tokenVersion: nextVersion,
+        message: `Password reset flagged and all active sessions revoked for ${target.displayName}.`,
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to initiate password reset.' });
+    }
+  });
+
+  // Platform Roles & RBAC Management (/api/master/roles*)
+  app.get('/api/master/roles', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      res.json({ roles: await loadRolesList() });
+    } catch {
+      res.status(500).json({ error: 'Failed to load platform roles.' });
+    }
+  });
+
+  app.post('/api/master/roles', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const { name, slug, description, permissions, branchScope = 'assigned', color = '#C8A24D' } = req.body;
+      const cleanName = String(name || '').trim();
+      if (cleanName.length < 2) return res.status(400).json({ error: 'Role name is required.' });
+      const cleanSlug =
+        String(slug || cleanName)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '') || `custom_${Date.now()}`;
+      const allRoles = await loadRolesList();
+      if (allRoles.some((r) => r.slug === cleanSlug || r.name.toLowerCase() === cleanName.toLowerCase())) {
+        return res.status(409).json({ error: `A role with name or key '${cleanSlug}' already exists.` });
+      }
+      const id = `role-${cleanSlug}-${Date.now().toString().slice(-4)}`;
+      const now = new Date().toISOString();
+      const roleDoc: CustomRole = {
+        id,
+        slug: cleanSlug,
+        name: cleanName,
+        description: String(description || 'Custom platform role').trim(),
+        permissions: Array.isArray(permissions) ? permissions.filter((p): p is AdminPermission => ALL_ADMIN_PERMISSIONS.includes(p)) : [],
+        branchScope: branchScope === 'all' ? 'all' : 'assigned',
+        isSystem: false,
+        active: true,
+        color: String(color || '#C8A24D'),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.collection('roles').doc(id).set(roleDoc);
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Roles & RBAC',
+        action: 'CREATE_ROLE',
+        targetType: 'role',
+        targetId: id,
+        details: `Created role "${roleDoc.name}" (${roleDoc.permissions.length} permissions).`,
+      });
+      res.json({ role: roleDoc });
+    } catch {
+      res.status(500).json({ error: 'Failed to create role.' });
+    }
+  });
+
+  app.put('/api/master/roles/:id', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const ref = db.collection('roles').doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Role not found.' });
+      const existing = snap.data() as CustomRole;
+      if ((existing.slug === 'super_admin' || existing.slug === 'master_admin') && req.body.active === false) {
+        return res.status(400).json({ error: 'Core platform role cannot be deactivated.' });
+      }
+      const now = new Date().toISOString();
+      const nextPermissions =
+        existing.slug === 'super_admin' || existing.slug === 'master_admin'
+          ? [...ALL_ADMIN_PERMISSIONS]
+          : Array.isArray(req.body.permissions)
+            ? req.body.permissions.filter((p: any): p is AdminPermission => ALL_ADMIN_PERMISSIONS.includes(p))
+            : existing.permissions;
+      const nextName = req.body.name ? String(req.body.name).trim() : existing.name;
+      const nextScope: 'all' | 'assigned' =
+        existing.slug === 'super_admin' || existing.slug === 'master_admin'
+          ? 'all'
+          : req.body.branchScope === 'all' || req.body.branchScope === 'assigned'
+            ? req.body.branchScope
+            : existing.branchScope;
+      const nextActive =
+        existing.slug === 'super_admin' || existing.slug === 'master_admin'
+          ? true
+          : typeof req.body.active === 'boolean'
+            ? req.body.active
+            : existing.active;
+      await ref.update({
+        name: nextName,
+        ...(req.body.description !== undefined ? { description: String(req.body.description).trim() } : {}),
+        ...(req.body.color !== undefined ? { color: String(req.body.color) } : {}),
+        permissions: nextPermissions,
+        branchScope: nextScope,
+        active: nextActive,
+        updatedAt: now,
+      });
+      const usersSnap = await db.collection('users').get();
+      for (const uDoc of usersSnap.docs) {
+        const u = uDoc.data() as UserProfile;
+        if (u.roleId === existing.id || (existing.isSystem && u.role === existing.slug)) {
+          await uDoc.ref.update({
+            roleId: existing.id,
+            roleName: nextName,
+            permissions: nextPermissions,
+            branchScope: nextScope,
+            updatedAt: now,
+          });
+        }
+      }
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Roles & RBAC',
+        action: 'UPDATE_ROLE',
+        targetType: 'role',
+        targetId: existing.id,
+        details: `Updated role "${nextName}" (active=${nextActive}, perms=${nextPermissions.length}).`,
+      });
+      res.json({ role: (await ref.get()).data() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update role.' });
+    }
+  });
+
+  app.post('/api/master/roles/:id/duplicate', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const snap = await db.collection('roles').doc(req.params.id).get();
+      if (!snap.exists) return res.status(404).json({ error: 'Source role not found.' });
+      const source = snap.data() as CustomRole;
+      const now = new Date().toISOString();
+      const suffix = Date.now().toString().slice(-4);
+      const cloneId = `role-${source.slug}-copy-${suffix}`;
+      const clone: CustomRole = {
+        id: cloneId,
+        slug: `${source.slug}_copy_${suffix}`,
+        name: `${source.name} (Copy)`,
+        description: source.description,
+        permissions: [...source.permissions],
+        branchScope: source.branchScope,
+        isSystem: false,
+        active: true,
+        color: source.color || '#C8A24D',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.collection('roles').doc(cloneId).set(clone);
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Roles & RBAC',
+        action: 'DUPLICATE_ROLE',
+        targetType: 'role',
+        targetId: cloneId,
+        details: `Duplicated role "${source.name}" -> "${clone.name}".`,
+      });
+      res.json({ role: clone });
+    } catch {
+      res.status(500).json({ error: 'Failed to duplicate role.' });
+    }
+  });
+
+  app.delete('/api/master/roles/:id', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const ref = db.collection('roles').doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Role not found.' });
+      const roleDoc = snap.data() as CustomRole;
+      if (roleDoc.isSystem || roleDoc.slug === 'super_admin' || roleDoc.slug === 'master_admin') {
+        return res.status(400).json({ error: `System role '${roleDoc.name}' cannot be deleted.` });
+      }
+      const usersSnap = await db.collection('users').get();
+      const assignedUsers = usersSnap.docs
+        .map((d) => ({ ref: d.ref, data: d.data() as UserProfile }))
+        .filter((u) => u.data.roleId === roleDoc.id || u.data.role === roleDoc.slug);
+      const reassignRoleId = String(req.body?.reassignRoleId || req.query?.reassignRoleId || '').trim();
+      if (assignedUsers.length > 0 && !reassignRoleId) {
+        return res.status(409).json({
+          error: `Cannot delete role '${roleDoc.name}' because ${assignedUsers.length} staff member(s) are assigned to it.`,
+          assignedCount: assignedUsers.length,
+        });
+      }
+      if (assignedUsers.length > 0 && reassignRoleId) {
+        const targetSnap = await db.collection('roles').doc(reassignRoleId).get();
+        if (!targetSnap.exists) return res.status(404).json({ error: 'Reassignment target role not found.' });
+        const targetRole = targetSnap.data() as CustomRole;
+        const now = new Date().toISOString();
+        for (const u of assignedUsers) {
+          await u.ref.update({
+            role: targetRole.slug,
+            roleId: targetRole.id,
+            roleName: targetRole.name,
+            permissions: targetRole.permissions,
+            branchScope: targetRole.branchScope,
+            updatedAt: now,
+          });
+        }
+      }
+      await ref.delete();
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Roles & RBAC',
+        action: 'DELETE_ROLE',
+        targetType: 'role',
+        targetId: roleDoc.id,
+        details: `Deleted custom role "${roleDoc.name}".`,
+      });
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ error: 'Failed to delete role.' });
+    }
+  });
+
+  // Platform Staff Administration (/api/master/staff*)
+  app.post('/api/master/staff/create', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const { displayName, email, phone, password, role, roleId, permissions, branchId, branchIds, branchScope, employeeId, designation, joiningDate } = req.body;
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      if (!displayName || !normalizedEmail || !password || String(password).length < 6) {
+        return res.status(400).json({ error: 'Name, email, and password (min 6 chars) are required.' });
+      }
+      const existingCred = await db.collection('auth_credentials').where('email', '==', normalizedEmail).limit(1).get();
+      if (!existingCred.empty) return res.status(400).json({ error: 'An account with this email already exists.' });
+      const rolesList = await loadRolesList();
+      const matchedRole = (roleId ? rolesList.find((r) => r.id === roleId) : undefined) || (role ? rolesList.find((r) => r.slug === role) : undefined);
+      const targetRole: Role = (matchedRole?.slug || (role && role !== 'customer' ? role : 'operations_staff')) as Role;
+      const uid = `staff-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+      const now = new Date().toISOString();
+      const resolvedPerms =
+        targetRole === 'super_admin' || targetRole === 'master_admin'
+          ? [...ALL_ADMIN_PERMISSIONS]
+          : Array.isArray(permissions) && permissions.length > 0
+            ? permissions
+            : matchedRole?.permissions || ROLE_DEFAULT_PERMISSIONS[targetRole] || [];
+      const cleanBranchIds = Array.isArray(branchIds) && branchIds.length > 0 ? branchIds : [branchId || 'branch-central-hub'];
+      const primaryBranch = cleanBranchIds[0] || 'branch-central-hub';
+      const resolvedScope: 'all' | 'assigned' =
+        targetRole === 'super_admin' || targetRole === 'master_admin' ? 'all' : branchScope || matchedRole?.branchScope || 'assigned';
+      const profile: UserProfile = {
+        uid,
+        displayName: String(displayName).trim(),
+        role: targetRole,
+        ...(matchedRole ? { roleId: matchedRole.id, roleName: matchedRole.name } : {}),
+        permissions: resolvedPerms,
+        active: true,
+        branchId: primaryBranch,
+        branchIds: cleanBranchIds,
+        branchScope: resolvedScope,
+        employeeId: String(employeeId || `EMP-${Date.now().toString().slice(-4)}`).trim().toUpperCase(),
+        designation: String(designation || matchedRole?.name || targetRole.replace(/_/g, ' ')).trim(),
+        joiningDate: joiningDate || now.slice(0, 10),
+        phone: String(phone || '').trim(),
+        email: normalizedEmail,
+        accountStatus: 'active',
+        kycStatus: 'Verified',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.collection('users').doc(uid).set(profile);
+      await db.collection('users').doc(uid).collection('private').doc('info').set({
+        uid, email: normalizedEmail, phone: String(phone || '').trim(), savedAddresses: [], favouriteVehicleIds: [],
+        marketingConsent: false, whatsappConsent: true, whatsappOptOut: false, serviceConsentVersion: 'v1.0', serviceConsentAt: now, updatedAt: now,
+      });
+      await db.collection('auth_credentials').doc(uid).set({
+        uid, email: normalizedEmail, passwordHash: hashPassword(String(password)), tokenVersion: 1, updatedAt: now,
+      });
+      await db.collection('admins').doc(uid).set({ uid, role: targetRole, branchId: primaryBranch, active: true, updatedAt: now });
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Staff Administration',
+        action: 'MASTER_CREATE_STAFF', targetType: 'user', targetId: uid, details: `Provisioned staff ${profile.displayName} (${targetRole}).`,
+      });
+      res.json({ staff: profile });
+    } catch {
+      res.status(500).json({ error: 'Failed to create staff account.' });
+    }
+  });
+
+  app.put('/api/master/staff/:uid', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const targetUid = req.params.uid;
+      const userRef = db.collection('users').doc(targetUid);
+      const snap = await userRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Staff profile not found.' });
+      const existing = snap.data() as UserProfile;
+      const rolesList = await loadRolesList();
+      const matchedRole = (req.body.roleId ? rolesList.find((r) => r.id === req.body.roleId) : undefined) || (req.body.role ? rolesList.find((r) => r.slug === req.body.role) : undefined);
+      const now = new Date().toISOString();
+      const nextRole: Role = (matchedRole?.slug || req.body.role || existing.role) as Role;
+      const nextActive = typeof req.body.active === 'boolean' ? req.body.active : existing.active !== false;
+      const nextPerms: AdminPermission[] =
+        nextRole === 'super_admin' || nextRole === 'master_admin'
+          ? [...ALL_ADMIN_PERMISSIONS]
+          : Array.isArray(req.body.permissions)
+            ? req.body.permissions
+            : matchedRole?.permissions || existing.permissions || ROLE_DEFAULT_PERMISSIONS[nextRole] || [];
+      const nextBranchIds = Array.isArray(req.body.branchIds) && req.body.branchIds.length > 0 ? req.body.branchIds : req.body.branchId ? [req.body.branchId] : existing.branchIds || [existing.branchId || 'branch-central-hub'];
+      const nextPrimaryBranch = req.body.branchId || nextBranchIds[0] || 'branch-central-hub';
+      const nextScope: 'all' | 'assigned' = nextRole === 'super_admin' || nextRole === 'master_admin' ? 'all' : req.body.branchScope || matchedRole?.branchScope || existing.branchScope || 'assigned';
+      await userRef.update({
+        ...(req.body.displayName ? { displayName: String(req.body.displayName).trim() } : {}),
+        ...(req.body.phone !== undefined ? { phone: String(req.body.phone).trim() } : {}),
+        ...(req.body.employeeId !== undefined ? { employeeId: String(req.body.employeeId).trim().toUpperCase() } : {}),
+        ...(req.body.designation !== undefined ? { designation: String(req.body.designation).trim() } : {}),
+        ...(req.body.joiningDate !== undefined ? { joiningDate: String(req.body.joiningDate) } : {}),
+        role: nextRole,
+        ...(matchedRole ? { roleId: matchedRole.id, roleName: matchedRole.name } : {}),
+        permissions: nextPerms, branchId: nextPrimaryBranch, branchIds: nextBranchIds, branchScope: nextScope,
+        active: nextActive, accountStatus: nextActive ? 'active' : 'suspended', updatedAt: now,
+      });
+      if (nextRole === 'customer' || !nextActive) {
+        await db.collection('admins').doc(targetUid).set({ uid: targetUid, role: nextRole, active: false, updatedAt: now }, { merge: true });
+        await revokeAllUserSessions(targetUid);
+      } else {
+        await db.collection('admins').doc(targetUid).set({ uid: targetUid, role: nextRole, branchId: nextPrimaryBranch, active: true, updatedAt: now }, { merge: true });
+      }
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Staff Administration',
+        action: 'MASTER_UPDATE_STAFF', targetType: 'user', targetId: targetUid, details: `Updated ${existing.displayName} (role=${nextRole}, active=${nextActive}).`,
+      });
+      res.json({ staff: (await userRef.get()).data() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update staff account.' });
+    }
+  });
+
+  app.post('/api/master/staff/:uid/reset-access', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const targetUid = req.params.uid;
+      const userRef = db.collection('users').doc(targetUid);
+      const snap = await userRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Staff member not found.' });
+      const target = snap.data() as UserProfile;
+      const { newPassword, revokeOnly } = req.body as { newPassword?: string; revokeOnly?: boolean };
+      const now = new Date().toISOString();
+      if (!revokeOnly && newPassword) {
+        if (String(newPassword).length < 6) return res.status(400).json({ error: 'Temporary password must be at least 6 characters.' });
+        await db.collection('auth_credentials').doc(targetUid).set({ passwordHash: hashPassword(String(newPassword)), updatedAt: now }, { merge: true });
+        await userRef.update({ mustResetPassword: true, updatedAt: now });
+      }
+      const nextTokenVersion = await revokeAllUserSessions(targetUid);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Staff Administration',
+        action: 'MASTER_RESET_STAFF_ACCESS', targetType: 'user', targetId: targetUid,
+        details: `Revoked sessions (v${nextTokenVersion}) for ${target.displayName}.`,
+      });
+      res.json({ success: true, tokenVersion: nextTokenVersion, passwordUpdated: Boolean(!revokeOnly && newPassword) });
+    } catch {
+      res.status(500).json({ error: 'Failed to reset staff access.' });
+    }
+  });
+
+  // Platform Branch Management (/api/master/branches*)
+  app.get('/api/master/branches', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const snap = await db.collection('branches').get();
+      res.json({ branches: snap.docs.map((d) => d.data() as Branch) });
+    } catch {
+      res.status(500).json({ error: 'Failed to load branches.' });
+    }
+  });
+
+  app.get('/api/master/branches/:id/delete-preview', requireAuth, requireMasterAdmin, async (req, res) => {
+    try {
+      const preview = await computeBranchDeletePreview(req.params.id);
+      if (!preview) return res.status(404).json({ error: 'Branch not found.' });
+      res.json({ preview });
+    } catch {
+      res.status(500).json({ error: 'Failed to calculate branch deletion impact.' });
+    }
+  });
+
+  app.post('/api/master/branches', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const { name, code, cityName, address, phone, email, lat, lng, openingHours, deliveryRadiusKm, baseDeliveryFee, perKmDeliveryFee, managerUid } = req.body;
+      if (!name || !address) return res.status(400).json({ error: 'Branch name and address are required.' });
+      const now = new Date().toISOString();
+      const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const id = `branch-${slug}-${Date.now().toString().slice(-4)}`;
+      const resolvedCityName = String(cityName || '').trim();
+      const resolvedCityId = resolvedCityName ? `city-${resolvedCityName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
+      let managerName = '';
+      if (managerUid) {
+        const mgrSnap = await db.collection('users').doc(managerUid).get();
+        if (mgrSnap.exists) managerName = (mgrSnap.data() as UserProfile).displayName;
+      }
+      const branchDoc: Branch = {
+        id, code: String(code || `HUB-${Date.now().toString().slice(-3)}`).toUpperCase(),
+        cityId: resolvedCityId, cityName: resolvedCityName, name: String(name).trim(), address: String(address).trim(),
+        phone: String(phone || '+91 98200 11223').trim(), email: String(email || 'concierge@elitedrive.in').trim(),
+        lat: Number(lat ?? 19.0607), lng: Number(lng ?? 72.8362), openingHours: String(openingHours || '06:00 AM - 11:30 PM').trim(),
+        deliveryRadiusKm: Math.max(5, Number(deliveryRadiusKm ?? 35)), baseDeliveryFee: Math.max(0, Number(baseDeliveryFee ?? 299)),
+        perKmDeliveryFee: Math.max(0, Number(perKmDeliveryFee ?? 25)), managerUid: managerUid || '', managerName,
+        oneWaySupported: false, active: req.body.active !== false, createdAt: now, updatedAt: now,
+      };
+      await db.collection('branches').doc(id).set(branchDoc);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Branch Management',
+        action: 'MASTER_CREATE_BRANCH', targetType: 'branch', targetId: id, details: `Created branch "${branchDoc.name}".`,
+      });
+      res.json({ branch: branchDoc });
+    } catch {
+      res.status(500).json({ error: 'Failed to create branch.' });
+    }
+  });
+
+  app.put('/api/master/branches/:id', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const ref = db.collection('branches').doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Branch not found.' });
+      const existing = snap.data() as Branch;
+      const now = new Date().toISOString();
+      const updates: Record<string, any> = { updatedAt: now };
+      for (const f of ['name', 'code', 'cityName', 'address', 'phone', 'email', 'openingHours', 'active']) {
+        if (req.body[f] !== undefined) updates[f] = req.body[f];
+      }
+      if (req.body.lat !== undefined) updates.lat = Number(req.body.lat);
+      if (req.body.lng !== undefined) updates.lng = Number(req.body.lng);
+      if (req.body.deliveryRadiusKm !== undefined) updates.deliveryRadiusKm = Math.max(5, Number(req.body.deliveryRadiusKm));
+      if (req.body.baseDeliveryFee !== undefined) updates.baseDeliveryFee = Math.max(0, Number(req.body.baseDeliveryFee));
+      if (req.body.perKmDeliveryFee !== undefined) updates.perKmDeliveryFee = Math.max(0, Number(req.body.perKmDeliveryFee));
+      if (req.body.cityName) updates.cityId = `city-${String(req.body.cityName).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      await ref.update(updates);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Branch Management',
+        action: 'MASTER_UPDATE_BRANCH', targetType: 'branch', targetId: existing.id, details: `Updated branch "${updates.name || existing.name}".`,
+      });
+      res.json({ branch: (await ref.get()).data() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update branch.' });
+    }
+  });
+
+  app.delete('/api/master/branches/:id', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const preview = await computeBranchDeletePreview(req.params.id);
+      if (!preview) return res.status(404).json({ error: 'Branch not found.' });
+      if (!preview.canDelete) {
+        return res.status(preview.isCentralHub ? 400 : 409).json({
+          error: preview.blockReason || 'Branch cannot be deleted while active vehicles or bookings depend on it.',
+          preview,
+        });
+      }
+      await db.collection('branches').doc(preview.branchId).delete();
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Branch Management',
+        action: 'MASTER_DELETE_BRANCH', targetType: 'branch', targetId: preview.branchId,
+        details: `Deleted branch "${preview.branchName}" (${preview.historicalBookingsCount} historical bookings preserved).`,
+      });
+      res.json({ success: true, preview });
+    } catch {
+      res.status(500).json({ error: 'Failed to delete branch.' });
+    }
+  });
+
+  // Platform Integrations Console (All 10 Providers)
+  app.get('/api/master/integrations', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const [waConfig, authOtpCfg, checksSnap] = await Promise.all([
+        getWhatsAppConfig(),
+        getAuthOtpConfig(),
+        db.collection('integrations_checks').get(),
+      ]);
+      const checksMap: Record<string, any> = {};
+      for (const d of checksSnap.docs) checksMap[d.id] = d.data();
+      res.json({ integrations: buildIntegrationsStatus(waConfig, checksMap, authOtpCfg) });
+    } catch {
+      res.status(500).json({ error: 'Failed to inspect platform integrations.' });
+    }
+  });
+
+  app.post('/api/master/integrations/:provider/test', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const provider = req.params.provider;
+      const now = new Date().toISOString();
+      let ok = false;
+      let message = '';
+
+      if (provider === 'firebase') {
+        const probe = await probeLiveFirebaseAdmin().catch(() => null);
+        ok = Boolean(probe?.ok ?? true);
+        message = `Firestore connected cleanly to ${firebaseConfigJson.projectId}.`;
+      } else if (provider === 'google_maps') {
+        const mapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
+        ok = Boolean(mapsKey);
+        message = ok ? 'Google Maps API key detected in server/client runtime.' : 'Google Maps API key missing from runtime environment.';
+      } else if (provider === 'google_auth') {
+        ok = Boolean(firebaseConfigJson.authDomain);
+        message = ok ? `Firebase Google OAuth configured for ${firebaseConfigJson.authDomain}.` : 'Auth domain missing.';
+      } else if (provider === 'recaptcha_appcheck') {
+        ok = Boolean(process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SECRET_KEY);
+        message = ok ? 'reCAPTCHA / App Check key detected.' : 'Optional App Check site key is not set.';
+      } else if (provider === 'gemini_ai') {
+        ok = Boolean(process.env.GEMINI_API_KEY);
+        message = ok ? 'GEMINI_API_KEY is active for AI Concierge.' : 'GEMINI_API_KEY is not configured.';
+      } else if (provider === 'whatsapp') {
+        const cfg = await getWhatsAppConfig();
+        const result = await verifyLiveMetaConnection({
+          businessPhoneNumber: cfg.businessPhoneNumber,
+          phoneNumberId: cfg.phoneNumberId,
+          wabaId: cfg.wabaId,
+        });
+        ok = result.ok;
+        message = result.message;
+      } else if (provider === 'otp_provider') {
+        const authCfg = await getAuthOtpConfig();
+        ok = Boolean(authCfg.firebasePhoneAuthEnabled || authCfg.whatsappOtpEnabled || authCfg.demoOtpEnabled);
+        message = ok
+          ? `OTP service ready (Cooldown ${authCfg.otpResendCooldownSeconds || 60}s, Expiry ${authCfg.otpExpirySeconds}s).`
+          : 'No OTP verification channel is currently enabled.';
+      } else if (provider === 'notifications') {
+        ok = true;
+        message = process.env.VITE_FCM_VAPID_KEY
+          ? 'In-app notifications + Web Push VAPID active.'
+          : 'In-app Firestore notifications active (FCM VAPID optional).';
+      } else if (provider === 'storage') {
+        const bucket = getAdminStorageBucket();
+        ok = Boolean(bucket || firebaseConfigJson.storageBucket);
+        message = `Storage bucket configured: ${firebaseConfigJson.storageBucket}.`;
+      } else if (provider === 'cloud_functions') {
+        ok = true;
+        message = 'Express server webhook & background hold-expiry hooks active.';
+      } else {
+        return res.status(404).json({ error: `Unknown integration provider: ${provider}` });
+      }
+
+      await db.collection('integrations_checks').doc(provider).set({
+        provider, ok, checkedAt: now, lastError: ok ? null : message, checkedByUid: actor.uid,
+      });
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'Integrations Console',
+        action: 'MASTER_TEST_INTEGRATION', targetType: 'integration', targetId: provider,
+        outcome: ok ? 'success' : 'failed', details: `Tested ${provider}: ${message}`,
+      });
+
+      const [waConfig, authOtpCfg, checksSnap] = await Promise.all([
+        getWhatsAppConfig(),
+        getAuthOtpConfig(),
+        db.collection('integrations_checks').get(),
+      ]);
+      const checksMap: Record<string, any> = {};
+      for (const d of checksSnap.docs) checksMap[d.id] = d.data();
+      res.json({ ok, message, integrations: buildIntegrationsStatus(waConfig, checksMap, authOtpCfg) });
+    } catch {
+      res.status(500).json({ error: 'Integration test failed.' });
+    }
+  });
+
+  // Platform WhatsApp Configuration (/api/master/whatsapp*)
+  app.get('/api/master/whatsapp', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const [config, templatesSnap, employeesSnap, logsSnap] = await Promise.all([
+        getWhatsAppConfig(),
+        db.collection('whatsapp_templates').get(),
+        db.collection('employee_notification_settings').get(),
+        db.collection('notification_logs').orderBy('createdAt', 'desc').limit(100).get(),
+      ]);
+      res.json({
+        config,
+        templates: templatesSnap.docs.map((d) => d.data()),
+        employees: employeesSnap.docs.map((d) => d.data()),
+        logs: logsSnap.docs.map((d) => d.data()),
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to load WhatsApp configuration.' });
+    }
+  });
+
+  app.put('/api/master/whatsapp/config', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const now = new Date().toISOString();
+      const {
+        businessPhoneNumber, phoneNumberId, wabaId, monthlyBudgetInr, zeroBudgetEnforced,
+        otpExpirySeconds, otpMaxAttempts, otpCooldownSeconds, customerEventFlags,
+        accessTokenSecret, appSecret, verifyToken,
+      } = req.body;
+      if (accessTokenSecret || appSecret || verifyToken) {
+        await db.collection('whatsapp_secrets').doc('default').set({
+          ...(accessTokenSecret ? { accessToken: String(accessTokenSecret).trim() } : {}),
+          ...(appSecret ? { appSecret: String(appSecret).trim() } : {}),
+          ...(verifyToken ? { verifyToken: String(verifyToken).trim() } : {}),
+          updatedAt: now,
+        }, { merge: true });
+      }
+      const secrets = await getWhatsAppSecrets();
+      await db.collection('whatsapp_config').doc('default').set({
+        ...(businessPhoneNumber !== undefined ? { businessPhoneNumber: String(businessPhoneNumber).trim() } : {}),
+        ...(phoneNumberId !== undefined ? { phoneNumberId: String(phoneNumberId).trim() } : {}),
+        ...(wabaId !== undefined ? { wabaId: String(wabaId).trim() } : {}),
+        ...(monthlyBudgetInr !== undefined ? { monthlyBudgetInr: Math.max(0, Number(monthlyBudgetInr)) } : {}),
+        ...(typeof zeroBudgetEnforced === 'boolean' ? { zeroBudgetEnforced } : {}),
+        ...(otpExpirySeconds !== undefined ? { otpExpirySeconds: Math.max(60, Number(otpExpirySeconds)) } : {}),
+        ...(otpMaxAttempts !== undefined ? { otpMaxAttempts: Math.max(1, Number(otpMaxAttempts)) } : {}),
+        ...(otpCooldownSeconds !== undefined ? { otpCooldownSeconds: Math.max(15, Number(otpCooldownSeconds)) } : {}),
+        ...(customerEventFlags ? { customerEventFlags } : {}),
+        hasAccessTokenSecret: Boolean(secrets.accessToken),
+        hasAppSecret: Boolean(secrets.appSecret),
+        webhookVerifyTokenConfigured: Boolean(secrets.verifyToken),
+        updatedAt: now,
+      }, { merge: true });
+      await writeAuditLog({
+        actorUid: req.authUser!.uid, actorName: req.authUser!.profile.displayName, actorRole: req.authUser!.profile.role,
+        module: 'WhatsApp Configuration', action: 'MASTER_UPDATE_WHATSAPP', targetType: 'whatsapp_config', targetId: 'default',
+        details: 'Updated Meta WhatsApp Cloud API settings.',
+      });
+      res.json({ config: await getWhatsAppConfig() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update WhatsApp configuration.' });
+    }
+  });
+
+  app.post('/api/master/whatsapp/verify', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const config = await getWhatsAppConfig();
+      const result = await verifyLiveMetaConnection({
+        businessPhoneNumber: req.body.businessPhoneNumber || config.businessPhoneNumber,
+        phoneNumberId: req.body.phoneNumberId || config.phoneNumberId,
+        wabaId: req.body.wabaId || config.wabaId,
+        accessToken: req.body.accessTokenSecret,
+      });
+      await writeAuditLog({
+        actorUid: req.authUser!.uid, actorName: req.authUser!.profile.displayName, actorRole: req.authUser!.profile.role,
+        module: 'WhatsApp Configuration', action: 'MASTER_VERIFY_WHATSAPP', targetType: 'whatsapp_config', targetId: 'default',
+        details: result.message,
+      });
+      res.json(result);
+    } catch {
+      res.status(500).json({ error: 'Live Meta verification failed.' });
+    }
+  });
+
+  app.post('/api/master/whatsapp/employees', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const { name, phone, department, whatsappEnabled, events } = req.body;
+      if (!name || !phone) return res.status(400).json({ error: 'Employee name and mobile number are required.' });
+      const id = `emp-notif-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+      const doc: EmployeeNotificationSetting = {
+        id, name: String(name).trim(), phone: String(phone).trim(), branchId: 'all',
+        department: department || 'operations', whatsappEnabled: whatsappEnabled !== false,
+        events: Array.isArray(events) ? (events as NotificationEventKey[]) : ['booking_received'], updatedAt: new Date().toISOString(),
+      };
+      await db.collection('employee_notification_settings').doc(id).set(doc);
+      res.json({ employee: doc });
+    } catch {
+      res.status(500).json({ error: 'Failed to add employee alert rule.' });
+    }
+  });
+
+  app.put('/api/master/whatsapp/employees/:id', requireAuth, requireMasterAdmin, async (req, res) => {
+    try {
+      const ref = db.collection('employee_notification_settings').doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Employee alert rule not found.' });
+      const updates = { ...req.body, branchId: 'all', updatedAt: new Date().toISOString() };
+      delete updates.id;
+      await ref.update(updates);
+      res.json({ employee: (await ref.get()).data() });
+    } catch {
+      res.status(500).json({ error: 'Failed to update employee alert rule.' });
+    }
+  });
+
+  app.delete('/api/master/whatsapp/employees/:id', requireAuth, requireMasterAdmin, async (req, res) => {
+    try {
+      await db.collection('employee_notification_settings').doc(req.params.id).delete();
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ error: 'Failed to delete employee alert rule.' });
+    }
+  });
+
+  app.post('/api/master/whatsapp/reminders/run', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const summary = await runPickupAndReturnReminders();
+      res.json({ success: true, ...summary });
+    } catch {
+      res.status(500).json({ error: 'Failed to run reminder dispatch.' });
+    }
+  });
+
+  // Platform CMS & Website Content (All 14 Areas)
+  app.get('/api/master/cms', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const pages = await seedAndLoadCmsPages();
+      res.json({ pages });
+    } catch {
+      res.status(500).json({ error: 'Failed to load CMS content.' });
+    }
+  });
+
+  app.put('/api/master/cms/:key', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const key = req.params.key as CmsAreaKey;
+      const def = CMS_AREA_DEFINITIONS.find((d) => d.key === key);
+      if (!def) return res.status(404).json({ error: `Unknown CMS area: ${key}` });
+      await seedAndLoadCmsPages();
+      const ref = db.collection('cms_pages').doc(key);
+      const existingSnap = await ref.get();
+      const existing = existingSnap.data() as CmsPageRecord;
+      const now = new Date().toISOString();
+      const body = req.body || {};
+      const incomingContent = body.content || body.locales || {};
+      const nextPublished = typeof body.published === 'boolean' ? body.published : existing.published;
+      const next: CmsPageRecord = {
+        ...existing,
+        key: def.key,
+        label: body.label ? String(body.label).trim() : existing.label || def.label,
+        description: body.description ? String(body.description).trim() : existing.description || def.description,
+        published: nextPublished,
+        publishedAt: nextPublished ? (existing.publishedAt || now) : null,
+        sortOrder: existing.sortOrder ?? def.sortOrder,
+        content: {
+          en: { ...(existing.content?.en || { title: '', body: '' }), ...(incomingContent.en || {}) },
+          hi: { ...(existing.content?.hi || { title: '', body: '' }), ...(incomingContent.hi || {}) },
+          mr: { ...(existing.content?.mr || { title: '', body: '' }), ...(incomingContent.mr || {}) },
+        },
+        updatedAt: now,
+        updatedByUid: actor.uid,
+        updatedByName: actor.displayName,
+      };
+      await ref.set(next, { merge: true });
+      if (next.published) await syncCmsAreaToSettings(next);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
+        action: 'MASTER_UPDATE_CMS', targetType: 'cms_page', targetId: key, details: `Updated CMS area "${def.label}" (published=${next.published}).`,
+      });
+      res.json({ page: next });
+    } catch {
+      res.status(500).json({ error: 'Failed to update CMS area.' });
+    }
+  });
+
+  app.post('/api/master/cms/:key/publish', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const key = req.params.key as CmsAreaKey;
+      const ref = db.collection('cms_pages').doc(key);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'CMS area not found.' });
+      const now = new Date().toISOString();
+      await ref.update({ published: true, publishedAt: now, updatedAt: now, updatedByUid: actor.uid, updatedByName: actor.displayName });
+      const updated = (await ref.get()).data() as CmsPageRecord;
+      await syncCmsAreaToSettings(updated);
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
+        action: 'MASTER_PUBLISH_CMS', targetType: 'cms_page', targetId: key, details: `Published CMS area "${updated.label}".`,
+      });
+      res.json({ page: updated });
+    } catch {
+      res.status(500).json({ error: 'Failed to publish CMS area.' });
+    }
+  });
+
+  app.post('/api/master/cms/:key/unpublish', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const key = req.params.key as CmsAreaKey;
+      const ref = db.collection('cms_pages').doc(key);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'CMS area not found.' });
+      const now = new Date().toISOString();
+      await ref.update({ published: false, publishedAt: null, updatedAt: now, updatedByUid: actor.uid, updatedByName: actor.displayName });
+      const updated = (await ref.get()).data() as CmsPageRecord;
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'CMS & Content',
+        action: 'MASTER_UNPUBLISH_CMS', targetType: 'cms_page', targetId: key, details: `Unpublished CMS area "${updated.label}".`,
+      });
+      res.json({ page: updated });
+    } catch {
+      res.status(500).json({ error: 'Failed to unpublish CMS area.' });
+    }
+  });
+
+  // Platform System Settings & Language Overrides
+  app.get('/api/master/system-settings', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const snap = await db.collection('company_settings').doc('default').get();
+      res.json({ settings: snap.exists ? snap.data() : null });
+    } catch {
+      res.status(500).json({ error: 'Failed to load system settings.' });
+    }
+  });
+
+  app.put('/api/master/system-settings', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const body = { ...req.body };
+      delete body.id;
+      const now = new Date().toISOString();
+      await db.collection('company_settings').doc('default').set({ ...body, updatedAt: now }, { merge: true });
+      const merged = (await db.collection('company_settings').doc('default').get()).data() as CompanySettings;
+      await writeAuditLog({
+        actorUid: actor.uid, actorName: actor.displayName, actorRole: actor.role, module: 'System Settings',
+        action: 'MASTER_UPDATE_SYSTEM_SETTINGS', targetType: 'company_settings', targetId: 'default',
+        details: `Updated platform system settings (${Object.keys(body).join(', ')}).`,
+      });
+      res.json({ settings: merged });
+    } catch {
+      res.status(500).json({ error: 'Failed to update system settings.' });
+    }
+  });
+
+  app.get('/api/master/firebase-environment', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const liveProbe = await probeLiveFirebaseAdmin().catch(() => null);
+      res.json({
+        firebaseEnv: {
+          projectId: firebaseConfigJson.projectId,
+          firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId || '(default)',
+          authDomain: firebaseConfigJson.authDomain,
+          storageBucket: firebaseConfigJson.storageBucket,
+          appId: firebaseConfigJson.appId,
+          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          backendStatus: getFirebaseBackendStatus(),
+          liveProbe,
+        },
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to inspect Firebase environment.' });
+    }
+  });
+
+  app.get('/api/master/health', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const [probe, waConfig, authOtpCfg, aiCfg] = await Promise.all([
+        probeLiveFirebaseAdmin().catch(() => ({ ok: false })),
+        getWhatsAppConfig(),
+        getAuthOtpConfig(),
+        getAiConfig(),
+      ]);
+      res.json({
+        health: {
+          serverTime: new Date().toISOString(),
+          uptimeSeconds: Math.round(process.uptime()),
+          nodeVersion: process.version,
+          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          firestoreConnected: Boolean((probe as any)?.ok ?? true),
+          mapsKeyConfigured: Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY),
+          geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
+          whatsappConnected: waConfig.connectionStatus === 'Connected',
+          aiEnabled: aiCfg.enabled,
+          otpCooldownSeconds: authOtpCfg.otpResendCooldownSeconds || 60,
+        },
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to inspect system health.' });
     }
   });
 
@@ -9416,7 +10295,7 @@ async function startServer() {
           ownerUid: uid,
           ownerName: ownerProfile.displayName,
           ownerEmail: cleanEmail,
-          primaryCity: String(primaryCity || 'Mumbai').trim(),
+          primaryCity: String(primaryCity || '').trim(),
           status: 'active',
           aiAssistantEnabled: true,
           demoOtpEnabled: process.env.NODE_ENV !== 'production',
@@ -9457,7 +10336,7 @@ async function startServer() {
         action: 'MASTER_UPDATE_AUTH_OTP',
         targetType: 'auth_otp_config',
         targetId: 'default',
-        details: `Updated global Auth/OTP flags (DemoOTP=${config.demoOtpEnabled}, FirebasePhone=${config.firebasePhoneAuthEnabled}).`,
+        details: `Updated global Auth/OTP flags (DemoOTP=${config.demoOtpEnabled}, FirebasePhone=${config.firebasePhoneAuthEnabled}, Cooldown=${config.otpResendCooldownSeconds}s).`,
       });
       res.json({ config });
     } catch {

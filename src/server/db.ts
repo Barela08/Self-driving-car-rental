@@ -14,6 +14,7 @@ interface FirebaseAppletConfig {
   projectId: string;
   firestoreDatabaseId: string;
   storageBucket?: string;
+  databaseURL?: string;
 }
 
 function loadFirebaseAppletConfig(): FirebaseAppletConfig {
@@ -26,9 +27,10 @@ function loadFirebaseAppletConfig(): FirebaseAppletConfig {
     // ignore
   }
   return {
-    projectId: 'gen-lang-client-0106540047',
-    firestoreDatabaseId: 'ai-studio-elitedrivecarren-1530ccb4-04ad-4731-8f7e-d96458988250',
-    storageBucket: 'gen-lang-client-0106540047.firebasestorage.app',
+    projectId: 'self-driving-car-rental-9f35f',
+    firestoreDatabaseId: '(default)',
+    storageBucket: 'self-driving-car-rental-9f35f.firebasestorage.app',
+    databaseURL: 'https://self-driving-car-rental-9f35f-default-rtdb.asia-southeast1.firebasedatabase.app',
   };
 }
 
@@ -85,6 +87,7 @@ function ensureAdminAppInitialized(): { app: App | null; source: FirebaseBackend
       credential: cert(sa as any),
       projectId: FIREBASE_CONFIG.projectId,
       storageBucket: FIREBASE_CONFIG.storageBucket,
+      ...(FIREBASE_CONFIG.databaseURL ? { databaseURL: FIREBASE_CONFIG.databaseURL } : {}),
     });
     return { app: adminApp, source: credentialSource };
   }
@@ -95,6 +98,7 @@ function ensureAdminAppInitialized(): { app: App | null; source: FirebaseBackend
       adminApp = initializeApp({
         projectId: FIREBASE_CONFIG.projectId,
         storageBucket: FIREBASE_CONFIG.storageBucket,
+        ...(FIREBASE_CONFIG.databaseURL ? { databaseURL: FIREBASE_CONFIG.databaseURL } : {}),
       });
       return { app: adminApp, source: credentialSource };
     } catch {
@@ -135,7 +139,8 @@ export async function probeLiveFirebaseAdmin(force = false): Promise<{
   }
 
   try {
-    const fsDb = getFirestore(app, FIREBASE_CONFIG.firestoreDatabaseId);
+    const dbId = FIREBASE_CONFIG.firestoreDatabaseId?.trim();
+    const fsDb = dbId && dbId !== '(default)' ? getFirestore(app, dbId) : getFirestore(app);
     // Lightweight authorization probe against configured database
     await fsDb.collection('company_settings').doc('default').get();
     liveFirestore = fsDb;

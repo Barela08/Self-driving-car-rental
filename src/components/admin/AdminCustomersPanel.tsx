@@ -156,11 +156,11 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
           rejectionReason: kycRejectReason,
         }),
       });
-      toast.success(`KYC updated: ${status}`);
+      toast.success(`Document verification updated: ${status}`);
       if (selectedHistory) await openCustomerDrawer(selectedHistory.customer.uid);
       await onReload();
     } catch (err: any) {
-      toast.error(err.message || 'KYC review failed');
+      toast.error(err.message || 'Document verification review failed');
     } finally {
       setBusy(false);
     }
@@ -178,7 +178,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
           <div className="flex items-center justify-between">
             <h2 className="font-display text-xl font-semibold flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-gold-hover" />
-              Pending KYC Verifications ({pendingKycRecords.length})
+              Pending Document Verifications ({pendingKycRecords.length})
             </h2>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -198,7 +198,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
                     onClick={() => void handleKycDecision(k.id, 'Verified')}
                     className="px-3 py-1 bg-obsidian text-white font-semibold rounded-md cursor-pointer"
                   >
-                    Approve KYC
+                    Approve Docs
                   </button>
                   <button
                     type="button"
@@ -231,7 +231,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
         >
           {['All', 'Not Started', 'Pending', 'Under Review', 'Verified', 'Rejected', 'Resubmission Required'].map(
             (st) => (
-              <option key={st} value={st}>KYC: {st}</option>
+              <option key={st} value={st}>Verification: {st}</option>
             )
           )}
         </select>
@@ -257,7 +257,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
                 <th className="py-3 px-4">Contact</th>
                 <th className="py-3 px-4">Registered</th>
                 <th className="py-3 px-4">Bookings (T / C / X)</th>
-                <th className="py-3 px-4">KYC Status</th>
+                <th className="py-3 px-4">Doc Verification</th>
                 <th className="py-3 px-4">Account</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -345,7 +345,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
                 <div>
                   <p className="text-slate-muted">Account Status</p>
                   <p className="font-semibold text-sm text-ink">
-                    {selectedHistory.customer.accountStatus} · KYC: {selectedHistory.customer.kycStatus}
+                    {selectedHistory.customer.accountStatus} · Verification: {selectedHistory.customer.kycStatus}
                   </p>
                 </div>
                 {canEditCustomers && (
@@ -372,21 +372,21 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
                 )}
               </div>
 
-              {/* KYC Sensitive Documents Vault (Gated by view_kyc_documents / review_kyc) */}
+              {/* Sensitive Documents Vault (Gated by view_kyc_documents / review_kyc) */}
               <div className="border border-black/10 rounded-xl p-4 space-y-3">
                 <h3 className="font-semibold text-ink flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-gold-hover" />
-                  KYC Verification & Identity Documents
+                  Document Verification & Identity Records
                 </h3>
                 {!canViewKycDocs ? (
                   <div className="p-3 rounded-lg bg-alabaster text-slate-muted flex items-center gap-2">
                     <Lock className="w-4 h-4 shrink-0" />
                     <span>
-                      Sensitive KYC documents and DL numbers are masked because your role lacks <span className="font-mono">view_kyc_documents</span> permission.
+                      Sensitive identity documents and DL numbers are masked because your role lacks <span className="font-mono">view_kyc_documents</span> permission.
                     </span>
                   </div>
                 ) : selectedHistory.kycRecords.length === 0 ? (
-                  <p className="text-slate-muted">Customer has not submitted KYC documents yet.</p>
+                  <p className="text-slate-muted">Customer has not submitted verification documents yet.</p>
                 ) : (
                   selectedHistory.kycRecords.map((k) => (
                     <div key={k.id} className="p-3.5 rounded-lg bg-alabaster space-y-2">
@@ -415,7 +415,7 @@ export const AdminCustomersPanel: React.FC<AdminCustomersPanelProps> = ({
                               onClick={() => void handleKycDecision(k.id, 'Verified')}
                               className="px-3 py-1.5 bg-obsidian text-white font-semibold rounded-md inline-flex items-center gap-1 cursor-pointer"
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-gold" /> Approve KYC
+                              <CheckCircle2 className="w-3.5 h-3.5 text-gold" /> Approve Docs
                             </button>
                             <button
                               type="button"

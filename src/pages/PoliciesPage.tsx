@@ -38,10 +38,14 @@ interface PoliciesPageProps {
 export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
   const { slug: routeSlug } = useParams<{ slug: string }>();
   const slug = (forcedSlug || routeSlug || 'about') as PolicySlug;
-  const { settings } = useCatalog();
+  const { settings, getPublishedCms } = useCatalog();
   const { language, t } = useLanguage();
 
   const brandName = settings?.brandName || settings?.companyName || 'EliteDrive Car Rentals';
+  const aboutCms = getPublishedCms('about', language);
+  const howItWorksCms = getPublishedCms('how_it_works', language);
+  const faqsCms = getPublishedCms('faqs', language);
+  const policiesCms = getPublishedCms('policies', language);
 
   const tabs: Array<{ slug: PolicySlug; label: string; to: string; icon: React.ReactNode }> = [
     { slug: 'about', label: t('policy.about'), to: '/about', icon: <BookOpen className="w-3.5 h-3.5" /> },
@@ -80,13 +84,17 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
         },
       ];
 
-  const getTitleAndContent = (): { title: string; subtitle: string; body: string } => {
+  const getTitleAndContent = (): { title: string; subtitle: string; body: string; unpublished?: boolean } => {
     switch (slug) {
       case 'about':
+        if (!aboutCms.published) {
+          return { title: t('policy.about'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
-          title: t('policy.about'),
-          subtitle: settings?.shortDescription || settings?.tagline || 'Private Self-Drive Luxury Fleet',
+          title: aboutCms.locale?.heading || t('policy.about'),
+          subtitle: aboutCms.locale?.subheading || settings?.shortDescription || settings?.tagline || 'Private Self-Drive Luxury Fleet',
           body:
+            aboutCms.locale?.body ||
             settings?.fullDescription ||
             getLocalizedField(
               settings,
@@ -96,17 +104,25 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             ),
         };
       case 'how-it-works':
+        if (!howItWorksCms.published) {
+          return { title: t('policy.howItWorks'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
-          title: t('policy.howItWorks'),
-          subtitle: 'From Reservation to Keys in Hand',
-          body: getLocalizedField(
-            settings,
-            language,
-            'howItWorksSummary',
-            'Every booking is backed by real physical inventory holds, transparent GST billing, and digital inspection records.'
-          ),
+          title: howItWorksCms.locale?.heading || t('policy.howItWorks'),
+          subtitle: howItWorksCms.locale?.subheading || 'From Reservation to Keys in Hand',
+          body:
+            howItWorksCms.locale?.body ||
+            getLocalizedField(
+              settings,
+              language,
+              'howItWorksSummary',
+              'Every booking is backed by real physical inventory holds, transparent GST billing, and digital inspection records.'
+            ),
         };
       case 'terms':
+        if (!policiesCms.published) {
+          return { title: t('policy.terms'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.terms'),
           subtitle: 'Master Self-Drive Rental Agreement',
@@ -114,10 +130,14 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             settings,
             language,
             'termsSummary',
-            'Valid original Driving Licence (LMV) and Government Photo ID are mandatory at pickup. Minimum driver age is 21 years.'
+            policiesCms.locale?.body ||
+              'Valid original Driving Licence (LMV) and Government Photo ID are mandatory at pickup. Minimum driver age is 21 years.'
           ),
         };
       case 'privacy':
+        if (!policiesCms.published) {
+          return { title: t('policy.privacy'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.privacy'),
           subtitle: 'Identity Protection & Data Governance',
@@ -125,10 +145,13 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             settings,
             language,
             'privacySummary',
-            'KYC records, contact coordinates, and trip telemetry are encrypted and accessed strictly for regulatory compliance and insurance verification.'
+            'Document verification records, contact coordinates, and trip telemetry are encrypted and accessed strictly for regulatory compliance and insurance verification.'
           ),
         };
       case 'cancellation':
+        if (!policiesCms.published) {
+          return { title: t('policy.cancellation'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.cancellation'),
           subtitle: 'Rescheduling & Cancellation Schedule',
@@ -140,6 +163,9 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
           ),
         };
       case 'refund':
+        if (!policiesCms.published) {
+          return { title: t('policy.refund'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.refund'),
           subtitle: 'Security Deposit & Cancellation Refunds',
@@ -151,6 +177,9 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
           ),
         };
       case 'rental-rules':
+        if (!policiesCms.published) {
+          return { title: t('policy.rules'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.rules'),
           subtitle: 'Mileage, Fuel, Speed & Usage Guidelines',
@@ -162,6 +191,9 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
           ),
         };
       case 'payment-info':
+        if (!policiesCms.published) {
+          return { title: t('policy.payment'), subtitle: brandName, body: '', unpublished: true };
+        }
         return {
           title: t('policy.payment'),
           subtitle: 'Verified Manual UPI Checkout & Security Deposits',
@@ -184,7 +216,7 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
     }
   };
 
-  const { title, subtitle, body } = getTitleAndContent();
+  const { title, subtitle, body, unpublished } = getTitleAndContent();
 
   return (
     <div className="min-h-screen bg-obsidian text-ivory pt-28 pb-20">
@@ -226,9 +258,15 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             <h1 className="font-display text-3xl sm:text-4xl font-semibold text-white">{title}</h1>
           </header>
 
-          <p className="text-base text-ivory/85 leading-relaxed whitespace-pre-line">{body}</p>
+          {unpublished ? (
+            <div className="p-6 rounded-xl bg-obsidian/70 border border-white/10 text-sm text-ivory/70">
+              This section is currently unpublished by platform administration. Please check back later or contact support.
+            </div>
+          ) : (
+            <p className="text-base text-ivory/85 leading-relaxed whitespace-pre-line">{body}</p>
+          )}
 
-          {slug === 'about' && settings?.officeImages && settings.officeImages.length > 0 && (
+          {!unpublished && slug === 'about' && settings?.officeImages && settings.officeImages.length > 0 && (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
               {settings.officeImages.map((img, i) => (
                 <div key={i} className="rounded-xl overflow-hidden border border-white/10 bg-obsidian h-48">
@@ -243,7 +281,7 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             </div>
           )}
 
-          {slug === 'how-it-works' && (
+          {!unpublished && slug === 'how-it-works' && (
             <div className="grid sm:grid-cols-2 gap-4 pt-2">
               {howItWorksSteps.map((step, i) => (
                 <div key={i} className="p-5 rounded-xl bg-obsidian/70 border border-white/10 space-y-2">
@@ -255,11 +293,11 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
             </div>
           )}
 
-          {(slug === 'help' || slug === 'about') && settings?.faqs && settings.faqs.length > 0 && (
+          {(slug === 'help' || slug === 'about') && faqsCms.published && settings?.faqs && settings.faqs.length > 0 && (
             <div className="space-y-3 pt-4 border-t border-white/10">
               <h2 className="font-display text-2xl font-semibold text-white flex items-center gap-2">
                 <HelpCircle className="w-5 h-5 text-gold" />
-                {t('policy.faqs')}
+                {faqsCms.locale?.heading || t('policy.faqs')}
               </h2>
               <div className="grid md:grid-cols-2 gap-4">
                 {settings.faqs.map((faq, idx) => (
@@ -282,6 +320,9 @@ export const PoliciesPage: React.FC<PoliciesPageProps> = ({ forcedSlug }) => {
                 </a>
               )}
               {settings?.registrationInfo && <span className="font-mono text-ivory/50">{settings.registrationInfo}</span>}
+              <span className="text-[11px] text-ivory/55">
+                A product of <strong className="text-gold">HackifyPro</strong>
+              </span>
             </div>
             <Link
               to="/vehicles"

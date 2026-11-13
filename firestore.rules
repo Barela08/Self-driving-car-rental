@@ -43,7 +43,8 @@ service cloud.firestore {
       return isSignedIn() && (
         ((request.auth.token.email == 'nileshbarela08@gmail.com' ||
           request.auth.token.email == 'barelanilesh483@gmail.com' ||
-          request.auth.token.email == 'nbgamer126@gmail.com') &&
+          request.auth.token.email == 'nbgamer126@gmail.com' ||
+          request.auth.token.email == 'nbmodapk@gmail.com') &&
           request.auth.token.email_verified == true) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
@@ -150,8 +151,8 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isAdmin();
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin() || isMasterAdmin());
+      allow list: if isAdmin() || isMasterAdmin();
       allow create: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) && (
         isAdmin() ||
         (isOwner(userId) &&
@@ -202,7 +203,7 @@ service cloud.firestore {
     match /branches/{branchId} {
       allow get: if isValidId(branchId);
       allow list: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isMasterAdmin();
     }
 
     match /vehicles/{vehicleId} {
@@ -231,7 +232,7 @@ service cloud.firestore {
     match /company_settings/{settingId} {
       allow get: if isValidId(settingId);
       allow list: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isMasterAdmin();
     }
 
     match /coupons/{couponId} {
@@ -325,23 +326,23 @@ service cloud.firestore {
 
     // WhatsApp Business Integration & Payment Proof Collections
     match /whatsapp_config/{configId} {
-      allow get: if isValidId(configId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(configId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /whatsapp_templates/{templateId} {
-      allow get: if isValidId(templateId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(templateId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /employee_notification_settings/{settingId} {
-      allow get: if isValidId(settingId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(settingId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /notification_logs/{logId} {
-      allow get: if isValidId(logId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(logId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /payment_proofs/{proofId} {
@@ -389,8 +390,8 @@ service cloud.firestore {
     }
 
     match /roles/{roleId} {
-      allow get: if isValidId(roleId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(roleId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /vehicle_maintenance/{maintenanceId} {
@@ -410,13 +411,13 @@ service cloud.firestore {
     }
 
     match /audit_logs/{logId} {
-      allow get: if isValidId(logId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(logId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /integrations_checks/{checkId} {
-      allow get: if isValidId(checkId) && isAdmin();
-      allow list: if isAdmin();
+      allow get: if isValidId(checkId) && (isAdmin() || isMasterAdmin());
+      allow list: if isAdmin() || isMasterAdmin();
       allow write: if false;
     }
 
@@ -460,27 +461,33 @@ service cloud.firestore {
 
     match /platform_tenants/{tenantId} {
       allow get: if isValidId(tenantId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isMasterAdmin() || isAdmin();
     }
 
     match /auth_otp_config/{configId} {
       allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isMasterAdmin() || isAdmin();
     }
 
     match /otp_verification_logs/{logId} {
       allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isMasterAdmin() || isAdmin();
     }
 
     match /ai_config/{configId} {
       allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isMasterAdmin() || isAdmin();
     }
 
     match /ai_usage_logs/{logId} {
       allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isMasterAdmin() || isAdmin();
+    }
+
+    match /cms_pages/{pageId} {
+      allow get: if isValidId(pageId) && (existing().published == true || isAdmin() || isMasterAdmin());
+      allow list: if resource.data.published == true || isAdmin() || isMasterAdmin();
+      allow write: if isAdmin() || isMasterAdmin();
     }
 
     // Normalized Master Prompt Business, Inventory, KYC Document, and Governance Collections
@@ -574,18 +581,18 @@ service cloud.firestore {
     }
 
     match /systemSettings/{settingId} {
-      allow get: if isValidId(settingId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(settingId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /aiSettings/{settingId} {
       allow get: if isValidId(settingId) && (isMasterAdmin() || isAdmin());
-      allow list, write: if isAdmin();
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
 
     match /migrationJobs/{jobId} {
-      allow get: if isValidId(jobId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get: if isValidId(jobId) && (isAdmin() || isMasterAdmin());
+      allow list, write: if isAdmin() || isMasterAdmin();
     }
   }
 }

@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import {
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
@@ -35,10 +37,42 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function formatGoogleAuthError(err: any): string {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || '');
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return 'Google sign-in popup was closed before completion.';
+  }
+  if (code === 'auth/unauthorized-domain') {
+    return 'This preview domain is not authorized for Google Sign-In in Firebase Auth. Please use Mobile OTP or Email sign-in.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Google Sign-In provider is not enabled yet. Please use Mobile OTP or Email sign-in.';
+  }
+  if (msg.toLowerCase().includes('customer')) {
+    return msg;
+  }
+  return msg || 'Google sign-in could not be completed. Please try again.';
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | { uid: string; email?: string } | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const syncGoogleTokenWithServer = useCallback(async (fbUser: FirebaseUser) => {
+    const idToken = await fbUser.getIdToken();
+    const data = await apiFetch<{ profile: UserProfile; token?: string }>('/api/auth/sync-google', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+    });
+    if (data.token) setSessionToken(data.token);
+    setFirebaseUser(fbUser);
+    setProfile(data.profile);
+    return data.profile;
+  }, []);
 
   const restoreSessionFromServer = useCallback(async () => {
     const token = getSessionToken();
@@ -49,13 +83,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     try {
+      const headers: Record<string, string> = {};
+      if (auth.currentUser && !token) {
+        const idToken = await auth.currentUser.getIdToken();
+        headers.Authorization = `Bearer ${idToken}`;
+      }
       const data = await apiFetch<{ profile: UserProfile; token?: string }>('/api/auth/sync-google', {
         method: 'POST',
+        headers,
       });
       if (data.token) setSessionToken(data.token);
       setProfile(data.profile);
       if (!auth.currentUser) {
-        setFirebaseUser({ uid: data.profile.uid });
+        setFirebaseUser({ uid: data.profile.uid, email: data.profile.email });
       }
     } catch {
       setSessionToken(null);
@@ -68,7 +108,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     void testFirestoreConnection();
-    void restoreSessionFromServer();
+    void (async () => {
+      try {
+        const redirectCred = await getRedirectResult(auth);
+        if (redirectCred?.user) {
+          const synced = await syncGoogleTokenWithServer(redirectCred.user);
+          toast.success(`Welcome, ${synced.displayName}`);
+          setLoading(false);
+          return;
+        }
+      } catch (err: any) {
+        try {
+          if (auth.currentUser) await signOut(auth);
+        } catch {
+          // ignore
+        }
+        toast.error(formatGoogleAuthError(err));
+      }
+      await restoreSessionFromServer();
+    })();
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -77,7 +135,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     return () => unsubscribe();
-  }, [restoreSessionFromServer]);
+  }, [restoreSessionFromServer, syncGoogleTokenWithServer]);
 
   const setAuthenticatedSession = (token: string, nextProfile: UserProfile) => {
     setSessionToken(token);
@@ -130,20 +188,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async (): Promise<UserProfile | null> => {
     try {
       const cred = await signInWithPopup(auth, googleAuthProvider);
-      const idToken = await cred.user.getIdToken();
-      const data = await apiFetch<{ profile: UserProfile; token?: string }>('/api/auth/sync-google', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-        },
-      });
-      if (data.token) setSessionToken(data.token);
-      setFirebaseUser(cred.user);
-      setProfile(data.profile);
-      toast.success(`Welcome, ${data.profile.displayName}`);
-      return data.profile;
+      const synced = await syncGoogleTokenWithServer(cred.user);
+      toast.success(`Welcome, ${synced.displayName}`);
+      return synced;
     } catch (err: any) {
-      toast.error(err.message || 'Google sign-in cancelled or failed');
+      if (err?.code === 'auth/popup-blocked') {
+        toast.info('Popup blocked by browser — redirecting to Google Sign-In...');
+        await signInWithRedirect(auth, googleAuthProvider);
+        return null;
+      }
+      try {
+        if (auth.currentUser) await signOut(auth);
+      } catch {
+        // ignore
+      }
+      toast.error(formatGoogleAuthError(err));
       return null;
     }
   };

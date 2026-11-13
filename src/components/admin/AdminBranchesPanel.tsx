@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, Clock, Edit3, MapPin, Phone, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Building2, Clock, Edit3, MapPin, Phone, Plus, Trash2, X } from 'lucide-react';
 import { apiFetch, formatINR } from '../../lib/api';
 import { hasAdminPermission } from '../../lib/permissions';
-import type { Booking, Branch, CustomRole, UserProfile, Vehicle } from '../../types';
+import type { Booking, Branch, BranchDeletePreview, CustomRole, UserProfile, Vehicle } from '../../types';
 
 interface AdminBranchesPanelProps {
   profile: UserProfile;
@@ -12,6 +12,7 @@ interface AdminBranchesPanelProps {
   vehicles: Vehicle[];
   bookings: Booking[];
   users: UserProfile[];
+  apiBase?: '/api/admin' | '/api/master';
   onReload: () => Promise<void>;
 }
 
@@ -22,6 +23,7 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
   vehicles,
   bookings,
   users,
+  apiBase = '/api/admin',
   onReload,
 }) => {
   const canManage =
@@ -31,16 +33,20 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Branch | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
+  const [deletePreview, setDeletePreview] = useState<BranchDeletePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [confirmDeleteAck, setConfirmDeleteAck] = useState(false);
 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
-  const [cityName, setCityName] = useState('Mumbai');
+  const [cityName, setCityName] = useState('');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [openingHours, setOpeningHours] = useState('06:00 AM - 11:30 PM');
-  const [lat, setLat] = useState('19.0607');
-  const [lng, setLng] = useState('72.8362');
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
   const [deliveryRadiusKm, setDeliveryRadiusKm] = useState('35');
   const [baseDeliveryFee, setBaseDeliveryFee] = useState('299');
   const [perKmDeliveryFee, setPerKmDeliveryFee] = useState('25');
@@ -72,13 +78,13 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
     setEditing(null);
     setName('');
     setCode(`HUB-${String(branches.length + 1).padStart(2, '0')}`);
-    setCityName('Mumbai');
+    setCityName('');
     setAddress('');
-    setPhone('+91 98200 11223');
-    setEmail('concierge@elitedrive.in');
+    setPhone('');
+    setEmail('');
     setOpeningHours('06:00 AM - 11:30 PM');
-    setLat('19.0607');
-    setLng('72.8362');
+    setLat('');
+    setLng('');
     setDeliveryRadiusKm('30');
     setBaseDeliveryFee('299');
     setPerKmDeliveryFee('25');
@@ -91,13 +97,13 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
     setEditing(br);
     setName(br.name);
     setCode(br.code || '');
-    setCityName(br.cityName || 'Mumbai');
+    setCityName(br.cityName || '');
     setAddress(br.address || '');
     setPhone(br.phone || '');
     setEmail(br.email || '');
     setOpeningHours(br.openingHours || '06:00 AM - 11:30 PM');
-    setLat(String(br.lat));
-    setLng(String(br.lng));
+    setLat(Number.isFinite(br.lat) ? String(br.lat) : '');
+    setLng(Number.isFinite(br.lng) ? String(br.lng) : '');
     setDeliveryRadiusKm(String(br.deliveryRadiusKm));
     setBaseDeliveryFee(String(br.baseDeliveryFee));
     setPerKmDeliveryFee(String(br.perKmDeliveryFee));
@@ -127,13 +133,13 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
         active,
       };
       if (editing) {
-        await apiFetch(`/api/admin/branches/${editing.id}`, {
+        await apiFetch(`${apiBase}/branches/${editing.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
         toast.success(`Updated branch "${name}"`);
       } else {
-        await apiFetch('/api/admin/branches', {
+        await apiFetch(`${apiBase}/branches`, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -148,11 +154,33 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
     }
   };
 
-  const handleDelete = async (br: Branch) => {
+  const openDeletePreview = async (br: Branch) => {
+    setDeleteTarget(br);
+    setDeletePreview(null);
+    setConfirmDeleteAck(false);
+    setPreviewLoading(true);
+    try {
+      const res = await apiFetch<BranchDeletePreview | { preview: BranchDeletePreview }>(
+        `${apiBase}/branches/${br.id}/delete-preview`
+      );
+      const preview = 'preview' in res ? res.preview : res;
+      setDeletePreview(preview);
+    } catch (err: any) {
+      toast.error(err.message || 'Unable to inspect branch dependencies');
+      setDeleteTarget(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget || !deletePreview?.canDelete || !confirmDeleteAck) return;
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/branches/${br.id}`, { method: 'DELETE' });
-      toast.success(`Deleted branch "${br.name}"`);
+      await apiFetch(`${apiBase}/branches/${deleteTarget.id}`, { method: 'DELETE' });
+      toast.success(`Deleted branch "${deleteTarget.name}"`);
+      setDeleteTarget(null);
+      setDeletePreview(null);
       await onReload();
     } catch (err: any) {
       toast.error(err.message || 'Unable to delete branch');
@@ -260,7 +288,7 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void handleDelete(br)}
+                        onClick={() => void openDeletePreview(br)}
                         className="p-1.5 border border-red-200 text-red-700 rounded-lg hover:bg-red-50 cursor-pointer"
                         aria-label={`Delete ${br.name}`}
                       >
@@ -362,6 +390,113 @@ export const AdminBranchesPanel: React.FC<AdminBranchesPanelProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Two-Step Branch Deletion Impact Preview Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-black/15 max-w-lg w-full overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-gold" />
+                <h3 className="font-display text-lg font-semibold">
+                  Branch Deletion Impact Preview
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeletePreview(null);
+                }}
+                className="text-white/70 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <p className="text-sm font-semibold text-ink">
+                Inspecting dependencies for: <span className="text-gold-hover">{deleteTarget.name}</span>
+              </p>
+
+              {previewLoading ? (
+                <div className="p-6 text-center text-slate-muted bg-alabaster rounded-xl">
+                  Calculating affected vehicles, bookings, and staff assignments...
+                </div>
+              ) : deletePreview ? (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 font-mono">
+                    <div className="p-3 rounded-lg bg-alabaster border border-black/10">
+                      <p className="text-[10px] font-sans text-slate-muted">Assigned Vehicles</p>
+                      <p className="text-base font-bold text-ink">{deletePreview.affectedVehiclesCount}</p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-alabaster border border-black/10">
+                      <p className="text-[10px] font-sans text-slate-muted">Active Bookings</p>
+                      <p className="text-base font-bold text-ink">{deletePreview.activeBookingsCount}</p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-alabaster border border-black/10">
+                      <p className="text-[10px] font-sans text-slate-muted">Assigned Staff</p>
+                      <p className="text-base font-bold text-ink">{deletePreview.staffCount}</p>
+                    </div>
+                  </div>
+
+                  {deletePreview.consequences?.length > 0 && (
+                    <div className="p-3.5 rounded-xl bg-alabaster border border-black/10 space-y-1.5">
+                      <p className="font-semibold text-ink">Impact & Consequences</p>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-muted">
+                        {deletePreview.consequences.map((c, idx) => (
+                          <li key={idx}>{c}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {!deletePreview.canDelete ? (
+                    <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 space-y-1">
+                      <p className="font-semibold">Deletion Blocked</p>
+                      <p>{deletePreview.blockReason || 'Resolve active vehicles, bookings, or staff assignments before deleting this branch.'}</p>
+                    </div>
+                  ) : (
+                    <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={confirmDeleteAck}
+                        onChange={(e) => setConfirmDeleteAck(e.target.checked)}
+                        className="mt-0.5 accent-obsidian"
+                      />
+                      <span>
+                        I have reviewed the dependency preview and confirm permanent deletion of branch{' '}
+                        <strong>{deleteTarget.name}</strong>.
+                      </span>
+                    </label>
+                  )}
+                </>
+              ) : null}
+            </div>
+
+            <div className="px-6 py-4 bg-alabaster border-t border-black/10 flex justify-end gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeletePreview(null);
+                }}
+                className="px-4 py-2 border border-black/15 rounded-lg font-semibold bg-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy || previewLoading || !deletePreview?.canDelete || !confirmDeleteAck}
+                onClick={() => void handleConfirmDelete()}
+                className="px-4 py-2 bg-red-700 text-white rounded-lg font-semibold cursor-pointer disabled:opacity-40"
+              >
+                {busy ? 'Deleting...' : 'Confirm Permanent Delete'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

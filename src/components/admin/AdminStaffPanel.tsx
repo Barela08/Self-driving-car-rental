@@ -34,6 +34,7 @@ interface AdminStaffPanelProps {
   users: UserProfile[];
   auditLogs: AuditLog[];
   staffLoginHistory?: StaffLoginHistory[];
+  apiBase?: '/api/admin' | '/api/master';
   onReload: () => Promise<void>;
 }
 
@@ -44,7 +45,7 @@ const FALLBACK_ROLES: { slug: Role; name: string; branchScope: 'all' | 'assigned
   { slug: 'fleet_manager', name: 'Fleet Manager', branchScope: 'assigned', permissions: ROLE_DEFAULT_PERMISSIONS.fleet_manager },
   { slug: 'operations_staff', name: 'Operations Staff', branchScope: 'assigned', permissions: ROLE_DEFAULT_PERMISSIONS.operations_staff },
   { slug: 'finance_staff', name: 'Finance Staff', branchScope: 'all', permissions: ROLE_DEFAULT_PERMISSIONS.finance_staff },
-  { slug: 'kyc_executive', name: 'KYC Executive', branchScope: 'all', permissions: ROLE_DEFAULT_PERMISSIONS.kyc_executive },
+  { slug: 'kyc_executive', name: 'Document Verification Executive', branchScope: 'all', permissions: ROLE_DEFAULT_PERMISSIONS.kyc_executive },
   { slug: 'support_staff', name: 'Support Staff', branchScope: 'assigned', permissions: ROLE_DEFAULT_PERMISSIONS.support_staff },
 ];
 
@@ -55,6 +56,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
   users,
   auditLogs,
   staffLoginHistory = [],
+  apiBase = '/api/admin',
   onReload,
 }) => {
   const isOwner = actor.role === 'super_admin';
@@ -104,7 +106,9 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
   const [newRoleId, setNewRoleId] = useState('role-operations_staff');
   const [newRole, setNewRole] = useState<Role>('operations_staff');
   const [newBranchScope, setNewBranchScope] = useState<'all' | 'assigned'>('assigned');
-  const [newBranchIds, setNewBranchIds] = useState<string[]>(['branch-central-hub']);
+  const [newBranchIds, setNewBranchIds] = useState<string[]>(
+    branches[0]?.id ? [branches[0].id] : []
+  );
   const [newPerms, setNewPerms] = useState<AdminPermission[]>(
     ROLE_DEFAULT_PERMISSIONS.operations_staff
   );
@@ -179,7 +183,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
     }
     setBusy(true);
     try {
-      await apiFetch('/api/admin/staff/create', {
+      await apiFetch(`${apiBase}/staff/create`, {
         method: 'POST',
         body: JSON.stringify({
           displayName: newName.trim(),
@@ -191,7 +195,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
           permissions: newPerms,
           branchScope: newBranchScope,
           branchIds: newBranchScope === 'all' ? activeBranches.map((b) => b.id) : newBranchIds,
-          branchId: newBranchIds[0] || activeBranches[0]?.id || 'branch-central-hub',
+          branchId: newBranchIds[0] || activeBranches[0]?.id || '',
           employeeId: newEmployeeId.trim() || undefined,
           designation: newDesignation.trim() || undefined,
           joiningDate: newJoiningDate || undefined,
@@ -222,7 +226,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
     setEditRole(u.role);
     setEditBranchScope(u.branchScope || (u.role === 'super_admin' ? 'all' : 'assigned'));
     setEditBranchIds(
-      u.branchIds?.length ? u.branchIds : u.branchId ? [u.branchId] : [activeBranches[0]?.id || 'branch-central-hub']
+      u.branchIds?.length ? u.branchIds : u.branchId ? [u.branchId] : activeBranches[0]?.id ? [activeBranches[0].id] : []
     );
     setEditEmployeeId(u.employeeId || '');
     setEditDesignation(u.designation || '');
@@ -240,7 +244,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
     }
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/staff/${editingStaff.uid}`, {
+      await apiFetch(`${apiBase}/staff/${editingStaff.uid}`, {
         method: 'PUT',
         body: JSON.stringify({
           role: editRole,
@@ -248,7 +252,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
           permissions: editPerms,
           branchScope: editBranchScope,
           branchIds: editBranchScope === 'all' ? activeBranches.map((b) => b.id) : editBranchIds,
-          branchId: editBranchIds[0] || editingStaff.branchId || 'branch-central-hub',
+          branchId: editBranchIds[0] || editingStaff.branchId || activeBranches[0]?.id || '',
           employeeId: editEmployeeId.trim(),
           designation: editDesignation.trim(),
           joiningDate: editJoiningDate,
@@ -270,7 +274,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
     const nextActive = !(u.active !== false && u.accountStatus === 'active');
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/staff/${u.uid}`, {
+      await apiFetch(`${apiBase}/staff/${u.uid}`, {
         method: 'PUT',
         body: JSON.stringify({ active: nextActive }),
       });
@@ -292,7 +296,7 @@ export const AdminStaffPanel: React.FC<AdminStaffPanelProps> = ({
     }
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/staff/${resetTarget.uid}/reset-access`, {
+      await apiFetch(`${apiBase}/staff/${resetTarget.uid}/reset-access`, {
         method: 'POST',
         body: JSON.stringify({
           revokeOnly,

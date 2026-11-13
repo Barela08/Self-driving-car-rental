@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Clock,
   ExternalLink,
+  LocateFixed,
   Mail,
   MapPin,
   Phone,
@@ -21,7 +22,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { getLocalizedField } from '../lib/i18n';
 import { apiFetch, formatINR } from '../lib/api';
 import { CONCIERGE_LOUNGE_IMAGE, HERO_BANNER_IMAGE, resolveVehicleImage } from '../lib/mediaAssets';
-import type { VehicleAvailabilitySummary, VehicleCategory } from '../types';
+import { SocialIcon } from '../components/SocialIcon';
+import type { ResolvedLocationData, VehicleAvailabilitySummary, VehicleCategory } from '../types';
 
 const CATEGORIES: VehicleCategory[] = [
   'Hatchback',
@@ -41,6 +43,7 @@ export const HomePage: React.FC = () => {
     coupons,
     offers,
     settings,
+    getPublishedCms,
     isPreviewMode,
     loading,
     fetchAvailabilitySummary,
@@ -49,7 +52,10 @@ export const HomePage: React.FC = () => {
   const { language, t } = useLanguage();
   const navigate = useNavigate();
 
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [pickupSearch, setPickupSearch] = useState('');
+  const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [detectingGps, setDetectingGps] = useState(false);
+  const [rentalDurationDays, setRentalDurationDays] = useState<string>('2');
   const [selectedBranchId, setSelectedBranchId] = useState('');
   const [pickupDate, setPickupDate] = useState(() => {
     const d = new Date(Date.now() + 3600000 * 4);
@@ -72,12 +78,24 @@ export const HomePage: React.FC = () => {
   const [sendingEnquiry, setSendingEnquiry] = useState(false);
 
   const brandName = settings?.brandName || settings?.companyName || 'EliteDrive';
-  const operatingCity = settings?.operatingCityName || 'Mumbai';
-  const operatingState = settings?.operatingCityState || 'Maharashtra';
-  const officeName = settings?.officeName || `${operatingCity} Flagship Lounge`;
+  const operatingCity = settings?.operatingCityName || activeBranches[0]?.cityName || '';
+  const operatingState = settings?.operatingCityState || '';
+  const officeName = settings?.officeName || (operatingCity ? `${operatingCity} Flagship Lounge` : 'Flagship Operations Lounge');
   const serviceRadiusKm = settings?.serviceRadiusKm || 35;
 
   const hasBranches = activeBranches.length > 0;
+
+  const heroCms = getPublishedCms('hero', language);
+  const featuredCms = getPublishedCms('featured_fleet', language);
+  const categoriesCms = getPublishedCms('categories', language);
+  const offersCms = getPublishedCms('offers', language);
+  const whyChooseCms = getPublishedCms('why_choose', language);
+  const howItWorksCms = getPublishedCms('how_it_works', language);
+  const experienceCms = getPublishedCms('experience', language);
+  const testimonialsCms = getPublishedCms('testimonials', language);
+  const faqsCms = getPublishedCms('faqs', language);
+  const contactCms = getPublishedCms('contact', language);
+  const footerCms = getPublishedCms('footer', language);
 
   useEffect(() => {
     const s = new Date(pickupDate).getTime();
@@ -127,14 +145,6 @@ export const HomePage: React.FC = () => {
     return list;
   }, [activeVehicles]);
 
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const v of activeVehicles) {
-      counts[v.category] = (counts[v.category] || 0) + 1;
-    }
-    return counts;
-  }, [activeVehicles]);
-
   const activeOffers = useMemo(() => offers.filter((o) => o.active), [offers]);
   const activeCoupons = useMemo(() => coupons.filter((c) => c.active), [coupons]);
 
@@ -161,19 +171,23 @@ export const HomePage: React.FC = () => {
     ? resolveVehicleImage(settings.heroBannerImage)
     : HERO_BANNER_IMAGE;
 
-  const heroHeadline = getLocalizedField(
-    settings,
-    language,
-    'heroBannerHeadline',
-    `Precision Self-Drive Mobility in ${operatingCity}.`
-  );
+  const heroHeadline =
+    heroCms.locale?.heading ||
+    getLocalizedField(
+      settings,
+      language,
+      'heroBannerHeadline',
+      operatingCity ? `Precision Self-Drive Mobility in ${operatingCity}.` : 'Precision Self-Drive Luxury Mobility.'
+    );
   const heroSubcopy =
+    heroCms.locale?.subheading ||
+    heroCms.locale?.body ||
     settings?.shortDescription ||
     getLocalizedField(
       settings,
       language,
       'heroBannerSubcopy',
-      'Curated company-owned fleet, live physical unit availability, verified doorstep delivery, and seamless UPI settlement.'
+      'Curated company-owned fleet, live vehicle availability, verified doorstep delivery, and seamless UPI settlement.'
     );
 
   const howItWorksSteps = settings?.howItWorksSteps?.length
@@ -181,14 +195,14 @@ export const HomePage: React.FC = () => {
     : [
         {
           title: '01. Select Car & Travel Dates',
-          description: 'Browse real-time physical fleet availability with transparent tariffs and refundable security deposits.',
+          description: 'Browse real-time vehicle availability with transparent tariffs and refundable security deposits.',
         },
         {
           title: '02. Choose Pickup or Delivery',
           description: 'Collect at our flagship operations lounge or pin doorstep delivery verified via Google Maps.',
         },
         {
-          title: '03. Verify KYC & Settle via UPI',
+          title: '03. Verify Documents & Settle via UPI',
           description: 'Upload Driving Licence & Govt ID once and settle securely with exact-amount UPI QR & UTR tracking.',
         },
         {
@@ -197,10 +211,54 @@ export const HomePage: React.FC = () => {
         },
       ];
 
+  const handleDurationChange = (daysVal: string) => {
+    setRentalDurationDays(daysVal);
+    if (daysVal === 'custom') return;
+    const days = Number(daysVal);
+    const startMs = new Date(pickupDate).getTime();
+    if (!Number.isFinite(days) || !Number.isFinite(startMs)) return;
+    const endIso = new Date(startMs + days * 24 * 3600000).toISOString().slice(0, 16);
+    setReturnDate(endIso);
+  };
+
+  const handleUseCurrentGpsForSearch = () => {
+    if (!navigator.geolocation) {
+      toast.error('Location access is unavailable in this browser.');
+      return;
+    }
+    setDetectingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await apiFetch<ResolvedLocationData>('/api/maps/reverse-geocode', {
+            method: 'POST',
+            body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          });
+          setPickupSearch(res.formattedAddress);
+          setPickupCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        } catch {
+          setPickupSearch(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
+          setPickupCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        } finally {
+          setDetectingGps(false);
+        }
+      },
+      () => {
+        setDetectingGps(false);
+        toast.error('Location permission denied. Enter your pickup address manually.');
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const params = new URLSearchParams();
-    if (selectedCategory) params.set('category', selectedCategory);
+    if (pickupSearch.trim()) params.set('pickup', pickupSearch.trim());
+    if (pickupCoords) {
+      params.set('pickupLat', String(pickupCoords.lat));
+      params.set('pickupLng', String(pickupCoords.lng));
+    }
     if (hasBranches && selectedBranchId) params.set('branchId', selectedBranchId);
     if (pickupDate) params.set('start', pickupDate);
     if (returnDate) params.set('end', returnDate);
@@ -281,209 +339,267 @@ export const HomePage: React.FC = () => {
   return (
     <div className="min-h-screen bg-obsidian text-ivory">
       {/* 1. CINEMATIC HERO + SPLIT SEARCH + TRUST STRIP */}
-      <section className="relative pt-24 pb-0 overflow-hidden bg-obsidian">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-8 pb-12 lg:pb-16 grid lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
-          {/* Editorial Left Column */}
-          <div className="lg:col-span-6 flex flex-col justify-between space-y-8 py-2">
-            <div className="space-y-5">
-              <p className="text-xs font-medium tracking-[0.2em] uppercase text-gold">
-                {t('hero.eyebrow')} · {operatingCity}
-              </p>
-              <h1
-                className="font-display text-4xl sm:text-5xl lg:text-[3.5rem] font-semibold leading-[1.08] tracking-tight text-white"
-                style={{ textWrap: 'balance' }}
+      {heroCms.published && (
+        <section className="relative pt-24 pb-0 overflow-hidden bg-obsidian">
+          <div className="max-w-[1440px] mx-auto px-4 sm:px-8 pb-12 lg:pb-16 grid lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
+            {/* Editorial Left Column */}
+            <div className="lg:col-span-6 flex flex-col justify-between space-y-8 py-2">
+              <div className="space-y-5">
+                <p className="text-xs font-medium tracking-[0.2em] uppercase text-gold">
+                  {t('hero.eyebrow')}{operatingCity ? ` · ${operatingCity}` : ''}
+                </p>
+                <h1
+                  className="font-display text-4xl sm:text-5xl lg:text-[3.5rem] font-semibold leading-[1.08] tracking-tight text-white"
+                  style={{ textWrap: 'balance' }}
+                >
+                  {heroHeadline}
+                </h1>
+                <p className="text-sm sm:text-base text-ivory/75 max-w-xl leading-relaxed">
+                  {heroSubcopy}
+                </p>
+              </div>
+
+              {/* Initial Booking Search Panel: Pickup Location + Pickup Date/Time + Rental Duration / Return Date (NO Return Location upfront) */}
+              <form
+                onSubmit={handleSearch}
+                className="p-5 rounded-2xl obsidian-glass space-y-4 shadow-2xl"
               >
-                {heroHeadline}
-              </h1>
-              <p className="text-sm sm:text-base text-ivory/75 max-w-xl leading-relaxed">
-                {heroSubcopy}
-              </p>
-            </div>
-
-            {/* Luxury Glass Search Panel */}
-            <form
-              onSubmit={handleSearch}
-              className="p-5 rounded-2xl obsidian-glass space-y-4 shadow-2xl"
-            >
-              <div className={`grid gap-3 ${hasBranches ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
-                {hasBranches && (
+                <div className="space-y-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-ivory/65 mb-1">
-                      {t('hero.branch')}
-                    </label>
-                    <select
-                      value={selectedBranchId}
-                      onChange={(e) => setSelectedBranchId(e.target.value)}
-                      className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
-                    >
-                      <option value="">{t('hero.allBranches')}</option>
-                      {activeBranches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="block text-[11px] font-medium text-ivory/65">
+                        Pickup Location
+                      </label>
+                      <button
+                        type="button"
+                        disabled={detectingGps}
+                        onClick={handleUseCurrentGpsForSearch}
+                        className="text-[11px] font-semibold text-gold hover:text-gold-bright inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <LocateFixed className="w-3 h-3" />
+                        {detectingGps ? 'Locating...' : 'Use Current Location'}
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <MapPin className="w-4 h-4 text-gold absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={pickupSearch}
+                        onChange={(e) => {
+                          setPickupSearch(e.target.value);
+                          setPickupCoords(null);
+                        }}
+                        placeholder="Enter pickup area, landmark, or delivery address"
+                        className="w-full pl-9 pr-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold placeholder:text-ivory/35"
+                      />
+                    </div>
                   </div>
-                )}
-                <div>
-                  <label className="block text-[11px] font-medium text-ivory/65 mb-1">
-                    {t('hero.category')}
-                  </label>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+
+                  <div className={`grid gap-3 ${hasBranches ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
+                    {hasBranches && (
+                      <div>
+                        <label className="block text-[11px] font-medium text-ivory/65 mb-1">
+                          {t('hero.branch')}
+                        </label>
+                        <select
+                          value={selectedBranchId}
+                          onChange={(e) => setSelectedBranchId(e.target.value)}
+                          className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                        >
+                          <option value="">{t('hero.allBranches')}</option>
+                          {activeBranches.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-[11px] font-medium text-ivory/65 mb-1">
+                        {t('hero.pickupDate')}
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={pickupDate}
+                        onChange={(e) => {
+                          const nextStart = e.target.value;
+                          setPickupDate(nextStart);
+                          if (rentalDurationDays !== 'custom') {
+                            const dNum = Number(rentalDurationDays);
+                            const ms = new Date(nextStart).getTime();
+                            if (Number.isFinite(dNum) && Number.isFinite(ms)) {
+                              setReturnDate(new Date(ms + dNum * 24 * 3600000).toISOString().slice(0, 16));
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-ivory/65 mb-1">
+                        Rental Duration
+                      </label>
+                      <select
+                        value={rentalDurationDays}
+                        onChange={(e) => handleDurationChange(e.target.value)}
+                        className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                      >
+                        <option value="1">1 Day (24 hrs)</option>
+                        <option value="2">2 Days</option>
+                        <option value="3">3 Days</option>
+                        <option value="5">5 Days</option>
+                        <option value="7">1 Week (7 Days)</option>
+                        <option value="custom">Custom Return Date</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-ivory/65 mb-1">
+                        {t('hero.returnDate')}
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={returnDate}
+                        onChange={(e) => {
+                          setReturnDate(e.target.value);
+                          setRentalDurationDays('custom');
+                        }}
+                        className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <span className="text-xs text-ivory/60">
+                    {operatingCity ? `${operatingCity} · ` : ''}{serviceRadiusKm} km delivery zone · Return location chosen at checkout
+                  </span>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-gold hover:bg-gold-bright text-obsidian text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    <option value="">{t('hero.allCategories')}</option>
-                    {CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
+                    {t('hero.ctaSearch')}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-ivory/65 mb-1">
-                    {t('hero.pickupDate')}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={pickupDate}
-                    onChange={(e) => setPickupDate(e.target.value)}
-                    className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-ivory/65 mb-1">
-                    {t('hero.returnDate')}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={returnDate}
-                    onChange={(e) => setReturnDate(e.target.value)}
-                    className="w-full px-3 py-2.5 text-xs bg-navy-deep border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
-                  />
-                </div>
-              </div>
+              </form>
+            </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <span className="text-xs text-ivory/60">
-                  {operatingCity} Lounge & {serviceRadiusKm} km delivery · {settings?.advancePaymentPercent ?? 30}% booking advance option
-                </span>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-gold hover:bg-gold-bright text-obsidian text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
-                >
-                  {t('hero.ctaSearch')}
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Showcase Photography Right Column */}
-          <div className="lg:col-span-6">
-            <div className="relative h-full min-h-[300px] lg:min-h-[450px] rounded-2xl overflow-hidden border border-white/10 bg-navy-deep shadow-2xl">
-              <img
-                src={heroSrc}
-                alt={`${brandName} luxury self-drive fleet in ${operatingCity}`}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-obsidian/90 via-obsidian/25 to-transparent" />
-              <div className="absolute bottom-6 left-6 right-6 flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <p className="text-xs text-gold font-medium tracking-wide">
-                    {hasBranches ? `${activeBranches.length} Active Operating Lounge(s)` : `${operatingCity} Flagship Lounge`}
-                  </p>
-                  <p className="font-display text-xl text-white mt-0.5">
-                    {officeName} · {serviceRadiusKm} km Doorstep Zone
-                  </p>
+            {/* Showcase Photography Right Column */}
+            <div className="lg:col-span-6">
+              <div className="relative h-full min-h-[300px] lg:min-h-[450px] rounded-2xl overflow-hidden border border-white/10 bg-navy-deep shadow-2xl">
+                <img
+                  src={heroSrc}
+                  alt={`${brandName} luxury self-drive fleet`}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-obsidian/90 via-obsidian/25 to-transparent" />
+                <div className="absolute bottom-6 left-6 right-6 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs text-gold font-medium tracking-wide">
+                      {hasBranches ? `${activeBranches.length} Active Operating Lounge(s)` : officeName}
+                    </p>
+                    <p className="font-display text-xl text-white mt-0.5">
+                      {officeName} · {serviceRadiusKm} km Doorstep Zone
+                    </p>
+                  </div>
+                  <Link
+                    to="/vehicles"
+                    className="text-xs font-semibold text-white underline underline-offset-4 hover:text-gold whitespace-nowrap"
+                  >
+                    {t('hero.ctaBrowse')}
+                  </Link>
                 </div>
-                <Link
-                  to="/vehicles"
-                  className="text-xs font-semibold text-white underline underline-offset-4 hover:text-gold whitespace-nowrap"
-                >
-                  {t('hero.ctaBrowse')}
-                </Link>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Full-Width Trust Strip */}
-        <div className="border-y border-white/10 bg-navy-deep/80">
-          <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-6 grid grid-cols-2 lg:grid-cols-4 gap-6">
-            <div>
-              <p className="font-mono tabular-nums text-xl font-semibold text-gold">
-                {activeVehicles.length} Fleet Units
-              </p>
-              <p className="text-xs text-ivory/65 mt-0.5">Company-Owned & Inspected</p>
-            </div>
-            <div>
-              <p className="font-mono tabular-nums text-xl font-semibold text-white">
-                {operatingCity}, {operatingState}
-              </p>
-              <p className="text-xs text-ivory/65 mt-0.5">{serviceRadiusKm} km Google Maps Doorstep Zone</p>
-            </div>
-            <div>
-              <p className="font-mono tabular-nums text-xl font-semibold text-white">
-                Digital KYC
-              </p>
-              <p className="text-xs text-ivory/65 mt-0.5">Driving Licence & Govt ID Verified</p>
-            </div>
-            <div>
-              <p className="font-mono tabular-nums text-xl font-semibold text-white">
-                48h Deposit Return
-              </p>
-              <p className="text-xs text-ivory/65 mt-0.5">Transparent UPI & GST Billing</p>
+          {/* Full-Width Trust Strip */}
+          <div className="border-y border-white/10 bg-navy-deep/80">
+            <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-6 grid grid-cols-2 lg:grid-cols-4 gap-6">
+              <div>
+                <p className="font-mono text-xl font-semibold text-gold">
+                  Company-Owned
+                </p>
+                <p className="text-xs text-ivory/65 mt-0.5">Multi-Point Inspected Fleet</p>
+              </div>
+              <div>
+                <p className="font-mono tabular-nums text-xl font-semibold text-white">
+                  {operatingCity ? `${operatingCity}${operatingState ? `, ${operatingState}` : ''}` : `${serviceRadiusKm} km Zone`}
+                </p>
+                <p className="text-xs text-ivory/65 mt-0.5">{serviceRadiusKm} km Google Maps Doorstep Zone</p>
+              </div>
+              <div>
+                <p className="font-mono text-xl font-semibold text-white">
+                  Digital Verification
+                </p>
+                <p className="text-xs text-ivory/65 mt-0.5">Driving Licence & Govt ID Verified</p>
+              </div>
+              <div>
+                <p className="font-mono tabular-nums text-xl font-semibold text-white">
+                  48h Deposit Return
+                </p>
+                <p className="text-xs text-ivory/65 mt-0.5">Transparent UPI & GST Billing</p>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* 2. FEATURED SELF-DRIVE FLEET (REAL-TIME AVAILABILITY) */}
-      <section className="max-w-[1440px] mx-auto px-4 sm:px-8 py-16 space-y-8">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div className="space-y-1.5">
-            <h2 className="font-display text-3xl sm:text-4xl font-semibold text-white">
-              {getLocalizedField(settings, language, 'fleetSectionHeading', t('section.featuredFleet'))}
-            </h2>
-            <p className="text-sm text-ivory/65 max-w-2xl">{t('section.featuredSub')}</p>
+      {featuredCms.published && (
+        <section className="max-w-[1440px] mx-auto px-4 sm:px-8 py-16 space-y-8">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div className="space-y-1.5">
+              <h2 className="font-display text-3xl sm:text-4xl font-semibold text-white">
+                {featuredCms.locale?.heading || getLocalizedField(settings, language, 'fleetSectionHeading', t('section.featuredFleet'))}
+              </h2>
+              <p className="text-sm text-ivory/65 max-w-2xl">
+                {featuredCms.locale?.subheading || t('section.featuredSub')}
+              </p>
+            </div>
+            <Link
+              to="/vehicles"
+              className="text-xs font-semibold text-gold hover:text-gold-bright inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              {t('hero.ctaBrowse')}
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
           </div>
-          <Link
-            to="/vehicles"
-            className="text-xs font-semibold text-gold hover:text-gold-bright inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-          >
-            {t('hero.ctaBrowse')}
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
 
-        {loading ? (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-[380px] rounded-2xl border border-white/10 bg-navy-deep animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {featuredVehicles.map((car) => {
-              const summary = summaryByVehicleId.get(car.id);
-              const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
-              const isSoldOut = availCount <= 0;
-              const statusLabel = summary?.statusLabel
-                ? summary.statusLabel
-                : isSoldOut
-                  ? t('fleet.soldOut')
-                  : availCount === 1
-                    ? t('fleet.onlyOneRemaining')
+          {loading ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-[380px] rounded-2xl border border-white/10 bg-navy-deep animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {featuredVehicles.map((car) => {
+                const summary = summaryByVehicleId.get(car.id);
+                const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
+                const isSoldOut = availCount <= 0;
+                const statusLabel = summary?.statusLabel
+                  ? summary.statusLabel
+                  : isSoldOut
+                    ? t('fleet.soldOut')
                     : t('fleet.available');
 
-              return (
-                <Link
-                  key={car.id}
-                  to={`/vehicles/${car.id}?start=${encodeURIComponent(pickupDate)}&end=${encodeURIComponent(returnDate)}`}
+                const detailParams = new URLSearchParams({
+                  start: pickupDate,
+                  end: returnDate,
+                });
+                if (pickupSearch.trim()) detailParams.set('pickup', pickupSearch.trim());
+                if (pickupCoords) {
+                  detailParams.set('pickupLat', String(pickupCoords.lat));
+                  detailParams.set('pickupLng', String(pickupCoords.lng));
+                }
+
+                return (
+                  <Link
+                    key={car.id}
+                    to={`/vehicles/${car.id}?${detailParams.toString()}`}
                   className="group rounded-2xl border border-white/10 bg-navy-deep overflow-hidden hover:-translate-y-0.5 hover:border-gold/40 transition-all flex flex-col"
                 >
                   <div className="aspect-[4/3] w-full bg-charcoal overflow-hidden relative">
@@ -546,15 +662,17 @@ export const HomePage: React.FC = () => {
           </div>
         )}
       </section>
+      )}
 
       {/* 3. BROWSE BY CATEGORY */}
+      {categoriesCms.published && (
       <section className="bg-navy-deep/70 border-y border-white/10 py-14">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 space-y-6">
           <div className="space-y-1">
             <h2 className="font-display text-2xl sm:text-3xl font-semibold text-white">
-              {t('section.categories')}
+              {categoriesCms.locale?.heading || t('section.categories')}
             </h2>
-            <p className="text-sm text-ivory/65">{t('section.categoriesSub')}</p>
+            <p className="text-sm text-ivory/65">{categoriesCms.locale?.subheading || t('section.categoriesSub')}</p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             {CATEGORIES.map((cat) => (
@@ -566,8 +684,8 @@ export const HomePage: React.FC = () => {
                 <Car className="w-4 h-4 text-gold" />
                 <div>
                   <p className="text-sm font-semibold text-white">{cat}</p>
-                  <p className="text-[11px] font-mono tabular-nums text-ivory/55">
-                    {categoryCounts[cat] || 0} unit(s)
+                  <p className="text-[11px] text-ivory/55">
+                    Explore →
                   </p>
                 </div>
               </Link>
@@ -575,9 +693,10 @@ export const HomePage: React.FC = () => {
           </div>
         </div>
       </section>
+      )}
 
       {/* 4. EXCLUSIVE OFFERS & COUPONS */}
-      {(activeOffers.length > 0 || activeCoupons.length > 0) && (
+      {offersCms.published && (activeOffers.length > 0 || activeCoupons.length > 0) && (
         <section id="offers" className="max-w-[1440px] mx-auto px-4 sm:px-8 py-16 space-y-8">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div>
@@ -585,7 +704,7 @@ export const HomePage: React.FC = () => {
                 Member Privileges
               </p>
               <h2 className="font-display text-3xl font-semibold text-white mt-1">
-                {getLocalizedField(settings, language, 'offersSectionHeading', t('section.offers'))}
+                {offersCms.locale?.heading || getLocalizedField(settings, language, 'offersSectionHeading', t('section.offers'))}
               </h2>
             </div>
             <Link
@@ -676,27 +795,29 @@ export const HomePage: React.FC = () => {
       )}
 
       {/* 5. WHY CHOOSE US + HOW IT WORKS */}
+      {(whyChooseCms.published || howItWorksCms.published) && (
       <section className="bg-navy-deep/80 border-y border-white/10 py-16">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 space-y-14">
           {/* Why Choose Us */}
+          {whyChooseCms.published && (
           <div className="grid lg:grid-cols-12 gap-8 items-start">
             <div className="lg:col-span-4 space-y-3">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">
                 The {brandName} Standard
               </p>
               <h2 className="font-display text-3xl font-semibold text-white">
-                {t('section.whyChoose')}
+                {whyChooseCms.locale?.heading || t('section.whyChoose')}
               </h2>
               <p className="text-sm text-ivory/70 leading-relaxed">
-                Every vehicle in our garage is directly owned, GPS-monitored for safety, and inspected prior to handover.
+                {whyChooseCms.locale?.body || 'Every vehicle in our garage is directly owned, GPS-monitored for safety, and inspected prior to handover.'}
               </p>
             </div>
             <div className="lg:col-span-8 grid sm:grid-cols-2 gap-4">
               {[
                 {
                   num: '01',
-                  title: 'Real Physical Unit Allocation',
-                  desc: 'Reservations lock actual physical registration units with zero double-booking overlap.',
+                  title: 'Verified Fleet Allocation',
+                  desc: 'Reservations lock an assigned inspected vehicle with zero double-booking overlap.',
                 },
                 {
                   num: '02',
@@ -722,16 +843,18 @@ export const HomePage: React.FC = () => {
               ))}
             </div>
           </div>
+          )}
 
           {/* How It Works */}
+          {howItWorksCms.published && (
           <div className="space-y-6 pt-6 border-t border-white/10">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="font-display text-3xl font-semibold text-white">
-                  {t('section.howItWorks')}
+                  {howItWorksCms.locale?.heading || t('section.howItWorks')}
                 </h2>
                 <p className="text-sm text-ivory/65 mt-1">
-                  {getLocalizedField(settings, language, 'howItWorksSummary', 'Four straightforward steps from browsing to ignition.')}
+                  {howItWorksCms.locale?.subheading || getLocalizedField(settings, language, 'howItWorksSummary', 'Four straightforward steps from browsing to ignition.')}
                 </p>
               </div>
               <Link to="/how-it-works" className="text-xs font-semibold text-gold hover:text-gold-bright">
@@ -750,10 +873,13 @@ export const HomePage: React.FC = () => {
               ))}
             </div>
           </div>
+          )}
         </div>
       </section>
+      )}
 
       {/* 6. LOUNGE / CONDITIONAL BRANCHES + SUBSCRIPTIONS */}
+      {experienceCms.published && (
       <section id="subscriptions" className="max-w-[1440px] mx-auto px-4 sm:px-8 py-16 space-y-14">
         {/* Conditional Hub / Branch Presence */}
         <div className="grid lg:grid-cols-12 gap-8 items-center">
@@ -764,7 +890,7 @@ export const HomePage: React.FC = () => {
             <h2 className="font-display text-3xl font-semibold text-white">{officeName}</h2>
             <p className="text-sm text-ivory/75 leading-relaxed">
               Collect directly from our concierge lounge with zero delivery charges or drop a verified Google Maps pin anywhere inside our{' '}
-              <strong className="text-white">{serviceRadiusKm} km</strong> doorstep delivery zone in {operatingCity}.
+              <strong className="text-white">{serviceRadiusKm} km</strong> doorstep delivery zone{operatingCity ? ` in ${operatingCity}` : ''}.
             </p>
             <div className="grid sm:grid-cols-2 gap-4 text-xs pt-2">
               <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-1.5">
@@ -773,7 +899,7 @@ export const HomePage: React.FC = () => {
                   Address
                 </p>
                 <p className="text-ivory/70 leading-relaxed">
-                  {settings?.businessAddress || `Terminal 2 Express Lounge, ${operatingCity}, ${operatingState}`}
+                  {settings?.businessAddress || (operatingCity ? `${operatingCity}${operatingState ? `, ${operatingState}` : ''} Operations Hub` : 'Central Operations Lounge')}
                 </p>
               </div>
               <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-1.5">
@@ -809,7 +935,7 @@ export const HomePage: React.FC = () => {
                 to="/vehicles"
                 className="px-5 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright transition-colors inline-flex items-center gap-2 whitespace-nowrap"
               >
-                Explore {operatingCity} Inventory
+                Explore{operatingCity ? ` ${operatingCity}` : ''} Inventory
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
               {settings?.googleMapsUrl && (
@@ -846,9 +972,11 @@ export const HomePage: React.FC = () => {
         {subscriptionPlans.length > 0 && (
           <div className="space-y-6 pt-8 border-t border-white/10">
             <div>
-              <h2 className="font-display text-3xl font-semibold text-white">{t('section.experience')}</h2>
+              <h2 className="font-display text-3xl font-semibold text-white">
+                {experienceCms.locale?.heading || t('section.experience')}
+              </h2>
               <p className="text-sm text-ivory/65 mt-1">
-                Weekly, monthly, and corporate self-drive subscriptions with routine maintenance included.
+                {experienceCms.locale?.subheading || 'Weekly, monthly, and corporate self-drive subscriptions with routine maintenance included.'}
               </p>
             </div>
             <div className="grid md:grid-cols-3 gap-6">
@@ -893,12 +1021,17 @@ export const HomePage: React.FC = () => {
           </div>
         )}
       </section>
+      )}
 
       {/* 7. TESTIMONIALS & FAQs */}
+      {(testimonialsCms.published || faqsCms.published) && (
       <section id="faqs" className="bg-navy-deep border-y border-white/10 py-16">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 grid lg:grid-cols-12 gap-10">
+          {testimonialsCms.published && (
           <div className="lg:col-span-5 space-y-6">
-            <h2 className="font-display text-3xl font-semibold text-white">{t('section.testimonials')}</h2>
+            <h2 className="font-display text-3xl font-semibold text-white">
+              {testimonialsCms.locale?.heading || t('section.testimonials')}
+            </h2>
             <div className="space-y-4">
               {(settings?.testimonials || []).map((item, idx) => (
                 <div key={idx} className="p-5 rounded-2xl bg-obsidian/80 border border-white/10 space-y-2">
@@ -910,10 +1043,14 @@ export const HomePage: React.FC = () => {
               ))}
             </div>
           </div>
+          )}
 
-          <div className="lg:col-span-7 space-y-6">
+          {faqsCms.published && (
+          <div className={`${testimonialsCms.published ? 'lg:col-span-7' : 'lg:col-span-12'} space-y-6`}>
             <div className="flex items-center justify-between gap-4">
-              <h2 className="font-display text-3xl font-semibold text-white">{t('section.faqs')}</h2>
+              <h2 className="font-display text-3xl font-semibold text-white">
+                {faqsCms.locale?.heading || t('section.faqs')}
+              </h2>
               <Link to="/policies/help" className="text-xs font-semibold text-gold hover:text-gold-bright">
                 Help Center →
               </Link>
@@ -945,10 +1082,13 @@ export const HomePage: React.FC = () => {
               })}
             </div>
           </div>
+          )}
         </div>
       </section>
+      )}
 
       {/* 8. CONTACT & SUPPORT DESK */}
+      {contactCms.published && (
       <section id="contact" className="bg-obsidian py-16">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 grid lg:grid-cols-12 gap-10">
           <div className="lg:col-span-5 space-y-4">
@@ -956,10 +1096,11 @@ export const HomePage: React.FC = () => {
               Concierge Desk
             </p>
             <h2 className="font-display text-3xl font-semibold text-white">
-              {t('section.contact')}
+              {contactCms.locale?.heading || t('section.contact')}
             </h2>
             <p className="text-sm text-ivory/70 leading-relaxed">
-              Questions regarding corporate mobility, doorstep handovers in {operatingCity}, or KYC verification? Reach our operations desk directly.
+              {contactCms.locale?.body ||
+                `Questions regarding corporate mobility${operatingCity ? `, doorstep handovers in ${operatingCity}` : ''}, or document verification? Reach our operations desk directly.`}
             </p>
             <div className="space-y-2.5 text-xs pt-2">
               <p className="flex items-center gap-2 text-white">
@@ -989,9 +1130,11 @@ export const HomePage: React.FC = () => {
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-3 py-1.5 text-xs font-semibold bg-navy-deep border border-white/15 rounded-lg text-ivory hover:text-gold hover:border-gold/50 transition-colors"
+                    title={item.displayName}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold bg-navy-deep border border-white/15 rounded-lg text-ivory hover:text-gold hover:border-gold/50 transition-colors"
                   >
-                    {item.displayName}
+                    <SocialIcon platform={item.platform} className="w-4 h-4 text-gold" />
+                    <span>{item.displayName}</span>
                   </a>
                 ))}
               </div>
@@ -1066,8 +1209,10 @@ export const HomePage: React.FC = () => {
           </form>
         </div>
       </section>
+      )}
 
       {/* 9. LUXURY FOOTER */}
+      {footerCms.published && (
       <footer className="bg-navy-deep text-ivory/65 border-t border-white/10 py-12">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 space-y-8">
           <div className="grid md:grid-cols-12 gap-8">
@@ -1084,12 +1229,13 @@ export const HomePage: React.FC = () => {
                 <span className="font-display text-xl font-semibold text-white">{brandName}</span>
               </div>
               <p className="text-xs leading-relaxed max-w-sm">
-                {getLocalizedField(
-                  settings,
-                  language,
-                  'footerTagline',
-                  `Curated Self-Drive Mobility in ${operatingCity}`
-                )}
+                {footerCms.locale?.body ||
+                  getLocalizedField(
+                    settings,
+                    language,
+                    'footerTagline',
+                    operatingCity ? `Curated Self-Drive Mobility in ${operatingCity}` : 'Curated Self-Drive Mobility'
+                  )}
               </p>
               {settings?.registrationInfo && (
                 <p className="text-[11px] font-mono text-ivory/45">{settings.registrationInfo}</p>
@@ -1102,9 +1248,12 @@ export const HomePage: React.FC = () => {
                       href={item.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-2.5 py-1 text-[11px] font-medium bg-obsidian border border-white/10 rounded-md text-ivory/80 hover:text-gold hover:border-gold/40"
+                      title={item.displayName}
+                      aria-label={item.displayName}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium bg-obsidian border border-white/10 rounded-lg text-ivory/80 hover:text-gold hover:border-gold/40 transition-colors"
                     >
-                      {item.displayName}
+                      <SocialIcon platform={item.platform} className="w-3.5 h-3.5 text-gold" />
+                      <span>{item.displayName}</span>
                     </a>
                   ))}
                 </div>
@@ -1135,23 +1284,30 @@ export const HomePage: React.FC = () => {
                 <Link to="/vehicles" className="hover:text-gold">{t('nav.fleet')}</Link>
                 <Link to="/login" className="hover:text-gold">Customer Sign In</Link>
                 <Link to="/staff" className="hover:text-gold">Staff Operations</Link>
-                <Link to="/admin" className="hover:text-gold">Owner Admin Console</Link>
-                <Link to="/master-admin" className="hover:text-gold">Platform Master Console</Link>
+                <Link to="/admin" className="hover:text-gold">Owner Console</Link>
+                <Link to="/master-admin" className="hover:text-gold">Admin Console</Link>
               </div>
             </div>
           </div>
 
-          <div className="pt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-[11px] text-ivory/45">
-            <span>
-              © {new Date().getFullYear()} {brandName}. All rights reserved.
-            </span>
+          <div className="pt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-[11px] text-ivory/55">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>
+                © {new Date().getFullYear()} {brandName}. All rights reserved.
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-medium text-ivory/75">
+                A product of <strong className="text-gold">HackifyPro</strong>
+              </span>
+            </div>
             <span className="inline-flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-gold" />
-              Verified Manual UPI & Digital KYC Checkout
+              Verified Manual UPI & Digital Verification Checkout
             </span>
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 };

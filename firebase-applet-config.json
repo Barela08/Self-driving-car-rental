@@ -1,12 +1,13 @@
 {
-  "projectId": "gen-lang-client-0106540047",
-  "appId": "1:367761983889:web:ce912c53f031222f317230",
-  "apiKey": "AIzaSyCBPJIlZ-BcaBFwY52Y6jNWwFnwk_p4bi0",
-  "authDomain": "gen-lang-client-0106540047.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-elitedrivecarren-1530ccb4-04ad-4731-8f7e-d96458988250",
-  "storageBucket": "gen-lang-client-0106540047.firebasestorage.app",
-  "messagingSenderId": "367761983889",
-  "measurementId": "",
-  "oAuthClientId": "367761983889-n8hh7udl267lp9gkhfc8i9u6t9spoolj.apps.googleusercontent.com",
+  "projectId": "self-driving-car-rental-9f35f",
+  "appId": "1:611647646497:web:857638b3e91219df7b2c60",
+  "apiKey": "AIzaSyDgGzbnzU_sMrZS9tF774ZD0_6jDvBKsEM",
+  "authDomain": "self-driving-car-rental-9f35f.firebaseapp.com",
+  "databaseURL": "https://self-driving-car-rental-9f35f-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "self-driving-car-rental-9f35f.firebasestorage.app",
+  "messagingSenderId": "611647646497",
+  "measurementId": "G-3JEWNBVFHR",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

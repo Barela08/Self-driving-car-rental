@@ -264,7 +264,7 @@ export const StaffDashboard: React.FC = () => {
 
   const roles = data?.roles;
   const branches = data?.branches || [];
-  const cityHubLabel = settings?.operatingCityName || 'Mumbai';
+  const cityHubLabel = settings?.operatingCityName || '';
   const assignedBranches = branches.filter(
     (b) =>
       profile?.role === 'super_admin' ||
@@ -277,7 +277,7 @@ export const StaffDashboard: React.FC = () => {
       ? `All Branches (${branches.filter((b) => b.active).length || 1} Active)`
       : assignedBranches.length > 0
         ? assignedBranches.map((b) => b.name).join(', ')
-        : profile?.branchId || `${cityHubLabel} Operations Hub`;
+        : profile?.branchId || (cityHubLabel ? `${cityHubLabel} Operations Hub` : 'Central Operations Hub');
   const roleLabel = profile?.roleName || profile?.role?.replace(/_/g, ' ') || 'Staff';
 
   const canApproveBookings = hasAdminPermission(profile, 'approve_bookings', roles);

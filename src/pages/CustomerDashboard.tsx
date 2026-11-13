@@ -64,11 +64,11 @@ interface DashboardPayload {
 
 export const CustomerDashboard: React.FC = () => {
   const { profile, firebaseUser, loading: authLoading, logout, logoutAllDevices, refreshProfile } = useAuth();
-  const { branches, activeBranches, vehicles, settings, authOtpConfig, isPreviewMode } = useCatalog();
+  const { branches, activeBranches, vehicles, settings, isPreviewMode } = useCatalog();
   const { language, setLanguage, t } = useLanguage();
   const navigate = useNavigate();
 
-  const operatingCity = settings?.operatingCityName || 'Mumbai';
+  const operatingCity = settings?.operatingCityName || activeBranches[0]?.cityName || '';
   const hasBranches = activeBranches.length > 0;
   const centralHub = (hasBranches ? activeBranches[0] : null) || branches.find((b) => b.id === 'branch-central-hub') || null;
 
@@ -428,9 +428,9 @@ export const CustomerDashboard: React.FC = () => {
         id: `addr-${Date.now()}`,
         label: newAddrLabel.trim(),
         address: newAddrText.trim(),
-        cityName: operatingCity,
-        lat: settings?.hubLat || centralHub?.lat || 19.076,
-        lng: settings?.hubLng || centralHub?.lng || 72.8777,
+        cityName: operatingCity || centralHub?.cityName || 'Operating Hub',
+        lat: Number(settings?.hubLat || centralHub?.lat || 0),
+        lng: Number(settings?.hubLng || centralHub?.lng || 0),
       },
     ];
     try {
@@ -991,7 +991,8 @@ export const CustomerDashboard: React.FC = () => {
                       Driver KYC & Document Verification
                     </h2>
                     <p className="text-xs text-ivory/65 mt-1">
-                      Choose encrypted online verification or schedule an in-person check at our {operatingCity} operations lounge.
+                      Choose encrypted online verification or schedule an in-person check at our{' '}
+                      {operatingCity ? `${operatingCity} ` : ''}operations lounge.
                     </p>
                   </div>
 
@@ -1129,10 +1130,10 @@ export const CustomerDashboard: React.FC = () => {
                         )}
                         <div className="p-3.5 rounded-xl bg-obsidian border border-white/10 text-xs space-y-1">
                           <p className="font-semibold text-white">
-                            {chosenKycBranch?.name || settings?.officeName || `${operatingCity} Central Lounge`}
+                            {chosenKycBranch?.name || settings?.officeName || (operatingCity ? `${operatingCity} Central Lounge` : 'Central Lounge')}
                           </p>
                           <p className="text-ivory/65">
-                            {chosenKycBranch?.address || settings?.businessAddress || `${operatingCity} Operations Lounge`}
+                            {chosenKycBranch?.address || settings?.businessAddress || (operatingCity ? `${operatingCity} Operations Lounge` : 'Operations Lounge')}
                           </p>
                           <p className="text-[11px] font-mono text-gold">
                             Hours: {chosenKycBranch?.openingHours || settings?.businessHours || '06:00 AM – 11:30 PM'}
@@ -1587,19 +1588,17 @@ export const CustomerDashboard: React.FC = () => {
                           }}
                           className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-lg text-sm text-white font-mono"
                         />
-                        {(authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled) && (
-                          <button
-                            type="button"
-                            disabled={busyId === 'otp' || otpVerified}
-                            onClick={() => void handleSendAccountOtp()}
-                            className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-lg font-semibold hover:border-gold cursor-pointer whitespace-nowrap"
-                          >
-                            {otpVerified ? 'Verified' : 'Verify Mobile'}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          disabled={busyId === 'otp' || otpVerified || !editPhone.trim()}
+                          onClick={() => void handleSendAccountOtp()}
+                          className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-lg font-semibold hover:border-gold cursor-pointer whitespace-nowrap disabled:opacity-50"
+                        >
+                          {otpVerified ? 'Verified' : otpChallengeId ? 'Resend OTP' : 'Verify Mobile'}
+                        </button>
                       </div>
                       {otpHint && (
-                        <p className="mt-1.5 text-[11px] text-amber-200 bg-amber-950/35 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                        <p className="mt-1.5 text-[11px] text-ivory/75 bg-obsidian border border-white/10 rounded-lg px-2.5 py-1.5">
                           {otpHint}
                         </p>
                       )}

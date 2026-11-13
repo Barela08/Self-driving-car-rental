@@ -17,7 +17,7 @@ export function downloadBookingInvoicePdf(
     settings?.registrationInfo || 'EliteDrive Mobility Pvt. Ltd.';
   const supportEmail = settings?.supportEmail || 'concierge@elitedrive.in';
   const supportPhone = settings?.supportPhone || '+91 22 4890 2200';
-  const cityName = settings?.operatingCityName || booking.cityName || 'Mumbai';
+  const cityName = settings?.operatingCityName || booking.cityName || 'Operating Hub';
 
   // Obsidian header banner
   doc.setFillColor(11, 11, 13);

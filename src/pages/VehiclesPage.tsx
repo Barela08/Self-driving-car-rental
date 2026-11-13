@@ -8,7 +8,7 @@ import {
   Map as GoogleMap,
   Pin,
 } from '@vis.gl/react-google-maps';
-import { ArrowRight, Calendar, Map as MapIcon, SlidersHorizontal, Star } from 'lucide-react';
+import { ArrowRight, Calendar, Map as MapIcon, MapPin, SlidersHorizontal, Star } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useLanguage } from '../context/LanguageContext';
 import { formatINR } from '../lib/api';
@@ -66,20 +66,37 @@ export const VehiclesPage: React.FC = () => {
   const [summaries, setSummaries] = useState<VehicleAvailabilitySummary[]>([]);
   const [availLoading, setAvailLoading] = useState(false);
 
+  const [pickupLocation, setPickupLocation] = useState<string>(searchParams.get('pickup') || '');
+  const pickupLatParam = searchParams.get('pickupLat') || '';
+  const pickupLngParam = searchParams.get('pickupLng') || '';
+
   const hasBranches = activeBranches.length > 0;
   const effectiveBranchId = hasBranches ? branchId : 'all';
 
-  const operatingCity = settings?.operatingCityName || 'Mumbai';
+  const operatingCity = settings?.operatingCityName || activeBranches[0]?.cityName || '';
   const selectedBranch = hasBranches
     ? activeBranches.find((b) => b.id === branchId) ||
       activeBranches.find((b) => b.id === 'branch-central-hub') ||
       activeBranches[0]
     : null;
-  const hubLat = Number(selectedBranch?.lat ?? settings?.hubLat ?? 19.076);
-  const hubLng = Number(selectedBranch?.lng ?? settings?.hubLng ?? 72.8777);
+  const configuredLat = selectedBranch?.lat ?? settings?.hubLat;
+  const configuredLng = selectedBranch?.lng ?? settings?.hubLng;
+  const hasHubCoords =
+    Number.isFinite(Number(configuredLat)) &&
+    Number.isFinite(Number(configuredLng)) &&
+    Number(configuredLat) !== 0 &&
+    Number(configuredLng) !== 0;
+  const hubLat = hasHubCoords ? Number(configuredLat) : 20.5937;
+  const hubLng = hasHubCoords ? Number(configuredLng) : 78.9629;
   const hubRadiusKm = Number(selectedBranch?.deliveryRadiusKm ?? settings?.serviceRadiusKm ?? 35);
-  const hubName = selectedBranch?.name || settings?.officeName || `${operatingCity} Flagship Hub`;
-  const hubAddress = selectedBranch?.address || settings?.businessAddress || `${operatingCity} Flagship Hub`;
+  const hubName =
+    selectedBranch?.name ||
+    settings?.officeName ||
+    (operatingCity ? `${operatingCity} Flagship Hub` : 'Operations Hub');
+  const hubAddress =
+    selectedBranch?.address ||
+    settings?.businessAddress ||
+    (operatingCity ? `${operatingCity} Operations Hub` : 'Central Operations Hub');
 
   useEffect(() => {
     const s = new Date(startDate).getTime();
@@ -162,15 +179,15 @@ export const VehiclesPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-gold">
-              {operatingCity} Fleet Catalog
+              {operatingCity ? `${operatingCity} Fleet Catalog` : 'Self-Drive Fleet Catalog'}
             </p>
             <h1 className="font-display text-3xl sm:text-4xl font-semibold text-white mt-1">
               Self-Drive Fleet Discovery
             </h1>
             <p className="text-sm text-ivory/65 mt-1">
               {hasBranches
-                ? `Live physical unit inventory across ${activeBranches.length} active branch lounge(s).`
-                : `Live physical unit inventory from our ${operatingCity} central operating hub.`}
+                ? `Live vehicle availability across ${activeBranches.length} active branch lounge(s).`
+                : `Live vehicle availability from our central operating hub.`}
             </p>
           </div>
 
@@ -184,9 +201,22 @@ export const VehiclesPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Date-Window & Conditional Branch Selector */}
+        {/* Pickup Location, Dates & Conditional Branch Selector (Return Location collected later in booking) */}
         <div className="grid md:grid-cols-12 gap-3 p-4 rounded-2xl bg-navy-deep border border-white/10 items-end">
-          <div className={hasBranches ? 'md:col-span-4' : 'md:col-span-6'}>
+          <div className={hasBranches ? 'md:col-span-3' : 'md:col-span-4'}>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-ivory/60 mb-1">
+              <MapPin className="w-3.5 h-3.5 inline mr-1 text-gold" />
+              Pickup Location
+            </label>
+            <input
+              type="text"
+              value={pickupLocation}
+              onChange={(e) => setPickupLocation(e.target.value)}
+              placeholder="Enter pickup area or address"
+              className="w-full px-3 py-2 text-xs border border-white/15 rounded-xl bg-obsidian text-white focus:outline-none focus:border-gold placeholder:text-ivory/35"
+            />
+          </div>
+          <div className={hasBranches ? 'md:col-span-3' : 'md:col-span-4'}>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-ivory/60 mb-1">
               <Calendar className="w-3.5 h-3.5 inline mr-1 text-gold" />
               {t('hero.pickupDate')}
@@ -198,7 +228,7 @@ export const VehiclesPage: React.FC = () => {
               className="w-full px-3 py-2 text-xs border border-white/15 rounded-xl bg-obsidian text-white focus:outline-none focus:border-gold"
             />
           </div>
-          <div className={hasBranches ? 'md:col-span-4' : 'md:col-span-6'}>
+          <div className={hasBranches ? 'md:col-span-3' : 'md:col-span-4'}>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-ivory/60 mb-1">
               <Calendar className="w-3.5 h-3.5 inline mr-1 text-gold" />
               {t('hero.returnDate')}
@@ -211,7 +241,7 @@ export const VehiclesPage: React.FC = () => {
             />
           </div>
           {hasBranches && (
-            <div className="md:col-span-4">
+            <div className="md:col-span-3">
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-ivory/60 mb-1">
                 {t('hero.branch')}
               </label>
@@ -255,14 +285,16 @@ export const VehiclesPage: React.FC = () => {
                   mapId="DEMO_MAP_ID"
                   defaultCenter={{ lat: hubLat, lng: hubLng }}
                   center={{ lat: hubLat, lng: hubLng }}
-                  defaultZoom={11}
+                  defaultZoom={hasHubCoords ? 11 : 5}
                   gestureHandling="greedy"
                   internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
                   style={{ width: '100%', height: '100%' }}
                 >
                   {(hasBranches
                     ? activeBranches
-                    : [{ id: 'central', lat: hubLat, lng: hubLng, deliveryRadiusKm: hubRadiusKm }]
+                    : hasHubCoords
+                      ? [{ id: 'central', lat: hubLat, lng: hubLng, deliveryRadiusKm: hubRadiusKm }]
+                      : []
                   ).map((b) => (
                     <React.Fragment key={b.id}>
                       <Circle
@@ -282,7 +314,7 @@ export const VehiclesPage: React.FC = () => {
                       </AdvancedMarker>
                     </React.Fragment>
                   ))}
-                  {hubInfoOpen && (
+                  {hubInfoOpen && hasHubCoords && (
                     <InfoWindow
                       position={{ lat: hubLat, lng: hubLng }}
                       onCloseClick={() => setHubInfoOpen(false)}
@@ -303,7 +335,7 @@ export const VehiclesPage: React.FC = () => {
                 <p className="font-semibold text-white">{hubName}</p>
                 <p>{hubAddress}</p>
                 <p className="font-mono text-gold">
-                  {operatingCity} Doorstep Delivery Radius: {hubRadiusKm} km
+                  {operatingCity ? `${operatingCity} ` : ''}Doorstep Delivery Radius: {hubRadiusKm} km
                 </p>
               </div>
             )}
@@ -470,7 +502,6 @@ export const VehiclesPage: React.FC = () => {
               <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {modelCards.map(({ car, summary }) => {
                   const availCount = summary ? summary.availableUnits : car.status === 'Available' ? 1 : 0;
-                  const totalUnits = summary ? summary.totalUnits : 1;
                   const statusText = summary
                     ? summary.statusLabel || summary.availabilityStatus
                     : car.status === 'Available'
@@ -479,7 +510,14 @@ export const VehiclesPage: React.FC = () => {
                   const isSoldOut = availCount === 0;
                   const nextAvail = formatAvailableDate(summary?.nextAvailableDate);
 
-                  const detailHref = `/vehicles/${car.id}?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+                  const detailParams = new URLSearchParams({
+                    start: startDate,
+                    end: endDate,
+                  });
+                  if (pickupLocation.trim()) detailParams.set('pickup', pickupLocation.trim());
+                  if (pickupLatParam) detailParams.set('pickupLat', pickupLatParam);
+                  if (pickupLngParam) detailParams.set('pickupLng', pickupLngParam);
+                  const detailHref = `/vehicles/${car.id}?${detailParams.toString()}`;
 
                   return (
                     <Link
@@ -500,7 +538,7 @@ export const VehiclesPage: React.FC = () => {
                         <div>
                           <div className="flex items-center justify-between gap-2 text-xs text-ivory/60">
                             <span>
-                              {car.category} · {operatingCity}
+                              {car.category}{operatingCity ? ` · ${operatingCity}` : ''}
                             </span>
                             <span
                               className={`font-medium ${
@@ -512,7 +550,6 @@ export const VehiclesPage: React.FC = () => {
                               }`}
                             >
                               {statusText}
-                              {totalUnits > 1 ? ` (${availCount}/${totalUnits})` : ''}
                             </span>
                           </div>
                           <h3 className="font-display text-lg font-semibold text-white mt-1.5 group-hover:text-gold transition-colors">

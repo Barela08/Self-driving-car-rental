@@ -686,7 +686,7 @@ export function validateMultiBranchLocation(params: {
 }) {
   const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, pickupBranch, allBranches, vehicle, settings } = params;
   const isCentralHub = pickupBranch.id === 'branch-central-hub';
-  const operatingCityName = pickupBranch.cityName || settings?.operatingCityName || 'Mumbai';
+  const operatingCityName = pickupBranch.cityName || settings?.operatingCityName || 'Service Area';
   const hubLat = Number(isCentralHub ? (settings?.hubLat ?? pickupBranch.lat) : (pickupBranch.lat ?? settings?.hubLat));
   const hubLng = Number(isCentralHub ? (settings?.hubLng ?? pickupBranch.lng) : (pickupBranch.lng ?? settings?.hubLng));
   const maxRadiusKm = Number(

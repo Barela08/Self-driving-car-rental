@@ -34,6 +34,9 @@ interface BookingModalProps {
   vehicle: Vehicle;
   initialStartDate: string;
   initialEndDate: string;
+  initialPickupAddress?: string;
+  initialPickupLat?: number;
+  initialPickupLng?: number;
   availableUnits?: number;
   onClose: () => void;
 }
@@ -42,6 +45,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   vehicle,
   initialStartDate,
   initialEndDate,
+  initialPickupAddress = '',
+  initialPickupLat,
+  initialPickupLng,
   availableUnits = 1,
   onClose,
 }) => {
@@ -54,29 +60,38 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     (activeBranches.length > 0
       ? activeBranches.find((b) => b.id === vehicle.branchId) || activeBranches[0]
       : null) || null;
-  const hubLat = Number(hub?.lat ?? settings?.hubLat ?? 19.076);
-  const hubLng = Number(hub?.lng ?? settings?.hubLng ?? 72.8777);
-  const hubAddress =
-    hub?.address || settings?.businessAddress || `${settings?.operatingCityName || 'Mumbai'} Fleet Lounge`;
+  const hubLat = Number(hub?.lat ?? settings?.hubLat ?? 20.5937);
+  const hubLng = Number(hub?.lng ?? settings?.hubLng ?? 78.9629);
   const operatingCity =
-    hub?.cityName || settings?.operatingCityName || vehicle.cityName || 'Mumbai';
+    hub?.cityName || settings?.operatingCityName || vehicle.cityName || '';
+  const hubAddress =
+    hub?.address ||
+    settings?.businessAddress ||
+    (operatingCity ? `${operatingCity} Rental Lounge` : '');
 
   const [startDate, setStartDate] = useState(initialStartDate);
   const [endDate, setEndDate] = useState(initialEndDate);
   const [liveAvailableUnits, setLiveAvailableUnits] = useState<number>(Math.max(0, availableUnits));
   const [nextAvailableDate, setNextAvailableDate] = useState<string | null>(null);
   const [quantity, setQuantity] = useState<number>(1);
+  const [returnChoice, setReturnChoice] = useState<'same' | 'different'>('same');
+  const [editingReturnMap, setEditingReturnMap] = useState(false);
+
+  const startingPickupAddress = initialPickupAddress.trim() || hubAddress;
+  const startingPickupLat = Number.isFinite(initialPickupLat) ? Number(initialPickupLat) : hubLat;
+  const startingPickupLng = Number.isFinite(initialPickupLng) ? Number(initialPickupLng) : hubLng;
+
   const [location, setLocation] = useState<LocationSelection>({
-    pickupMode: 'branch',
+    pickupMode: initialPickupAddress.trim() ? 'delivery' : 'branch',
     pickupBranchId: hub?.id || 'branch-central-hub',
     returnBranchId: hub?.id || 'branch-central-hub',
     isOneWay: false,
-    pickupAddress: hubAddress,
-    pickupLat: hubLat,
-    pickupLng: hubLng,
-    returnAddress: hubAddress,
-    returnLat: hubLat,
-    returnLng: hubLng,
+    pickupAddress: startingPickupAddress,
+    pickupLat: startingPickupLat,
+    pickupLng: startingPickupLng,
+    returnAddress: startingPickupAddress,
+    returnLat: startingPickupLat,
+    returnLng: startingPickupLng,
     serviceable: true,
     deliveryCharge: 0,
     oneWayCharge: 0,
@@ -188,7 +203,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               returnLng: location.returnLng,
               pickupBranchId: location.pickupBranchId,
               returnBranchId: location.returnBranchId,
-              isOneWay: false,
+              isOneWay: returnChoice === 'different',
               insurancePackageId: insuranceId || null,
               roadsideRequested,
               driverRequested,
@@ -331,7 +346,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           returnLng: location.returnLng,
           pickupBranchId: location.pickupBranchId,
           returnBranchId: location.returnBranchId,
-          isOneWay: false,
+          isOneWay: returnChoice === 'different',
           gstNumber: gstNumber.trim().toUpperCase() || undefined,
           insurancePackageId: insuranceId || null,
           roadsideRequested,
@@ -389,9 +404,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between border-b border-white/10 shrink-0">
           <div>
             <p className="text-xs text-gold font-medium">
-              {operatingCity} Self-Drive Fleet ·{' '}
+              {operatingCity ? `${operatingCity} Self-Drive Fleet · ` : 'Self-Drive Fleet · '}
               {vehicle.instantBooking ? 'Instant Confirm Eligible' : 'Concierge Approval'} ·{' '}
-              {liveAvailableUnits} Unit(s) Available
+              {liveAvailableUnits > 0 ? 'Available for Dates' : 'Currently Unavailable'}
             </p>
             <h2 className="font-display text-xl sm:text-2xl font-semibold mt-0.5">{vehicle.name}</h2>
           </div>
@@ -458,7 +473,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-ivory/70 mb-1">
-                  Vehicles Needed ({liveAvailableUnits} free)
+                  Vehicles Needed
                 </label>
                 <div className="flex items-center justify-between border border-white/15 rounded-lg px-2 py-1.5 bg-obsidian">
                   <button
@@ -471,7 +486,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     <Minus className="w-3.5 h-3.5" />
                   </button>
                   <span className="font-mono tabular-nums text-sm font-bold text-gold">
-                    {quantity} unit{quantity > 1 ? 's' : ''}
+                    {quantity} vehicle{quantity > 1 ? 's' : ''}
                   </span>
                   <button
                     type="button"
@@ -486,17 +501,120 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
 
-            {/* Map & Location Verification */}
-            <div>
-              <h3 className="text-sm font-semibold text-white mb-2">
-                1. Pickup, Delivery & Return Location ({operatingCity})
-              </h3>
-              <LocationMapPicker
-                vehicle={vehicle}
-                branches={branches}
-                value={location}
-                onChange={setLocation}
-              />
+            {/* Pickup Location Picker */}
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-2">
+                  1. Pickup Location {operatingCity ? `(${operatingCity})` : ''}
+                </h3>
+                <LocationMapPicker
+                  vehicle={vehicle}
+                  branches={branches}
+                  value={location}
+                  mode="pickup"
+                  onChange={(next) => {
+                    if (returnChoice === 'same') {
+                      setLocation({
+                        ...next,
+                        returnAddress: next.pickupAddress,
+                        returnLat: next.pickupLat,
+                        returnLng: next.pickupLng,
+                        isOneWay: false,
+                      });
+                    } else {
+                      setLocation({ ...next, isOneWay: true });
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Return Location — Asked After Pickup Selection */}
+              <div className="p-4 rounded-xl bg-obsidian/80 border border-white/15 space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-white">
+                    {t('booking.returnPromptTitle')}
+                  </h4>
+                  <p className="text-xs text-ivory/65 mt-0.5">
+                    Select whether you will return the vehicle at your pickup address or at a different drop spot.
+                  </p>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReturnChoice('same');
+                      setEditingReturnMap(false);
+                      setLocation((prev) => ({
+                        ...prev,
+                        isOneWay: false,
+                        returnAddress: prev.pickupAddress,
+                        returnLat: prev.pickupLat,
+                        returnLng: prev.pickupLng,
+                        oneWayCharge: 0,
+                      }));
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                      returnChoice === 'same'
+                        ? 'border-gold bg-navy-deep text-white'
+                        : 'border-white/10 bg-obsidian/60 text-ivory/75 hover:border-white/25'
+                    }`}
+                  >
+                    <p className="text-xs font-semibold text-white">{t('booking.sameAsPickup')}</p>
+                    <p className="text-[11px] text-ivory/65 truncate mt-0.5">
+                      {location.pickupAddress || 'Uses confirmed pickup address'}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReturnChoice('different');
+                      setEditingReturnMap(true);
+                      setLocation((prev) => ({ ...prev, isOneWay: true }));
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                      returnChoice === 'different'
+                        ? 'border-gold bg-navy-deep text-white'
+                        : 'border-white/10 bg-obsidian/60 text-ivory/75 hover:border-white/25'
+                    }`}
+                  >
+                    <p className="text-xs font-semibold text-white">{t('booking.differentReturn')}</p>
+                    <p className="text-[11px] text-ivory/65 mt-0.5">
+                      Pick a drop point on map (applicable return charges apply)
+                    </p>
+                  </button>
+                </div>
+
+                {returnChoice === 'different' && (
+                  <div className="pt-2 space-y-2">
+                    {!editingReturnMap && location.returnAddress ? (
+                      <div className="p-3 rounded-xl bg-navy-deep border border-white/15 flex items-center justify-between gap-2 text-xs">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase text-gold">Confirmed Return Spot</p>
+                          <p className="text-white truncate">{location.returnAddress}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditingReturnMap(true)}
+                          className="px-3 py-1.5 border border-white/20 rounded-lg text-gold hover:border-gold whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                          Edit Return
+                        </button>
+                      </div>
+                    ) : (
+                      <LocationMapPicker
+                        vehicle={vehicle}
+                        branches={branches}
+                        value={location}
+                        mode="return"
+                        onChange={(next) => setLocation({ ...next, isOneWay: true })}
+                        onConfirmed={() => setEditingReturnMap(false)}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Protection & Optional Services */}
@@ -692,6 +810,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       <span className="text-ivory/65">Doorstep Delivery Fee</span>
                       <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.deliveryCharge)}
+                      </span>
+                    </div>
+                  )}
+                  {pricing.oneWayCharge > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-ivory/65">Different Return Location Fee</span>
+                      <span className="font-mono tabular-nums text-white">
+                        {formatINR(pricing.oneWayCharge)}
                       </span>
                     </div>
                   )}
@@ -905,9 +1031,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 {isPreviewMode
                   ? 'Booking Disabled in Preview Mode'
                   : liveAvailableUnits < quantity
-                    ? 'Insufficient Units for Dates'
+                    ? 'Unavailable for Selected Dates'
                     : Boolean(firebaseUser) && !mandatoryKycUploaded
-                      ? 'Upload Mandatory KYC Docs First'
+                      ? 'Upload Mandatory Documents First'
                       : !allRequiredConsentsChecked
                         ? 'Confirm All 5 Checkboxes Above'
                         : submitting
@@ -923,7 +1049,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <p className="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-500/30 rounded-lg p-2.5 flex items-start gap-1.5">
                   <Check className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
                   <span>
-                    Current KYC status: <strong>{profile.kycStatus}</strong>. Complete online or hub KYC in your dashboard before vehicle handover.
+                    Document verification status: <strong>{profile.kycStatus}</strong>. Complete online or lounge document verification in your dashboard before handover.
                   </span>
                 </p>
               )}

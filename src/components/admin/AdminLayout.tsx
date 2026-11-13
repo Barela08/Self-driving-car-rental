@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   BarChart3,
   Bell,
-  Bot,
+  Boxes,
   Building2,
   CalendarClock,
   Car,
@@ -10,15 +10,16 @@ import {
   Database,
   Eye,
   FileCheck2,
-  History,
-  KeyRound,
+  Globe,
   LayoutDashboard,
   LogOut,
   Menu,
-  PlugZap,
+  Palette,
+  QrCode,
   RefreshCw,
-  Settings2,
+  Share2,
   ShieldCheck,
+  UserCog,
   Users,
   X,
 } from 'lucide-react';
@@ -40,23 +41,31 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   {
     key: 'vehicles',
-    label: 'Vehicles & Inventory',
+    label: 'Vehicle Management',
     icon: Car,
     requiredAny: [
       'manage_vehicles',
-      'manage_vehicle_maintenance',
       'edit_pricing',
       'delete_archive_vehicles',
-      'view_inventory',
       'add_vehicle',
       'bulk_add_vehicles',
       'edit_vehicle',
       'change_vehicle_status',
-      'assign_vehicle',
+    ],
+  },
+  {
+    key: 'inventory',
+    label: 'Inventory Management',
+    icon: Boxes,
+    requiredAny: [
+      'view_inventory',
       'manage_availability',
+      'assign_vehicle',
       'manage_maintenance',
+      'manage_vehicle_maintenance',
       'view_vehicle_history',
       'export_inventory',
+      'manage_vehicles',
     ],
   },
   {
@@ -67,13 +76,13 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   },
   {
     key: 'customers',
-    label: 'Customer Directory',
+    label: 'Customer Management',
     icon: Users,
     requiredAny: ['view_customers', 'edit_customers'],
   },
   {
     key: 'kyc',
-    label: 'KYC Verification',
+    label: 'Document Verification',
     icon: FileCheck2,
     requiredAny: ['view_kyc', 'view_kyc_documents', 'review_kyc'],
   },
@@ -82,12 +91,6 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     label: 'Staff Management',
     icon: ShieldCheck,
     requiredAny: ['view_staff', 'manage_staff', 'reset_staff_access'],
-  },
-  {
-    key: 'roles',
-    label: 'Roles & Permissions',
-    icon: KeyRound,
-    requiredAny: ['view_roles', 'manage_roles', 'manage_staff'],
   },
   {
     key: 'branches',
@@ -102,46 +105,52 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     requiredAny: ['verify_payments', 'issue_refunds', 'manage_payment_settings'],
   },
   {
+    key: 'notifications',
+    label: 'Notifications',
+    icon: Bell,
+    requiredAny: ['manage_notifications', 'view_bookings', 'view_customers'],
+  },
+  {
+    key: 'website_settings',
+    label: 'Website Management',
+    icon: Globe,
+    requiredAny: ['manage_website_settings', 'manage_coupons', 'publish_offers'],
+  },
+  {
+    key: 'branding',
+    label: 'Business Branding',
+    icon: Palette,
+    requiredAny: ['manage_website_settings'],
+  },
+  {
+    key: 'social_media',
+    label: 'Social Media Management',
+    icon: Share2,
+    requiredAny: ['manage_website_settings'],
+  },
+  {
+    key: 'upi_settings',
+    label: 'UPI Settings',
+    icon: QrCode,
+    requiredAny: ['manage_payment_settings', 'verify_payments'],
+  },
+  {
     key: 'reports',
     label: 'Reports & Analytics',
     icon: BarChart3,
     requiredAny: ['view_analytics', 'export_reports'],
   },
   {
-    key: 'notifications',
-    label: 'Notifications & Inbox',
-    icon: Bell,
-    requiredAny: ['manage_notifications', 'view_bookings', 'view_customers'],
-  },
-  {
-    key: 'integrations',
-    label: 'Integrations Console',
-    icon: PlugZap,
-    requiredAny: ['view_integrations', 'manage_integrations', 'manage_whatsapp'],
-  },
-  {
-    key: 'ai_auth',
-    label: 'AI & Auth / OTP Config',
-    icon: Bot,
-    requiredAny: ['manage_ai_config', 'manage_auth_config', 'manage_website_settings', 'manage_integrations'],
-  },
-  {
-    key: 'audit_history',
-    label: 'Activity & Audit Logs',
-    icon: History,
-    requiredAny: ['view_audit_logs', 'manage_staff', 'view_analytics'],
-  },
-  {
-    key: 'website_settings',
-    label: 'System & CMS Settings',
-    icon: Settings2,
-    requiredAny: ['manage_website_settings', 'manage_coupons', 'publish_offers'],
-  },
-  {
     key: 'data_management',
-    label: 'Data & Firebase Control',
+    label: 'Data Management',
     icon: Database,
     ownerOnly: true,
+  },
+  {
+    key: 'users',
+    label: 'User Management',
+    icon: UserCog,
+    requiredAny: ['manage_staff', 'edit_customers'],
   },
 ];
 
@@ -193,15 +202,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const branchCount = branches.filter((b) => b.active).length;
   const scopeLabel = isAllBranches
     ? `All Branches (${branchCount || 1} Active)`
-    : `${(profile.branchIds?.length || 1)} Assigned Branch`;
-
-  // Map legacy alias tabs to matching parent header label
-  const resolvedNavKey: AdminTabKey =
-    activeTab === 'coupons_offers'
-      ? 'website_settings'
-      : activeTab === 'whatsapp'
-        ? 'integrations'
-        : activeTab;
+    : `${profile.branchIds?.length || 1} Assigned Branch`;
 
   const handleSelect = (key: AdminTabKey) => {
     onSelectTab(key);
@@ -210,7 +211,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
   return (
     <div className="min-h-screen flex bg-alabaster text-ink">
-      {/* Desktop Obsidian Admin Sidebar */}
+      {/* Desktop Obsidian Owner Sidebar */}
       <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-obsidian text-white border-r border-white/10 z-30">
         <div className="h-16 px-5 flex items-center gap-3 border-b border-white/10 shrink-0">
           {settings?.logoUrl ? (
@@ -229,7 +230,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               {companyName}
             </p>
             <p className="text-[10px] uppercase tracking-widest text-gold truncate">
-              Enterprise Control
+              Owner Operations Console
             </p>
           </div>
         </div>
@@ -237,7 +238,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {visibleNav.map((item) => {
             const Icon = item.icon;
-            const active = resolvedNavKey === item.key;
+            const active = activeTab === item.key;
             const showUnreadBadge = item.key === 'notifications' && unreadCount > 0;
             return (
               <button
@@ -284,6 +285,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             <LogOut className="w-3.5 h-3.5" />
             {t('nav.signOut')}
           </button>
+          <p className="text-[10px] text-center uppercase tracking-widest text-white/45 pt-1">
+            A product of <span className="text-gold font-semibold">HackifyPro</span>
+          </p>
         </div>
       </aside>
 
@@ -296,12 +300,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           />
           <aside className="relative w-72 max-w-[85vw] bg-obsidian text-white flex flex-col h-full z-10 border-r border-white/10">
             <div className="h-16 px-5 flex items-center justify-between border-b border-white/10">
-              <span className="font-display text-lg font-semibold">{companyName} Admin</span>
+              <span className="font-display text-lg font-semibold">{companyName} Owner</span>
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
                 className="p-1.5 text-white/75 hover:text-white"
-                aria-label="Close Admin Menu"
+                aria-label="Close Owner Menu"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -309,7 +313,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
               {visibleNav.map((item) => {
                 const Icon = item.icon;
-                const active = resolvedNavKey === item.key;
+                const active = activeTab === item.key;
                 return (
                   <button
                     key={item.key}
@@ -325,7 +329,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                 );
               })}
             </nav>
-            <div className="p-4 border-t border-white/10">
+            <div className="p-4 border-t border-white/10 space-y-2.5">
               <button
                 type="button"
                 onClick={onLogout}
@@ -334,27 +338,29 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                 <LogOut className="w-3.5 h-3.5" />
                 Sign Out
               </button>
+              <p className="text-[10px] text-center uppercase tracking-widest text-white/45">
+                A product of <span className="text-gold font-semibold">HackifyPro</span>
+              </p>
             </div>
           </aside>
         </div>
       )}
 
-      {/* Main Admin Workspace */}
+      {/* Main Owner Workspace */}
       <div className="flex-1 lg:pl-64 flex flex-col min-w-0">
-        {/* Top Admin Control Header — NO customer navbar or customer booking links */}
         <header className="sticky top-0 z-20 h-16 bg-obsidian text-white border-b border-white/10 px-4 sm:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               className="lg:hidden p-2 rounded-lg border border-white/15 text-white hover:border-gold cursor-pointer"
-              aria-label="Open Admin Menu"
+              aria-label="Open Owner Menu"
             >
               <Menu className="w-4 h-4" />
             </button>
             <div className="min-w-0">
               <h1 className="font-display text-lg sm:text-xl font-semibold tracking-tight truncate">
-                {visibleNav.find((n) => n.key === resolvedNavKey)?.label || 'Enterprise Control Center'}
+                {visibleNav.find((n) => n.key === activeTab)?.label || 'Owner Control Center'}
               </h1>
               <p className="hidden sm:block text-[11px] text-white/60 truncate">
                 {activeRoleLabel} · {scopeLabel}
@@ -378,7 +384,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                 type="button"
                 onClick={() => setBellOpen((prev) => !prev)}
                 className="p-2 rounded-lg border border-white/15 text-white/85 hover:border-gold hover:text-white relative cursor-pointer"
-                aria-label="Admin Notifications"
+                aria-label="Owner Notifications"
               >
                 <Bell className="w-4 h-4" />
                 {unreadCount > 0 && (
@@ -391,7 +397,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               {bellOpen && (
                 <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white text-ink border border-black/15 rounded-xl shadow-2xl overflow-hidden z-40">
                   <div className="px-4 py-3 bg-obsidian text-white flex items-center justify-between text-xs">
-                    <span className="font-semibold">Admin Alerts ({unreadCount} unread)</span>
+                    <span className="font-semibold">Operations Alerts ({unreadCount} unread)</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -404,7 +410,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                   </div>
                   <div className="max-h-80 overflow-y-auto divide-y divide-black/10 text-xs">
                     {notifications.length === 0 ? (
-                      <p className="p-4 text-slate-muted text-center">No admin notifications yet.</p>
+                      <p className="p-4 text-slate-muted text-center">No notifications yet.</p>
                     ) : (
                       notifications.slice(0, 10).map((n) => (
                         <button
@@ -449,17 +455,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               type="button"
               onClick={onRefresh}
               className="p-2 rounded-lg border border-white/15 text-white/85 hover:border-gold hover:text-white cursor-pointer"
-              aria-label="Refresh Admin Data"
+              aria-label="Refresh Owner Data"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
         </header>
 
-        {/* Active Panel Content */}
         <main className="flex-1 p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
           {children}
         </main>
+
+        <footer className="px-4 sm:px-8 py-4 border-t border-black/10 bg-white/70 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-muted">
+          <span>{companyName} Owner Console</span>
+          <span className="font-semibold text-ink">A product of HackifyPro</span>
+        </footer>
       </div>
     </div>
   );

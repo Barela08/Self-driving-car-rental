@@ -1,4 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
+import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
@@ -6,6 +7,17 @@ import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+
+export let analytics: Analytics | null = null;
+if (typeof window !== 'undefined' && (firebaseConfig as { measurementId?: string }).measurementId) {
+  void isSupported()
+    .then((supported) => {
+      if (supported) {
+        analytics = getAnalytics(app);
+      }
+    })
+    .catch(() => undefined);
+}
 
 const recaptchaSiteKey = (import.meta as any).env?.VITE_RECAPTCHA_SITE_KEY as string | undefined;
 if (typeof window !== 'undefined' && recaptchaSiteKey && recaptchaSiteKey.trim()) {
@@ -20,7 +32,11 @@ if (typeof window !== 'undefined' && recaptchaSiteKey && recaptchaSiteKey.trim()
 }
 
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const configuredDbId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId?.trim();
+export const db =
+  configuredDbId && configuredDbId !== '(default)'
+    ? getFirestore(app, configuredDbId)
+    : getFirestore(app);
 export const storage = getStorage(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 

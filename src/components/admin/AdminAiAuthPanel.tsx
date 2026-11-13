@@ -22,6 +22,7 @@ import type {
 
 interface AdminAiAuthPanelProps {
   mode?: 'admin' | 'master';
+  focusSection?: 'all' | 'otp' | 'ai';
   initialAiConfig?: AiAssistantConfig;
   initialAuthConfig?: AuthOtpConfig;
   initialAiLogs?: AiUsageLog[];
@@ -31,6 +32,7 @@ interface AdminAiAuthPanelProps {
 
 export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
   mode = 'admin',
+  focusSection = 'all',
   initialAiConfig,
   initialAuthConfig,
   initialAiLogs,
@@ -108,7 +110,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
         body: JSON.stringify(authConfig),
       });
       setAuthConfig(res.config);
-      toast.success('Authentication & Demo OTP policy saved.');
+      toast.success('Authentication & OTP policy saved.');
       if (onReload) await onReload();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save Auth/OTP policy');
@@ -157,8 +159,9 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
 
   return (
     <div className="space-y-6 text-xs">
-      <div className="grid xl:grid-cols-2 gap-6">
+      <div className={`grid ${focusSection === 'all' ? 'xl:grid-cols-2' : 'grid-cols-1'} gap-6`}>
         {/* AI Concierge Configuration */}
+        {(focusSection === 'all' || focusSection === 'ai') && (
         <form onSubmit={(e) => void handleSaveAi(e)} className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -307,8 +310,10 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
             </button>
           </div>
         </form>
+        )}
 
-        {/* Auth & Demo OTP Configuration */}
+        {/* Authentication & OTP Configuration */}
+        {(focusSection === 'all' || focusSection === 'otp') && (
         <form onSubmit={(e) => void handleSaveAuth(e)} className="bg-white border border-black/10 rounded-xl p-6 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -317,7 +322,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
                 Identity & Verification Rules
               </p>
               <h3 className="font-display text-xl font-semibold text-ink mt-0.5">
-                Firebase Phone Auth & Demo OTP Policy
+                Authentication & OTP Configuration
               </h3>
             </div>
             <span
@@ -327,22 +332,22 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
                   : 'bg-amber-50 text-amber-800 border border-amber-200'
               }`}
             >
-              {authConfig.environmentMode === 'production' ? 'PRODUCTION' : 'NON-PROD / DEV'}
+              {authConfig.environmentMode === 'production' ? 'PRODUCTION' : 'DEVELOPMENT'}
             </span>
           </div>
 
           <div className="p-3 rounded-lg bg-alabaster border border-black/10 text-slate-muted leading-relaxed flex items-start gap-2.5">
             <ShieldAlert className="w-4 h-4 text-gold-hover shrink-0 mt-0.5" />
             <span>
-              Demo Verification code <span className="font-mono font-semibold text-ink">555555</span> is accepted ONLY in non-production environments when enabled AND strictly for authorized test mobile numbers below. No fake SMS/WhatsApp delivery is ever simulated.
+              Internal test verification codes are accepted ONLY in non-production environments when enabled AND strictly for authorized test phone numbers below. Live SMS/WhatsApp providers handle all customer OTP delivery.
             </span>
           </div>
 
           <div className="space-y-2.5">
             <label className="flex items-center justify-between p-3 rounded-lg bg-alabaster border border-black/10 cursor-pointer">
               <div>
-                <p className="font-semibold text-ink">Firebase Phone Authentication</p>
-                <p className="text-[11px] text-slate-muted">Allow customer SMS OTP sign-in via Firebase reCAPTCHA</p>
+                <p className="font-semibold text-ink">Mobile SMS OTP Authentication</p>
+                <p className="text-[11px] text-slate-muted">Allow customer mobile OTP verification with live SMS delivery</p>
               </div>
               <input
                 type="checkbox"
@@ -356,9 +361,9 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
 
             <label className="flex items-center justify-between p-3 rounded-lg bg-alabaster border border-black/10 cursor-pointer">
               <div>
-                <p className="font-semibold text-ink">Demo Verification Mode (555555)</p>
+                <p className="font-semibold text-ink">Internal Test Phone Verification</p>
                 <p className="text-[11px] text-slate-muted">
-                  Active strictly in development for authorized test phone numbers
+                  Active strictly in development for authorized internal test phone numbers
                 </p>
               </div>
               <input
@@ -372,7 +377,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
 
             <label className="flex items-center justify-between p-3 rounded-lg bg-alabaster border border-black/10 cursor-pointer">
               <div>
-                <p className="font-semibold text-ink">WhatsApp OTP Automation</p>
+                <p className="font-semibold text-ink">WhatsApp OTP Dispatch</p>
                 <p className="text-[11px] text-slate-muted">Requires verified Meta WhatsApp Cloud API connection</p>
               </div>
               <input
@@ -382,11 +387,36 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
                 className="w-4 h-4 accent-obsidian"
               />
             </label>
+
+            <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-lg bg-alabaster border border-black/10">
+              <div>
+                <label className="block font-semibold text-ink mb-1">OTP Resend Cooldown (seconds)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={600}
+                  value={authConfig.otpResendCooldownSeconds ?? 60}
+                  onChange={(e) =>
+                    setAuthConfig({
+                      ...authConfig,
+                      otpResendCooldownSeconds: Math.min(600, Math.max(15, Number(e.target.value || 60))),
+                    })
+                  }
+                  className="w-full px-3 py-1.5 bg-white border border-black/15 rounded-lg font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-ink mb-1">Authorized Test Numbers</label>
+                <p className="text-[11px] text-slate-muted pt-1">
+                  Enforced server-side during non-production testing ({authConfig.authorizedTestPhones.length} active).
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-2">
             <label className="block font-semibold text-slate-muted">
-              Authorized Test Phones for Demo OTP ({authConfig.authorizedTestPhones.length})
+              Authorized Test Phones ({authConfig.authorizedTestPhones.length})
             </label>
             <div className="flex gap-2">
               <input
@@ -436,14 +466,16 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
               className="px-5 py-2.5 bg-obsidian text-gold font-semibold rounded-lg inline-flex items-center gap-2 hover:bg-graphite cursor-pointer"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              {savingAuth ? 'Saving Policy...' : 'Save Auth & Demo OTP Policy'}
+              {savingAuth ? 'Saving Policy...' : 'Save Auth & OTP Configuration'}
             </button>
           </div>
         </form>
+        )}
       </div>
 
       {/* Telemetry Logs */}
-      <div className="grid xl:grid-cols-2 gap-6">
+      <div className={`grid ${focusSection === 'all' ? 'xl:grid-cols-2' : 'grid-cols-1'} gap-6`}>
+        {(focusSection === 'all' || focusSection === 'ai') && (
         <div className="bg-white border border-black/10 rounded-xl p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="font-display text-base font-semibold text-ink">AI Concierge Usage & Tool Logs ({aiLogs.length})</h4>
@@ -486,7 +518,9 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
             )}
           </div>
         </div>
+        )}
 
+        {(focusSection === 'all' || focusSection === 'otp') && (
         <div className="bg-white border border-black/10 rounded-xl p-5 space-y-3">
           <h4 className="font-display text-base font-semibold text-ink">OTP & Phone Verification Logs ({otpLogs.length})</h4>
           <div className="max-h-64 overflow-y-auto divide-y divide-black/10">
@@ -517,6 +551,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

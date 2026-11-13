@@ -116,7 +116,6 @@ export interface AiVehicleCard {
   pricePerDay: number;
   securityDeposit: number;
   availableUnits: number;
-  totalUnits: number;
   availabilityLabel: string;
   nextAvailableDate?: string | null;
   imageKey: string;
@@ -289,7 +288,6 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
           pricePerDay: rep.pricePerDay,
           securityDeposit: rep.securityDeposit,
           availableUnits: s.availableUnits,
-          totalUnits: s.totalUnits,
           availabilityLabel: s.statusLabel,
           nextAvailableDate: s.nextAvailableDate || null,
           imageKey: rep.images[0] || 'verna',
@@ -391,7 +389,7 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
     if (name === 'get_company_info_and_offers') {
       return {
         companyName: settings.companyName || 'EliteDrive',
-        operatingCity: settings.operatingCityName || 'Mumbai',
+        operatingCity: settings.operatingCityName || '',
         hubAddress: settings.businessAddress || '',
         supportPhone: settings.supportPhone || '',
         supportEmail: settings.supportEmail || '',
@@ -448,11 +446,12 @@ export async function handleAiAssistantChat(reqData: AiChatRequest): Promise<AiA
   const languageLabel = lang === 'hi' ? 'Hindi (हिन्दी)' : lang === 'mr' ? 'Marathi (मराठी)' : 'English';
   const systemInstruction = [
     cfg.systemInstructions,
-    `Company: ${settings.companyName || 'EliteDrive'} in ${settings.operatingCityName || 'Mumbai'}.`,
+    `Company: ${settings.companyName || 'EliteDrive'}${settings.operatingCityName ? ` in ${settings.operatingCityName}` : ''}.`,
     `Active branch count: ${activeBranches.length}. ${activeBranches.length === 0 ? 'Operate as single-city central hub without branch selectors.' : ''}`,
-    `Booking assistance via chat: ${cfg.bookingEnabled ? 'Enabled — customers can complete full 8-step booking directly inside the AI Concierge Guided Booking tab (Mobile OTP verification, Full Name, Select Car, Upload DL Front/Back & Aadhaar KYC, Travel Dates, Pickup Location, Fare Summary & Consents, Manual UPI QR/UTR) without logging in beforehand.' : 'Informational only'}.`,
-    `Customer KYC status: ${reqData.userProfile ? `${reqData.userProfile.displayName || 'Verified Mobile User'} (KYC: ${reqData.userProfile.kycStatus})` : 'Guest (not yet OTP-verified)'}.`,
-    `CRITICAL: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output. Never block a guest from starting a booking—invite them to verify their mobile OTP in Step 1 right inside the Concierge.`,
+    `Booking location rule: Never prefill or assume any default pickup city. Ask the customer for their Pickup Location first, and later ask "Where would you like to return the car?" with two options: Same as Pickup Location or Choose a Different Return Location.`,
+    `Booking assistance via chat: ${cfg.bookingEnabled ? 'Enabled — customers can complete booking directly inside the AI Concierge Guided Booking tab (Mobile OTP verification, Full Name, Select Car, Upload DL Front/Back & Aadhaar Documents, Travel Dates, Pickup Location, Return Location choice, Fare Summary & Consents, Manual UPI QR/UTR) without logging in beforehand.' : 'Informational only'}.`,
+    `Customer verification status: ${reqData.userProfile ? `${reqData.userProfile.displayName || 'Verified Mobile User'} (Document Verification: ${reqData.userProfile.kycStatus})` : 'Guest (not yet OTP-verified)'}.`,
+    `CRITICAL: Reply clearly and concisely in ${languageLabel}. Never invent availability, prices, or booking confirmations without tool output. Never reveal total internal fleet size (totalUnits).`,
   ].join('\n');
 
   const apiKey = process.env.GEMINI_API_KEY;

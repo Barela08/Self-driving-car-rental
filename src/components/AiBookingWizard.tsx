@@ -118,13 +118,9 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
 
   // Step 1: Mobile OTP
   const [phone, setPhone] = useState<string>(() => initialDraft?.phone || profile?.phone || '+91 ');
-  const [otpChannel, setOtpChannel] = useState<'firebase' | 'server_demo'>(() =>
-    authOtpConfig.firebasePhoneAuthEnabled && !authOtpConfig.demoOtpEnabled ? 'firebase' : 'server_demo'
-  );
   const [otpChallengeId, setOtpChallengeId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
-  const [isDemoEligibleNotice, setIsDemoEligibleNotice] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [mobileOverrideMode, setMobileOverrideMode] = useState(false);
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
@@ -147,7 +143,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
   const [availabilitySummaries, setAvailabilitySummaries] = useState<VehicleAvailabilitySummary[]>([]);
   const [loadingFleet, setLoadingFleet] = useState(false);
 
-  // Step 4: KYC Docs
+  // Step 4: Document Verification
   const [kycDocuments, setKycDocuments] = useState<CustomerDocumentRecord[]>([]);
   const [kycDocsLoading, setKycDocsLoading] = useState(false);
   const [kycLicenseNumber, setKycLicenseNumber] = useState('');
@@ -168,17 +164,23 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
 
   // Step 6: Locations & Optional Add-ons
   const defaultHub = activeBranches[0] || null;
-  const defaultHubLat = Number(defaultHub?.lat ?? settings?.hubLat ?? 19.076);
-  const defaultHubLng = Number(defaultHub?.lng ?? settings?.hubLng ?? 72.8777);
+  const defaultHubLat = Number(defaultHub?.lat ?? settings?.hubLat ?? 20.5937);
+  const defaultHubLng = Number(defaultHub?.lng ?? settings?.hubLng ?? 78.9629);
+  const defaultCityName = defaultHub?.cityName || settings?.operatingCityName || '';
   const defaultHubAddress =
     defaultHub?.address ||
     settings?.businessAddress ||
-    `${settings?.operatingCityName || 'Mumbai'} Fleet Lounge`;
+    (defaultCityName ? `${defaultCityName} Rental Lounge` : '');
+
+  const [returnChoice, setReturnChoice] = useState<'same' | 'different'>(
+    () => (initialDraft?.location?.isOneWay ? 'different' : 'same')
+  );
+  const [editingReturnMap, setEditingReturnMap] = useState(false);
 
   const [location, setLocation] = useState<LocationSelection>(
     () =>
       initialDraft?.location || {
-        pickupMode: 'branch',
+        pickupMode: defaultHubAddress ? 'branch' : 'delivery',
         pickupBranchId: defaultHub?.id || 'branch-central-hub',
         returnBranchId: defaultHub?.id || 'branch-central-hub',
         isOneWay: false,
@@ -188,7 +190,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
         returnAddress: defaultHubAddress,
         returnLat: defaultHubLat,
         returnLng: defaultHubLng,
-        serviceable: true,
+        serviceable: Boolean(defaultHubAddress),
         deliveryCharge: 0,
         oneWayCharge: 0,
       }
@@ -342,30 +344,28 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
     }
   }, [step, loadFleetForDates]);
 
-  // Unique selectable model cards combining catalog & live unit counts
+  // Unique selectable model cards without exposing total business fleet quantities
   const activeModels = useMemo(() => {
     const active = vehicles.filter((v) => !v.archived && v.status !== 'Inactive');
     const summaryByVehicle = new Map<string, VehicleAvailabilitySummary>();
     for (const s of availabilitySummaries) {
       summaryByVehicle.set(s.representativeVehicleId, s);
     }
-    const grouped = new Map<string, { vehicle: Vehicle; freeUnits: number; totalUnits: number; label: string }>();
+    const grouped = new Map<string, { vehicle: Vehicle; available: boolean; label: string }>();
     for (const v of active) {
       const key = `${(v.brand || v.name.split(' ')[0]).toLowerCase()}|${(v.model || v.name).toLowerCase()}`;
       const existing = grouped.get(key);
       if (!existing) {
         const sum = summaryByVehicle.get(v.id);
+        const free = sum ? sum.availableUnits > 0 : v.status === 'Available';
         grouped.set(key, {
           vehicle: v,
-          freeUnits: sum ? sum.availableUnits : v.status === 'Available' ? 1 : 0,
-          totalUnits: sum ? sum.totalUnits : 1,
-          label:
-            sum?.statusLabel ||
-            (v.status === 'Available' ? 'Available' : v.status),
+          available: free,
+          label: free ? 'Available' : 'Check Other Dates',
         });
-      } else if (!summaryByVehicle.has(existing.vehicle.id)) {
-        existing.totalUnits += 1;
-        if (v.status === 'Available') existing.freeUnits += 1;
+      } else if (!summaryByVehicle.has(existing.vehicle.id) && v.status === 'Available') {
+        existing.available = true;
+        existing.label = 'Available';
       }
     }
     return Array.from(grouped.values()).filter(
@@ -443,13 +443,14 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
     if (!selectedVehicle) return;
     const hub =
       activeBranches.find((b) => b.id === selectedVehicle.branchId) || activeBranches[0] || null;
-    const hLat = Number(hub?.lat ?? settings?.hubLat ?? 19.076);
-    const hLng = Number(hub?.lng ?? settings?.hubLng ?? 72.8777);
+    const hLat = Number(hub?.lat ?? settings?.hubLat ?? 20.5937);
+    const hLng = Number(hub?.lng ?? settings?.hubLng ?? 78.9629);
+    const cityLabel = hub?.cityName || settings?.operatingCityName || selectedVehicle.cityName || '';
     const hAddr =
       hub?.address ||
       settings?.businessAddress ||
-      `${settings?.operatingCityName || 'Mumbai'} Fleet Lounge`;
-    if (location.pickupMode === 'branch') {
+      (cityLabel ? `${cityLabel} Rental Lounge` : '');
+    if (location.pickupMode === 'branch' && hAddr) {
       setLocation((prev) => ({
         ...prev,
         pickupBranchId: hub?.id || 'branch-central-hub',
@@ -484,7 +485,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
           returnLng: location.returnLng,
           pickupBranchId: location.pickupBranchId,
           returnBranchId: location.returnBranchId,
-          isOneWay: false,
+          isOneWay: returnChoice === 'different',
           insurancePackageId: insuranceId || null,
           roadsideRequested,
           driverRequested,
@@ -519,127 +520,108 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
     }
   }, [step, refreshQuote]);
 
-  // Step 1 Handlers (Server/Demo/WhatsApp OTP & Firebase Phone Auth)
-  const handleSendServerOtp = async () => {
-    const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length < 10) {
-      toast.error('Please enter a valid 10-digit or E.164 mobile number.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await apiFetch<{
-        challengeId: string;
-        cooldownSeconds: number;
-        deliveryChannel?: string;
-        isDemoOtpEligible?: boolean;
-        message: string;
-      }>('/api/ai/otp/send', {
-        method: 'POST',
-        body: JSON.stringify({ phone: phone.trim() }),
-      });
-      setOtpChallengeId(res.challengeId);
-      setOtpCooldown(res.cooldownSeconds || 60);
-      setIsDemoEligibleNotice(Boolean(res.isDemoOtpEligible));
-      setOtpNotice(res.message);
-      toast.success(res.message);
-    } catch (err: any) {
-      toast.error(err.message || 'Could not send verification code');
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Unified Mobile OTP Handlers (clean UX with zero technical provider jargon)
+  const useFirebaseSmsMode =
+    authOtpConfig.firebasePhoneAuthEnabled && !authOtpConfig.demoOtpEnabled && !authOtpConfig.whatsappOtpEnabled;
 
-  const handleVerifyServerOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otpChallengeId || otpCode.trim().length !== 6) {
-      toast.error('Enter the 6-digit OTP code first.');
+  const handleSendUnifiedOtp = async () => {
+    const cleanDigits = phone.replace(/\D/g, '');
+    if (cleanDigits.length < 10) {
+      toast.error('Please enter a valid 10-digit mobile number.');
       return;
     }
+    const configuredCooldown = Number(authOtpConfig.otpResendCooldownSeconds || 60);
     setBusy(true);
     try {
-      const res = await apiFetch<{
-        verified: boolean;
-        token: string;
-        profile: UserProfile;
-        isExistingCustomer?: boolean;
-        message: string;
-      }>('/api/ai/otp/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          challengeId: otpChallengeId,
-          phone: phone.trim(),
-          code: otpCode.trim(),
-        }),
-      });
-      setAuthenticatedSession(res.token, res.profile);
-      setMobileOverrideMode(false);
-      if (res.profile.displayName && res.profile.displayName !== 'Customer') {
-        setFullName(res.profile.displayName);
-      }
-      if (res.profile.email) {
-        setEmail(res.profile.email);
-      }
-      toast.success(res.message || 'Mobile verified!');
-      setStep(2);
-    } catch (err: any) {
-      toast.error(err.message || 'Invalid verification code');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSendFirebaseOtp = async () => {
-    if (phone.replace(/\D/g, '').length < 10) {
-      toast.error('Please enter a valid mobile number with country code.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const formatted = normalizeE164Phone(phone.trim());
-      if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
-        recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
-          size: 'invisible',
-        });
-      }
-      if (!recaptchaVerifierRef.current) throw new Error('reCAPTCHA could not initialize.');
-      const confirmation = await signInWithPhoneNumber(auth, formatted, recaptchaVerifierRef.current);
-      setFirebaseConfirmation(confirmation);
-      toast.success(`SMS sent to ${formatted}`);
-    } catch (err: any) {
-      toast.error(err.message || 'Firebase SMS could not be dispatched.');
-      try {
-        recaptchaVerifierRef.current?.clear();
-      } catch {
-        // ignore
-      }
-      recaptchaVerifierRef.current = null;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleVerifyFirebaseOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseConfirmation || otpCode.trim().length < 6) {
-      toast.error('Enter the 6-digit verification code.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const cred = await firebaseConfirmation.confirm(otpCode.trim());
-      const idToken = await cred.user.getIdToken();
-      const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
-      if (logged) {
-        setMobileOverrideMode(false);
-        if (logged.displayName && logged.displayName !== 'Customer') {
-          setFullName(logged.displayName);
+      if (useFirebaseSmsMode) {
+        const formatted = normalizeE164Phone(phone.trim());
+        if (!recaptchaVerifierRef.current && recaptchaContainerRef.current) {
+          recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
+            size: 'invisible',
+          });
         }
-        if (logged.email) setEmail(logged.email);
+        if (!recaptchaVerifierRef.current) throw new Error('Verification widget unavailable.');
+        const confirmation = await signInWithPhoneNumber(auth, formatted, recaptchaVerifierRef.current);
+        setFirebaseConfirmation(confirmation);
+        setOtpCooldown(configuredCooldown);
+        setOtpNotice(`A 6-digit verification code has been sent to ${formatted}.`);
+        toast.success(`Verification code sent to ${formatted}`);
+      } else {
+        const res = await apiFetch<{
+          challengeId: string;
+          cooldownSeconds: number;
+          message: string;
+        }>('/api/ai/otp/send', {
+          method: 'POST',
+          body: JSON.stringify({ phone: phone.trim() }),
+        });
+        setOtpChallengeId(res.challengeId);
+        setOtpCooldown(res.cooldownSeconds || configuredCooldown);
+        setOtpNotice(res.message);
+        toast.success(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Could not send verification code. Please try again.');
+      if (recaptchaVerifierRef.current) {
+        try {
+          recaptchaVerifierRef.current.clear();
+        } catch {
+          // ignore
+        }
+        recaptchaVerifierRef.current = null;
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerifyUnifiedOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otpCode.trim().length !== 6) {
+      toast.error('Please enter the 6-digit verification code.');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (useFirebaseSmsMode && firebaseConfirmation) {
+        const cred = await firebaseConfirmation.confirm(otpCode.trim());
+        const idToken = await cred.user.getIdToken();
+        const logged = await loginWithFirebasePhone(idToken, undefined, phone.trim());
+        if (logged) {
+          setMobileOverrideMode(false);
+          if (logged.displayName && logged.displayName !== 'Customer') {
+            setFullName(logged.displayName);
+          }
+          if (logged.email) setEmail(logged.email);
+          setStep(2);
+        }
+      } else {
+        const res = await apiFetch<{
+          verified: boolean;
+          token: string;
+          profile: UserProfile;
+          message: string;
+        }>('/api/ai/otp/verify', {
+          method: 'POST',
+          body: JSON.stringify({
+            challengeId: otpChallengeId,
+            phone: phone.trim(),
+            code: otpCode.trim(),
+          }),
+        });
+        setAuthenticatedSession(res.token, res.profile);
+        setMobileOverrideMode(false);
+        if (res.profile.displayName && res.profile.displayName !== 'Customer') {
+          setFullName(res.profile.displayName);
+        }
+        if (res.profile.email) {
+          setEmail(res.profile.email);
+        }
+        toast.success(res.message || 'Mobile verified!');
         setStep(2);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Invalid Firebase verification code');
+      toast.error(err.message || 'Invalid verification code. Please check and retry.');
     } finally {
       setBusy(false);
     }
@@ -795,7 +777,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
           returnLng: location.returnLng,
           pickupBranchId: location.pickupBranchId,
           returnBranchId: location.returnBranchId,
-          isOneWay: false,
+          isOneWay: returnChoice === 'different',
           insurancePackageId: insuranceId || null,
           roadsideRequested,
           driverRequested,
@@ -879,8 +861,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
   const advancePct = settings?.advancePaymentPercent ?? 30;
   const holdMins = settings?.holdDurationMinutes ?? 15;
   const staticQrUrl = settings?.upiStaticQrImage || settings?.upiQrImageUrl || '';
-  const hasServerOtpChannel = authOtpConfig.demoOtpEnabled || authOtpConfig.whatsappOtpEnabled;
-  const hasFirebaseChannel = authOtpConfig.firebasePhoneAuthEnabled;
+  const otpSentReady = Boolean(otpChallengeId || firebaseConfirmation);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-obsidian text-ivory">
@@ -966,63 +947,61 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-4 text-xs">
-                {hasFirebaseChannel && hasServerOtpChannel && (
-                  <div className="grid grid-cols-2 p-1 bg-obsidian border border-white/10 rounded-xl">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOtpChannel('server_demo');
-                        setOtpCode('');
-                      }}
-                      className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
-                        otpChannel === 'server_demo' ? 'bg-gold text-obsidian' : 'text-ivory/65'
-                      }`}
-                    >
-                      {authOtpConfig.demoOtpEnabled ? 'WhatsApp / Test OTP' : 'WhatsApp OTP'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOtpChannel('firebase');
-                        setOtpCode('');
-                      }}
-                      className={`py-1.5 rounded-lg font-semibold cursor-pointer ${
-                        otpChannel === 'firebase' ? 'bg-gold text-obsidian' : 'text-ivory/65'
-                      }`}
-                    >
-                      {t('auth.firebasePhoneTab')}
-                    </button>
-                  </div>
-                )}
-
-                {otpChannel === 'firebase' && hasFirebaseChannel ? (
-                  <form onSubmit={(e) => void handleVerifyFirebaseOtp(e)} className="space-y-3">
+                <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-4 text-xs">
+                  <form onSubmit={(e) => void handleVerifyUnifiedOtp(e)} className="space-y-3">
                     <div>
                       <label className="block font-semibold text-ivory/75 mb-1">{t('ai.phoneLabel')}</label>
                       <div className="flex gap-2">
                         <input
                           type="tel"
                           required
+                          disabled={otpSentReady}
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
                           placeholder="+91 98200 11223"
-                          className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
+                          className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold disabled:opacity-70"
                         />
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void handleSendFirebaseOtp()}
-                          className="px-3.5 py-2 bg-gold text-obsidian font-semibold rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                        >
-                          {firebaseConfirmation ? t('ai.resendOtp') : t('ai.sendOtp')}
-                        </button>
+                        {!otpSentReady && (
+                          <button
+                            type="button"
+                            disabled={busy || otpCooldown > 0}
+                            onClick={() => void handleSendUnifiedOtp()}
+                            className="px-4 py-2 bg-gold text-obsidian font-semibold rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                          >
+                            {t('ai.sendOtp')}
+                          </button>
+                        )}
                       </div>
                     </div>
+
                     <div ref={recaptchaContainerRef} />
-                    {firebaseConfirmation && (
-                      <div>
-                        <label className="block font-semibold text-ivory/75 mb-1">6-Digit SMS OTP</label>
+
+                    {otpNotice && (
+                      <p className="text-[11px] rounded-lg p-2.5 border bg-obsidian border-white/10 text-ivory/80">
+                        {otpNotice}
+                      </p>
+                    )}
+
+                    {otpSentReady && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="font-semibold text-ivory/75">
+                            Enter 6-Digit Verification Code
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOtpChallengeId('');
+                              setFirebaseConfirmation(null);
+                              setOtpCode('');
+                              setOtpNotice('');
+                              setOtpCooldown(0);
+                            }}
+                            className="text-[11px] text-gold hover:underline cursor-pointer"
+                          >
+                            Change Mobile Number
+                          </button>
+                        </div>
                         <input
                           type="text"
                           required
@@ -1032,91 +1011,30 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                           placeholder="6-digit code"
                           className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
                         />
+                        <div className="flex items-center justify-between text-[11px] text-ivory/60">
+                          <span>Didn&apos;t receive the code?</span>
+                          <button
+                            type="button"
+                            disabled={busy || otpCooldown > 0}
+                            onClick={() => void handleSendUnifiedOtp()}
+                            className="font-semibold text-gold hover:underline disabled:opacity-50 cursor-pointer"
+                          >
+                            {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : t('ai.resendOtp')}
+                          </button>
+                        </div>
                       </div>
                     )}
+
                     <button
                       type="submit"
-                      disabled={busy || !firebaseConfirmation || otpCode.length < 6}
+                      disabled={busy || !otpSentReady || otpCode.length !== 6}
                       className="w-full py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Smartphone className="w-4 h-4" />
                       {busy ? 'Verifying...' : t('ai.verifyOtp')}
                     </button>
                   </form>
-                ) : (
-                  <form onSubmit={(e) => void handleVerifyServerOtp(e)} className="space-y-3">
-                    {authOtpConfig.demoOtpEnabled && (
-                      <div className="p-2.5 rounded-lg bg-amber-950/35 border border-amber-500/35 text-amber-200 flex items-start gap-2 text-[11px]">
-                        <Info className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                        <span>{t('auth.demoOtpBanner')}</span>
-                      </div>
-                    )}
-                    <div>
-                      <label className="block font-semibold text-ivory/75 mb-1">{t('ai.phoneLabel')}</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="tel"
-                          required
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="+91 98200 11223"
-                          className="flex-1 px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-gold"
-                        />
-                        <button
-                          type="button"
-                          disabled={busy || otpCooldown > 0}
-                          onClick={() => void handleSendServerOtp()}
-                          className="px-3.5 py-2 bg-gold text-obsidian font-semibold rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                        >
-                          {otpCooldown > 0
-                            ? `${otpCooldown}s`
-                            : otpChallengeId
-                              ? t('ai.resendOtp')
-                              : t('ai.sendOtp')}
-                        </button>
-                      </div>
-                    </div>
-
-                    {otpNotice && (
-                      <p
-                        className={`text-[11px] rounded-lg p-2.5 border ${
-                          isDemoEligibleNotice
-                            ? 'bg-amber-950/35 border-amber-500/35 text-amber-200'
-                            : 'bg-obsidian border-white/10 text-ivory/75'
-                        }`}
-                      >
-                        {otpNotice}
-                      </p>
-                    )}
-
-                    {otpChallengeId && (
-                      <div>
-                        <label className="block font-semibold text-ivory/75 mb-1">
-                          Enter 6-Digit Verification Code
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={6}
-                          value={otpCode}
-                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                          placeholder="6-digit OTP"
-                          className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
-                        />
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={busy || !otpChallengeId || otpCode.length !== 6}
-                      className="w-full py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <ShieldCheck className="w-4 h-4" />
-                      {busy ? 'Verifying...' : t('ai.verifyOtp')}
-                    </button>
-                  </form>
-                )}
-              </div>
+                </div>
             )}
           </div>
         )}
@@ -1212,9 +1130,9 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
               <p className="text-xs text-ivory/60 py-6 text-center">{t('common.loading')}</p>
             ) : (
               <div className="grid sm:grid-cols-2 gap-3">
-                {activeModels.map(({ vehicle, freeUnits, label }) => {
+                {activeModels.map(({ vehicle, available, label }) => {
                   const isSelected = selectedVehicle?.id === vehicle.id;
-                  const soldOut = freeUnits <= 0;
+                  const soldOut = !available;
                   return (
                     <div
                       key={vehicle.id}
@@ -1249,10 +1167,10 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                             </span>
                             <span
                               className={`font-semibold ${
-                                soldOut ? 'text-red-400' : freeUnits === 1 ? 'text-amber-300' : 'text-emerald-400'
+                                soldOut ? 'text-red-400' : 'text-emerald-400'
                               }`}
                             >
-                              {soldOut ? 'Check Other Dates' : `${freeUnits} ${label}`}
+                              {label}
                             </span>
                           </div>
                         </div>
@@ -1489,9 +1407,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
               ) : liveFreeUnits >= quantity ? (
                 <div className="p-2.5 rounded-lg bg-emerald-950/35 border border-emerald-500/35 text-emerald-200 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                  <span>
-                    {liveFreeUnits} physical unit(s) available for these dates!
-                  </span>
+                  <span>Vehicle available for your selected dates!</span>
                 </div>
               ) : (
                 <div className="p-2.5 rounded-lg bg-red-950/35 border border-red-500/35 text-red-200 space-y-1">
@@ -1541,13 +1457,13 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
           </div>
         )}
 
-        {/* STEP 6: PICKUP, RETURN LOCATIONS + OPTIONAL ADD-ONS */}
+        {/* STEP 6: PICKUP LOCATION FIRST + RETURN LOCATION TWO-OPTION PROMPT */}
         {step === 6 && selectedVehicle && (
           <div className="space-y-4">
             <div>
               <h3 className="font-display text-lg font-semibold text-white">{t('ai.step6Title')}</h3>
               <p className="text-xs text-ivory/65 mt-0.5">
-                Pick Lounge Self-Pickup or Doorstep Delivery on Google Maps, plus optional protection & promo coupons.
+                Confirm your pickup address first, then choose where to return the car.
               </p>
             </div>
 
@@ -1555,8 +1471,102 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
               vehicle={selectedVehicle}
               branches={branches}
               value={location}
-              onChange={setLocation}
+              mode="pickup"
+              onChange={(next) => {
+                if (returnChoice === 'same') {
+                  setLocation({
+                    ...next,
+                    isOneWay: false,
+                    returnAddress: next.pickupAddress,
+                    returnLat: next.pickupLat,
+                    returnLng: next.pickupLng,
+                  });
+                } else {
+                  setLocation({ ...next, isOneWay: true });
+                }
+              }}
             />
+
+            <div className="p-4 rounded-xl bg-navy-deep border border-white/15 space-y-3 text-xs">
+              <div>
+                <p className="font-semibold text-white text-sm">{t('booking.returnPromptTitle')}</p>
+                <p className="text-ivory/65 mt-0.5">
+                  Return at your pickup location or pick a different drop spot on the map.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReturnChoice('same');
+                    setEditingReturnMap(false);
+                    setLocation((prev) => ({
+                      ...prev,
+                      isOneWay: false,
+                      returnAddress: prev.pickupAddress,
+                      returnLat: prev.pickupLat,
+                      returnLng: prev.pickupLng,
+                      oneWayCharge: 0,
+                    }));
+                  }}
+                  className={`p-3 rounded-xl border text-left cursor-pointer ${
+                    returnChoice === 'same'
+                      ? 'border-gold bg-obsidian text-white'
+                      : 'border-white/10 bg-obsidian/50 text-ivory/75 hover:border-white/25'
+                  }`}
+                >
+                  <p className="font-semibold text-white">{t('booking.sameAsPickup')}</p>
+                  <p className="text-[11px] text-ivory/60 truncate mt-0.5">
+                    {location.pickupAddress || 'Same as pickup'}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReturnChoice('different');
+                    setEditingReturnMap(true);
+                    setLocation((prev) => ({ ...prev, isOneWay: true }));
+                  }}
+                  className={`p-3 rounded-xl border text-left cursor-pointer ${
+                    returnChoice === 'different'
+                      ? 'border-gold bg-obsidian text-white'
+                      : 'border-white/10 bg-obsidian/50 text-ivory/75 hover:border-white/25'
+                  }`}
+                >
+                  <p className="font-semibold text-white">{t('booking.differentReturn')}</p>
+                  <p className="text-[11px] text-ivory/60 mt-0.5">Select drop location on map</p>
+                </button>
+              </div>
+
+              {returnChoice === 'different' && (
+                <div className="pt-2">
+                  {!editingReturnMap && location.returnAddress ? (
+                    <div className="p-3 rounded-xl bg-obsidian border border-white/15 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase text-gold">Confirmed Return Spot</p>
+                        <p className="text-white truncate">{location.returnAddress}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEditingReturnMap(true)}
+                        className="px-3 py-1.5 border border-white/20 rounded-lg text-gold hover:border-gold whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        Edit Return
+                      </button>
+                    </div>
+                  ) : (
+                    <LocationMapPicker
+                      vehicle={selectedVehicle}
+                      branches={branches}
+                      value={location}
+                      mode="return"
+                      onChange={(next) => setLocation({ ...next, isOneWay: true })}
+                      onConfirmed={() => setEditingReturnMap(false)}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Optional Insurance & Trip Add-ons */}
             <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-3 text-xs">
@@ -1717,7 +1727,11 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                 </p>
                 <p className="truncate flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-gold shrink-0" />
-                  {location.pickupAddress}
+                  <span>Pickup: {location.pickupAddress}</span>
+                </p>
+                <p className="truncate flex items-center gap-1 text-ivory/65">
+                  <MapPin className="w-3 h-3 text-ivory/50 shrink-0" />
+                  <span>Return: {location.returnAddress || location.pickupAddress}</span>
                 </p>
               </div>
             </div>
@@ -1738,6 +1752,12 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                     <div className="flex justify-between">
                       <span className="text-ivory/70">Doorstep Delivery</span>
                       <span className="font-mono text-white">{formatINR(pricing.deliveryCharge)}</span>
+                    </div>
+                  )}
+                  {pricing.oneWayCharge > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-ivory/70">Different Return Location Fee</span>
+                      <span className="font-mono text-white">{formatINR(pricing.oneWayCharge)}</span>
                     </div>
                   )}
                   {pricing.insuranceCharge > 0 && (

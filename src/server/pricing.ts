@@ -35,7 +35,7 @@ export function validateSingleCityLocation(params: {
 }) {
   const { pickupMode, pickupLat, pickupLng, returnLat, returnLng, hub, vehicle, settings } = params;
   const isCentralHub = hub.id === 'branch-central-hub';
-  const operatingCityName = hub.cityName || settings?.operatingCityName || 'Mumbai';
+  const operatingCityName = hub.cityName || settings?.operatingCityName || 'the configured service area';
   const hubLat = Number(isCentralHub ? (settings?.hubLat ?? hub.lat) : (hub.lat ?? settings?.hubLat));
   const hubLng = Number(isCentralHub ? (settings?.hubLng ?? hub.lng) : (hub.lng ?? settings?.hubLng));
   const maxRadiusKm = Number(

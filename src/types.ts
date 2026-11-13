@@ -1117,6 +1117,7 @@ export interface AuthOtpConfig {
   authorizedTestPhones: string[];
   otpExpirySeconds?: number;
   otpMaxAttempts?: number;
+  otpResendCooldownSeconds?: number;
   environmentMode: 'development' | 'production';
   updatedByUid?: string;
   updatedByName?: string;
@@ -1441,7 +1442,19 @@ export interface StaffLoginHistory {
 }
 
 export interface IntegrationStatusItem {
-  key: 'google_maps' | 'manual_upi' | 'firebase' | 'whatsapp' | 'fcm_push' | 'gemini_ai';
+  key:
+    | 'firebase'
+    | 'google_maps'
+    | 'google_auth'
+    | 'recaptcha_appcheck'
+    | 'gemini_ai'
+    | 'whatsapp'
+    | 'otp_provider'
+    | 'notifications'
+    | 'storage'
+    | 'cloud_functions'
+    | 'manual_upi'
+    | 'fcm_push';
   name: string;
   category: string;
   status: 'Connected' | 'Configuration Required' | 'Disconnected' | 'Error';
@@ -1452,4 +1465,70 @@ export interface IntegrationStatusItem {
   lastCheckedAt: string;
   lastError?: string | null;
   metadata?: Record<string, string | number | boolean>;
+}
+
+export type CmsAreaKey =
+  | 'hero'
+  | 'featured_fleet'
+  | 'categories'
+  | 'offers'
+  | 'why_choose'
+  | 'how_it_works'
+  | 'experience'
+  | 'services'
+  | 'testimonials'
+  | 'faqs'
+  | 'contact'
+  | 'footer'
+  | 'about'
+  | 'policies';
+
+export interface CmsAreaLocaleContent {
+  title: string;
+  subtitle?: string;
+  body: string;
+  ctaLabel?: string;
+  ctaLink?: string;
+}
+
+export interface CmsPageRecord {
+  key: CmsAreaKey;
+  label: string;
+  description: string;
+  published: boolean;
+  sortOrder: number;
+  content: Partial<Record<SupportedLanguage, CmsAreaLocaleContent>>;
+  updatedByUid?: string;
+  updatedByName?: string;
+  updatedAt: string;
+  publishedAt?: string | null;
+}
+
+export interface ResolvedLocationData {
+  address: string;
+  formattedAddress: string;
+  locality: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  lat: number;
+  lng: number;
+  placeId?: string | null;
+}
+
+export interface BranchDeletePreview {
+  branchId: string;
+  branchName: string;
+  cityName?: string;
+  isCentralHub: boolean;
+  affectedVehiclesCount: number;
+  activeVehiclesCount: number;
+  totalBookingsCount: number;
+  activeBookingsCount: number;
+  historicalBookingsCount: number;
+  staffCount: number;
+  affectedStaffCount?: number;
+  canDelete: boolean;
+  blockReason?: string | null;
+  consequences: string[];
 }

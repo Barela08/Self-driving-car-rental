@@ -47,11 +47,13 @@ const ALL_EVENTS: { key: NotificationEventKey; label: string }[] = [
 interface WhatsAppAdminPanelProps {
   isSuperAdmin: boolean;
   operatingCityName?: string;
+  apiBase?: '/api/admin' | '/api/master';
 }
 
 export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
   isSuperAdmin,
   operatingCityName = 'Central Hub',
+  apiBase = '/api/admin',
 }) => {
   const [waData, setWaData] = useState<WhatsAppAdminPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,7 +92,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
   const loadWhatsApp = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<WhatsAppAdminPayload>('/api/admin/whatsapp');
+      const res = await apiFetch<WhatsAppAdminPayload>(`${apiBase}/whatsapp`);
       setWaData(res);
       setBusinessPhone(res.config.businessPhoneNumber || '');
       setPhoneNumberId(res.config.phoneNumberId || '');
@@ -106,7 +108,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiBase]);
 
   useEffect(() => {
     void loadWhatsApp();
@@ -116,7 +118,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
     e.preventDefault();
     setBusy(true);
     try {
-      await apiFetch('/api/admin/whatsapp/config', {
+      await apiFetch(`${apiBase}/whatsapp/config`, {
         method: 'PUT',
         body: JSON.stringify({
           businessPhoneNumber: businessPhone,
@@ -148,7 +150,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
   const handleVerifyMeta = async () => {
     setBusy(true);
     try {
-      const res = await apiFetch<{ ok: boolean; message: string }>('/api/admin/whatsapp/verify', {
+      const res = await apiFetch<{ ok: boolean; message: string }>(`${apiBase}/whatsapp/verify`, {
         method: 'POST',
         body: JSON.stringify({
           businessPhoneNumber: businessPhone,
@@ -171,7 +173,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
     e.preventDefault();
     setBusy(true);
     try {
-      await apiFetch('/api/admin/whatsapp/employees', {
+      await apiFetch(`${apiBase}/whatsapp/employees`, {
         method: 'POST',
         body: JSON.stringify({
           name: empName,
@@ -194,7 +196,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
 
   const handleToggleEmployee = async (emp: EmployeeNotificationSetting) => {
     try {
-      await apiFetch(`/api/admin/whatsapp/employees/${emp.id}`, {
+      await apiFetch(`${apiBase}/whatsapp/employees/${emp.id}`, {
         method: 'PUT',
         body: JSON.stringify({ whatsappEnabled: !emp.whatsappEnabled }),
       });
@@ -206,7 +208,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
 
   const handleDeleteEmployee = async (id: string) => {
     try {
-      await apiFetch(`/api/admin/whatsapp/employees/${id}`, { method: 'DELETE' });
+      await apiFetch(`${apiBase}/whatsapp/employees/${id}`, { method: 'DELETE' });
       toast.success('Employee notification rule removed');
       await loadWhatsApp();
     } catch (err: any) {
@@ -217,7 +219,9 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
   const handleRunReminders = async () => {
     setBusy(true);
     try {
-      const res = await apiFetch<{ pickupReminders: number; returnReminders: number }>('/api/admin/reminders/run', {
+      const remindersUrl =
+        apiBase === '/api/master' ? '/api/master/whatsapp/reminders/run' : '/api/admin/reminders/run';
+      const res = await apiFetch<{ pickupReminders: number; returnReminders: number }>(remindersUrl, {
         method: 'POST',
       });
       toast.success(

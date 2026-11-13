@@ -38,22 +38,21 @@ import type {
 export type AdminTabKey =
   | 'overview'
   | 'vehicles'
+  | 'inventory'
   | 'bookings'
   | 'customers'
   | 'kyc'
   | 'staff'
-  | 'roles'
   | 'branches'
   | 'payment_settings'
-  | 'reports'
   | 'notifications'
-  | 'integrations'
-  | 'audit_history'
   | 'website_settings'
-  | 'coupons_offers'
-  | 'ai_auth'
-  | 'whatsapp'
-  | 'data_management';
+  | 'branding'
+  | 'social_media'
+  | 'upi_settings'
+  | 'reports'
+  | 'data_management'
+  | 'users';
 
 export interface AdminWhatsAppSummary {
   connectionStatus: string;
@@ -114,43 +113,43 @@ export function normalizeTargetTab(targetTab?: string): AdminTabKey {
     case 'payments':
     case 'payment_settings':
       return 'payment_settings';
+    case 'upi':
+    case 'upi_settings':
+      return 'upi_settings';
     case 'bookings':
       return 'bookings';
     case 'vehicles':
-    case 'maintenance':
       return 'vehicles';
+    case 'inventory':
+    case 'maintenance':
+      return 'inventory';
     case 'customers':
       return 'customers';
     case 'kyc':
     case 'kyc_review':
+    case 'doc_verification':
       return 'kyc';
     case 'staff':
       return 'staff';
-    case 'roles':
-      return 'roles';
     case 'branches':
       return 'branches';
     case 'coupons_offers':
-      return 'coupons_offers';
     case 'website_settings':
       return 'website_settings';
-    case 'whatsapp':
-      return 'whatsapp';
-    case 'integrations':
-      return 'integrations';
-    case 'audit':
-    case 'audit_history':
-      return 'audit_history';
+    case 'branding':
+      return 'branding';
+    case 'social':
+    case 'social_media':
+      return 'social_media';
     case 'notifications':
       return 'notifications';
     case 'reports':
       return 'reports';
-    case 'ai_auth':
-    case 'ai_assistant':
-      return 'ai_auth';
     case 'data_management':
     case 'firebase_migration':
       return 'data_management';
+    case 'users':
+      return 'users';
     default:
       return 'overview';
   }

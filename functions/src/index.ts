@@ -8,7 +8,7 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 
 initializeApp();
-const db = getFirestore('ai-studio-elitedrivecarren-1530ccb4-04ad-4731-8f7e-d96458988250');
+const db = getFirestore();
 const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
 
 // Google Cloud Secret Manager bindings (never stored in Firestore or client bundles)

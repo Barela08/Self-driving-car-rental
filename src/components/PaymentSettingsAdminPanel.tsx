@@ -56,6 +56,7 @@ interface PaymentSettingsAdminPanelProps {
   roles?: CustomRole[];
   isSuperAdmin: boolean;
   canVerifyPayments?: boolean;
+  focusSection?: 'all' | 'finance' | 'upi';
   paymentProofs?: PaymentProof[];
   payments?: PaymentRecord[];
   refunds?: RefundRecord[];
@@ -74,6 +75,7 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
   roles,
   isSuperAdmin,
   canVerifyPayments = false,
+  focusSection = 'all',
   paymentProofs = [],
   payments = [],
   refunds = [],
@@ -89,14 +91,34 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
   const [subTab, setSubTab] = useState<
     'pending' | 'verified' | 'rejected' | 'history' | 'refunds' | 'settings'
   >(
-    canVerifyPayments
-      ? 'pending'
-      : isSuperAdmin
-        ? 'settings'
+    focusSection === 'upi'
+      ? 'settings'
+      : canVerifyPayments
+        ? 'pending'
         : canIssueRefunds
           ? 'refunds'
-          : 'history'
+          : focusSection === 'finance'
+            ? 'history'
+            : isSuperAdmin
+              ? 'settings'
+              : 'history'
   );
+
+  useEffect(() => {
+    if (focusSection === 'upi') {
+      setSubTab('settings');
+    } else if (focusSection === 'finance') {
+      setSubTab((prev) =>
+        prev === 'settings'
+          ? canVerifyPayments
+            ? 'pending'
+            : canIssueRefunds
+              ? 'refunds'
+              : 'history'
+          : prev
+      );
+    }
+  }, [focusSection, canVerifyPayments, canIssueRefunds]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -374,76 +396,78 @@ export const PaymentSettingsAdminPanel: React.FC<PaymentSettingsAdminPanelProps>
 
   return (
     <div className="space-y-6 text-xs">
-      {/* Finance Module Sub-Navigation (6 Admin Center Subsections) */}
-      <div className="bg-white border border-black/10 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          {canVerifyPayments && (
-            <>
-              <button
-                type="button"
-                onClick={() => setSubTab('pending')}
-                className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
-                  subTab === 'pending' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
-                }`}
-              >
-                Pending Verification ({pendingProofs.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setSubTab('verified')}
-                className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
-                  subTab === 'verified' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
-                }`}
-              >
-                Verified Payments ({verifiedProofs.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setSubTab('rejected')}
-                className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
-                  subTab === 'rejected' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
-                }`}
-              >
-                Rejected Payments ({rejectedProofs.length})
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => setSubTab('history')}
-            className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-              subTab === 'history' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
-            }`}
-          >
-            <CreditCard className="w-3.5 h-3.5" />
-            Payment History ({payments.length})
-          </button>
-          {canIssueRefunds && (
+      {/* Finance Module Sub-Navigation */}
+      {focusSection !== 'upi' && (
+        <div className="bg-white border border-black/10 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {canVerifyPayments && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSubTab('pending')}
+                  className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                    subTab === 'pending' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                  }`}
+                >
+                  Pending Verification ({pendingProofs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTab('verified')}
+                  className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                    subTab === 'verified' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                  }`}
+                >
+                  Verified Payments ({verifiedProofs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTab('rejected')}
+                  className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                    subTab === 'rejected' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                  }`}
+                >
+                  Rejected Payments ({rejectedProofs.length})
+                </button>
+              </>
+            )}
             <button
               type="button"
-              onClick={() => setSubTab('refunds')}
+              onClick={() => setSubTab('history')}
               className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                subTab === 'refunds' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                subTab === 'history' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
               }`}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Refund Records ({pendingRefunds.length} Pending)
+              <CreditCard className="w-3.5 h-3.5" />
+              Payment History ({payments.length})
             </button>
-          )}
-          {isSuperAdmin && (
-            <button
-              type="button"
-              onClick={() => setSubTab('settings')}
-              className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                subTab === 'settings' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Manual UPI Settings
-            </button>
-          )}
+            {canIssueRefunds && (
+              <button
+                type="button"
+                onClick={() => setSubTab('refunds')}
+                className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  subTab === 'refunds' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                }`}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Refund Records ({pendingRefunds.length} Pending)
+              </button>
+            )}
+            {isSuperAdmin && focusSection === 'all' && (
+              <button
+                type="button"
+                onClick={() => setSubTab('settings')}
+                className={`px-3.5 py-2 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  subTab === 'settings' ? 'bg-obsidian text-gold' : 'bg-alabaster text-ink hover:border-gold border border-black/10'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Manual UPI Settings
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 1. Pending Verification Queue */}
       {subTab === 'pending' && canVerifyPayments && (

@@ -30,10 +30,15 @@ export const VehicleDetailPage: React.FC = () => {
   const [bookingOpen, setBookingOpen] = useState(false);
 
   const hasBranches = activeBranches.length > 0;
-  const operatingCity = vehicle?.cityName || settings?.operatingCityName || 'Mumbai';
+  const operatingCity = vehicle?.cityName || settings?.operatingCityName || '';
   const hubName = hasBranches
-    ? vehicle?.branchName || settings?.officeName || `${operatingCity} Lounge`
-    : settings?.officeName || `${operatingCity} Flagship Hub`;
+    ? vehicle?.branchName || settings?.officeName || (operatingCity ? `${operatingCity} Lounge` : 'Operations Lounge')
+    : settings?.officeName || (operatingCity ? `${operatingCity} Flagship Hub` : 'Flagship Operations Hub');
+  const initialPickupAddress = searchParams.get('pickup') || '';
+  const rawPickupLat = Number(searchParams.get('pickupLat'));
+  const rawPickupLng = Number(searchParams.get('pickupLng'));
+  const initialPickupLat = Number.isFinite(rawPickupLat) && rawPickupLat !== 0 ? rawPickupLat : undefined;
+  const initialPickupLng = Number.isFinite(rawPickupLng) && rawPickupLng !== 0 ? rawPickupLng : undefined;
 
   useEffect(() => {
     if (!id) return;
@@ -89,7 +94,6 @@ export const VehicleDetailPage: React.FC = () => {
   const galleryImages = vehicle.images.length ? vehicle.images : ['verna'];
   const specEntries = Object.entries(vehicle.specifications || {});
   const availableUnits = availabilitySummary ? availabilitySummary.availableUnits : vehicle.status === 'Available' ? 1 : 0;
-  const totalUnits = availabilitySummary ? availabilitySummary.totalUnits : 1;
   const availabilityStatus =
     availabilitySummary?.statusLabel ||
     availabilitySummary?.availabilityStatus ||
@@ -227,7 +231,7 @@ export const VehicleDetailPage: React.FC = () => {
                 <div>
                   <p className="font-semibold text-white">Pickup & Delivery Eligibility</p>
                   <p className="text-ivory/65 mt-0.5">
-                    {hubName} ({operatingCity}) ·{' '}
+                    {hubName}{operatingCity ? ` (${operatingCity})` : ''} ·{' '}
                     {vehicle.deliveryEligible
                       ? `Doorstep delivery within ${settings?.serviceRadiusKm || 35} km zone`
                       : 'Lounge self-pickup only'}
@@ -271,7 +275,7 @@ export const VehicleDetailPage: React.FC = () => {
               </h2>
               {blockedWindows.length === 0 ? (
                 <p className="text-xs text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 rounded-xl p-3">
-                  No overlapping reservations currently scheduled across {totalUnits} physical unit(s) in {hubName}.
+                  No overlapping reservations currently scheduled in {hubName}.
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -333,7 +337,7 @@ export const VehicleDetailPage: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between gap-2 text-xs text-ivory/65">
                   <span>
-                    {vehicle.category} · {operatingCity} · {vehicle.instantBooking ? t('fleet.instantBook') : t('fleet.approvalBook')}
+                    {vehicle.category}{operatingCity ? ` · ${operatingCity}` : ''} · {vehicle.instantBooking ? t('fleet.instantBook') : t('fleet.approvalBook')}
                   </span>
                   <span
                     className={`font-semibold text-xs ${
@@ -387,9 +391,17 @@ export const VehicleDetailPage: React.FC = () => {
 
               <div className="space-y-2 text-xs border-y border-white/10 py-3">
                 <div className="flex justify-between">
-                  <span className="text-ivory/60">Available Fleet Inventory</span>
-                  <span className="font-mono tabular-nums font-semibold text-white">
-                    {availableUnits} of {totalUnits} unit(s)
+                  <span className="text-ivory/60">Availability Status</span>
+                  <span
+                    className={`font-semibold ${
+                      availableUnits > 2
+                        ? 'text-emerald-400'
+                        : availableUnits > 0
+                          ? 'text-amber-300'
+                          : 'text-red-400'
+                    }`}
+                  >
+                    {availabilityStatus}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -478,14 +490,14 @@ export const VehicleDetailPage: React.FC = () => {
       </div>
 
       {/* Mobile Compact Bottom Bar */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-obsidian/95 backdrop-blur-md text-white border-t border-white/15 px-4 py-2.5 flex items-center justify-between gap-3">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-obsidian/95 backdrop-blur-md text-white border-t border-white/15 pl-4 pr-20 py-2.5 flex items-center justify-between gap-3">
         <div>
           <p className="font-mono tabular-nums text-sm font-bold text-gold">
             {formatINR(vehicle.pricePerDay)}{' '}
             <span className="text-xs font-normal text-ivory/60">{t('fleet.perDay')}</span>
           </p>
           <p className="text-[11px] text-ivory/60">
-            {availableUnits > 0 ? `${availableUnits} unit(s) free` : t('fleet.soldOut')}
+            {availableUnits > 0 ? availabilityStatus : t('fleet.soldOut')}
           </p>
         </div>
         <button
@@ -503,6 +515,9 @@ export const VehicleDetailPage: React.FC = () => {
           vehicle={vehicle}
           initialStartDate={startDate}
           initialEndDate={endDate}
+          initialPickupAddress={initialPickupAddress}
+          initialPickupLat={initialPickupLat}
+          initialPickupLng={initialPickupLng}
           availableUnits={availableUnits}
           onClose={() => setBookingOpen(false)}
         />

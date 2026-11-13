@@ -686,6 +686,19 @@
         "completedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "mode", "firebaseWriteSucceeded", "completedAt"]
+    },
+    "CmsPage": {
+      "title": "CmsPage",
+      "description": "Multilingual storefront CMS section configuration and publication state",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "label": { "type": "string", "maxLength": 120 },
+        "published": { "type": "boolean" },
+        "sortOrder": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "label", "published", "updatedAt"]
     }
   },
   "firestore": {
@@ -912,6 +925,10 @@
     "/consent_records/{consentId}": {
       "schema": { "$ref": "#/entities/ConsentRecord" },
       "description": "Timestamped booking consent records"
+    },
+    "/cms_pages/{pageId}": {
+      "schema": { "$ref": "#/entities/CmsPage" },
+      "description": "Multilingual storefront CMS area records with publish state"
     }
   }
 }

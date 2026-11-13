@@ -12,6 +12,8 @@ interface AdminIntegrationsPanelProps {
   integrations: IntegrationStatusItem[];
   operatingCityName: string;
   initialView?: 'health' | 'whatsapp';
+  apiBase?: '/api/admin' | '/api/master';
+  onOpenWhatsApp?: () => void;
   onReload: () => Promise<void>;
 }
 
@@ -21,23 +23,28 @@ export const AdminIntegrationsPanel: React.FC<AdminIntegrationsPanelProps> = ({
   integrations,
   operatingCityName,
   initialView = 'health',
+  apiBase = '/api/admin',
+  onOpenWhatsApp,
   onReload,
 }) => {
   const [subView, setSubView] = useState<'health' | 'whatsapp'>(initialView);
   const [testingKey, setTestingKey] = useState<string | null>(null);
 
   const canTest =
+    profile.role === 'master_admin' ||
     profile.role === 'super_admin' ||
     hasAdminPermission(profile, 'manage_integrations', roles) ||
     hasAdminPermission(profile, 'manage_website_settings', roles);
   const canWhatsApp =
-    profile.role === 'super_admin' || hasAdminPermission(profile, 'manage_whatsapp', roles);
+    profile.role === 'master_admin' ||
+    profile.role === 'super_admin' ||
+    hasAdminPermission(profile, 'manage_whatsapp', roles);
 
   const handleTest = async (providerKey: string) => {
     setTestingKey(providerKey);
     try {
       const res = await apiFetch<{ ok: boolean; message: string }>(
-        `/api/admin/integrations/${providerKey}/test`,
+        `${apiBase}/integrations/${providerKey}/test`,
         { method: 'POST' }
       );
       if (res.ok) {
@@ -73,7 +80,7 @@ export const AdminIntegrationsPanel: React.FC<AdminIntegrationsPanelProps> = ({
             <PlugZap className="w-3.5 h-3.5 text-gold" />
             Platform Health Overview
           </button>
-          {canWhatsApp && (
+          {canWhatsApp && !onOpenWhatsApp && (
             <button
               type="button"
               onClick={() => setSubView('whatsapp')}
@@ -90,8 +97,9 @@ export const AdminIntegrationsPanel: React.FC<AdminIntegrationsPanelProps> = ({
 
       {subView === 'whatsapp' && canWhatsApp ? (
         <WhatsAppAdminPanel
-          isSuperAdmin={profile.role === 'super_admin' || canWhatsApp}
+          isSuperAdmin={profile.role === 'master_admin' || profile.role === 'super_admin' || canWhatsApp}
           operatingCityName={operatingCityName}
+          apiBase={apiBase}
         />
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -164,7 +172,7 @@ export const AdminIntegrationsPanel: React.FC<AdminIntegrationsPanelProps> = ({
                     {item.key === 'whatsapp' && canWhatsApp && (
                       <button
                         type="button"
-                        onClick={() => setSubView('whatsapp')}
+                        onClick={() => (onOpenWhatsApp ? onOpenWhatsApp() : setSubView('whatsapp'))}
                         className="px-2.5 py-1.5 border border-black/15 rounded-lg font-semibold hover:border-gold cursor-pointer"
                       >
                         Configure

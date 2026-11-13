@@ -18,6 +18,7 @@ import { signInWithPopup } from 'firebase/auth';
 import { doc, writeBatch } from 'firebase/firestore';
 import { apiFetch } from '../../lib/api';
 import { auth, db, googleAuthProvider } from '../../lib/firebase';
+import firebaseConfig from '../../../firebase-applet-config.json';
 import type {
   DataManagementEntityItem,
   DeleteImpactPreview,
@@ -231,7 +232,7 @@ export const AdminDataManagementPanel: React.FC<{
         firebaseWriteSucceeded: validationPassed,
         backupPath: backupPath ?? latestReport?.backupPath ?? null,
         backupCreated: Boolean(backupCreated ?? latestReport?.backupCreated),
-        projectId: summary?.firebaseStatus?.projectId || 'gen-lang-client-0106540047',
+        projectId: summary?.firebaseStatus?.projectId || firebaseConfig.projectId,
         databaseId: summary?.firebaseStatus?.databaseId || '',
         totalSourceRecords,
         totalMigrated,
@@ -421,7 +422,7 @@ export const AdminDataManagementPanel: React.FC<{
           <div className="grid sm:grid-cols-3 gap-3 font-mono text-[11px] bg-alabaster p-3 rounded-lg border border-black/5">
             <div>
               <p className="text-slate-muted">Project ID</p>
-              <p className="font-semibold text-ink break-all">{fb?.projectId || 'gen-lang-client-0106540047'}</p>
+              <p className="font-semibold text-ink break-all">{fb?.projectId || firebaseConfig.projectId}</p>
             </div>
             <div>
               <p className="text-slate-muted">Firestore Database ID</p>

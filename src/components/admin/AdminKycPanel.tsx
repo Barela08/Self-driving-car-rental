@@ -143,11 +143,11 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
           reviewNotes: reviewNotes.trim(),
         }),
       });
-      toast.success(`KYC status updated to ${status}`);
+      toast.success(`Document verification status updated to ${status}`);
       setSelectedKyc(res.kyc);
       await onReload();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to update KYC decision');
+      toast.error(err.message || 'Failed to update document verification decision');
     } finally {
       setBusy(false);
     }
@@ -164,7 +164,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
       {/* Header & Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="bg-white border border-black/10 rounded-xl p-4">
-          <p className="text-[11px] font-medium text-slate-muted">Total KYC Submissions</p>
+          <p className="text-[11px] font-medium text-slate-muted">Total Verification Submissions</p>
           <p className="font-mono text-2xl font-semibold text-ink tabular-nums mt-1">{counts.all}</p>
         </div>
         <div className="bg-white border border-black/10 rounded-xl p-4">
@@ -224,8 +224,8 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
         {filtered.length === 0 ? (
           <div className="p-10 text-center text-xs text-slate-muted space-y-2">
             <FileCheck2 className="w-7 h-7 text-gold mx-auto" />
-            <p className="font-semibold text-ink">No KYC records match current filter</p>
-            <p>Customer submissions via Online KYC or Hub Appointments appear here automatically.</p>
+            <p className="font-semibold text-ink">No document verification records match current filter</p>
+            <p>Customer submissions via Online Document Upload or Hub Appointments appear here automatically.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -315,7 +315,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
           <div className="bg-white rounded-2xl border border-black/15 max-w-2xl w-full overflow-hidden my-auto max-h-[92vh] flex flex-col">
             <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between border-b border-white/10">
               <div>
-                <p className="text-[11px] text-gold font-medium">Audit-Logged KYC Inspection</p>
+                <p className="text-[11px] text-gold font-medium">Audit-Logged Document Verification Inspection</p>
                 <h3 className="font-display text-lg font-semibold">{selectedKyc.customerName}</h3>
               </div>
               <button
@@ -329,7 +329,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
 
             <div className="p-6 overflow-y-auto space-y-5 text-xs">
               {docLoading ? (
-                <div className="py-8 text-center text-slate-muted">Decrypting protected KYC document metadata...</div>
+                <div className="py-8 text-center text-slate-muted">Decrypting protected identity document metadata...</div>
               ) : (
                 <>
                   <div className="grid sm:grid-cols-2 gap-4 bg-alabaster border border-black/10 rounded-xl p-4">
@@ -363,10 +363,10 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Uploaded Customer KYC Document Files (DL Front, DL Back, Aadhaar) */}
+                  {/* Uploaded Customer Document Files (DL Front, DL Back, Aadhaar) */}
                   <div className="space-y-2.5">
                     <p className="font-semibold text-ink">
-                      Uploaded Customer KYC Files ({customerDocuments.filter((d) => d.userId === selectedKyc.userId).length}/3)
+                      Uploaded Customer Identity Files ({customerDocuments.filter((d) => d.userId === selectedKyc.userId).length}/3)
                     </p>
                     {customerDocuments.filter((d) => d.userId === selectedKyc.userId).length === 0 ? (
                       <p className="text-[11px] text-slate-muted p-3 rounded-lg bg-alabaster border border-black/10">
@@ -519,7 +519,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
                           className="px-4 py-2 bg-emerald-700 text-white font-semibold rounded-lg inline-flex items-center gap-1.5 hover:bg-emerald-800 cursor-pointer disabled:opacity-50"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          Approve & Verify KYC
+                          Approve & Verify Documents
                         </button>
                         <button
                           type="button"
@@ -537,7 +537,7 @@ export const AdminKycPanel: React.FC<AdminKycPanelProps> = ({
                           className="px-4 py-2 bg-red-700 text-white font-semibold rounded-lg inline-flex items-center gap-1.5 hover:bg-red-800 cursor-pointer disabled:opacity-50"
                         >
                           <XCircle className="w-4 h-4" />
-                          Reject KYC
+                          Reject Verification
                         </button>
                       </div>
                     </div>

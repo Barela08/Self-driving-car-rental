@@ -269,7 +269,7 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
     { label: 'Active Rentals', value: metrics.activeRentals, accent: true },
     { label: 'Pending Bookings', value: metrics.pendingApprovals, accent: metrics.pendingApprovals > 0 },
     { label: 'Pending Payments', value: metrics.pendingPaymentsCount, accent: metrics.pendingPaymentsCount > 0 },
-    { label: 'Pending KYC', value: metrics.pendingKycCount, accent: metrics.pendingKycCount > 0 },
+    { label: 'Pending Doc Verification', value: metrics.pendingKycCount, accent: metrics.pendingKycCount > 0 },
     { label: 'Total Customers', value: metrics.totalCustomers, accent: false },
     { label: 'Revenue (Filtered)', value: formatINR(metrics.totalRevenue), accent: true },
     { label: "Today's Revenue", value: formatINR(metrics.todaysRevenue), accent: false },
@@ -398,7 +398,7 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
               className="p-3.5 rounded-xl bg-alabaster border border-black/10 hover:border-gold flex items-center justify-between text-left cursor-pointer"
             >
               <div>
-                <p className="font-semibold text-ink">KYC Verification Queue</p>
+                <p className="font-semibold text-ink">Document Verification Queue</p>
                 <p className="text-slate-muted mt-0.5">{metrics.pendingKycCount} submitted for review</p>
               </div>
               <ArrowRight className="w-4 h-4 text-gold-hover shrink-0" />
@@ -424,34 +424,34 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-gold" />
-              <h2 className="font-display text-xl font-semibold">WhatsApp & Integrations</h2>
+              <h2 className="font-display text-xl font-semibold">Promotions & Dispatch Pulse</h2>
             </div>
             <button
               type="button"
-              onClick={() => onNavigateTab('integrations')}
+              onClick={() => onNavigateTab('notifications')}
               className="text-xs text-gold hover:underline cursor-pointer"
             >
-              Open Console
+              Notifications
             </button>
           </div>
 
           <div className="grid grid-cols-3 gap-3 text-xs font-mono tabular-nums">
             <div className="p-3 rounded-lg bg-charcoal border border-white/10">
-              <p className="text-white/60 text-[11px]">WhatsApp</p>
-              <p className="font-semibold text-gold mt-1 truncate">
-                {data.whatsappSummary?.connectionStatus || 'Disconnected'}
+              <p className="text-white/60 text-[11px]">Active Offers</p>
+              <p className="text-lg font-semibold text-gold mt-0.5">
+                {metrics.activeOffers}
               </p>
             </div>
             <div className="p-3 rounded-lg bg-charcoal border border-white/10">
-              <p className="text-white/60 text-[11px]">Delivered</p>
+              <p className="text-white/60 text-[11px]">Active Coupons</p>
               <p className="text-lg font-semibold text-emerald-400 mt-0.5">
-                {data.whatsappSummary?.sent || 0}
+                {metrics.activeCoupons}
               </p>
             </div>
             <div className="p-3 rounded-lg bg-charcoal border border-white/10">
-              <p className="text-white/60 text-[11px]">Failed / Fallback</p>
-              <p className="text-lg font-semibold text-amber-300 mt-0.5">
-                {(data.whatsappSummary?.failed || 0) + (data.whatsappSummary?.fallback || 0)}
+              <p className="text-white/60 text-[11px]">Branches Live</p>
+              <p className="text-lg font-semibold text-white mt-0.5">
+                {activeBranches.length}
               </p>
             </div>
           </div>
@@ -464,7 +464,7 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
               </div>
             ))}
             {(data.whatsappSummary?.recentLogs || []).length === 0 && (
-              <p className="text-white/50">No WhatsApp dispatches logged yet.</p>
+              <p className="text-white/50">No recent outbound dispatch events recorded.</p>
             )}
           </div>
         </div>
@@ -626,10 +626,10 @@ export const AdminOverviewPanel: React.FC<AdminOverviewPanelProps> = ({
             </h3>
             <button
               type="button"
-              onClick={() => onNavigateTab('audit_history')}
+              onClick={() => onNavigateTab('staff')}
               className="text-xs text-gold-hover hover:underline cursor-pointer"
             >
-              Full Audit Trail
+              Staff Directory
             </button>
           </div>
           <div className="divide-y divide-black/10 text-xs">

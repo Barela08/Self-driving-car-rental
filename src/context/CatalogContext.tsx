@@ -5,6 +5,9 @@ import { db } from '../lib/firebase';
 import type {
   Branch,
   City,
+  CmsAreaKey,
+  CmsAreaLocaleContent,
+  CmsPageRecord,
   CompanySettings,
   Coupon,
   InsurancePackage,
@@ -19,6 +22,7 @@ export interface PublicAuthOtpConfig {
   demoOtpEnabled: boolean;
   firebasePhoneAuthEnabled: boolean;
   whatsappOtpEnabled: boolean;
+  otpResendCooldownSeconds?: number;
   environmentMode: 'development' | 'production';
 }
 
@@ -37,6 +41,12 @@ interface CatalogContextValue {
   subscriptionPlans: SubscriptionPlan[];
   coupons: Coupon[];
   offers: Offer[];
+  cmsPages: CmsPageRecord[];
+  getPublishedCms: (key: CmsAreaKey, lang?: SupportedLanguage) => {
+    published: boolean;
+    page: CmsPageRecord | null;
+    locale: CmsAreaLocaleContent | null;
+  };
   settings: CompanySettings | null;
   authOtpConfig: PublicAuthOtpConfig;
   aiPublicConfig: PublicAiConfig;
@@ -69,11 +79,13 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
+  const [cmsPages, setCmsPages] = useState<CmsPageRecord[]>([]);
   const [settings, setSettings] = useState<CompanySettings | null>(null);
   const [authOtpConfig, setAuthOtpConfig] = useState<PublicAuthOtpConfig>({
     demoOtpEnabled: false,
     firebasePhoneAuthEnabled: true,
     whatsappOtpEnabled: false,
+    otpResendCooldownSeconds: 60,
     environmentMode: 'development',
   });
   const [aiPublicConfig, setAiPublicConfig] = useState<PublicAiConfig>({
@@ -103,7 +115,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     root.style.setProperty('--brand-secondary', secondary);
 
     if (settings.websiteTitle || settings.companyName) {
-      document.title = settings.websiteTitle || `${settings.companyName} — Luxury Self-Drive Mobility`;
+      document.title = settings.websiteTitle || `${settings.companyName} — Self-Drive Mobility`;
     }
     if (settings.faviconUrl) {
       let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
@@ -128,6 +140,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         subscriptionPlans: SubscriptionPlan[];
         coupons: Coupon[];
         offers?: Offer[];
+        cmsPages?: CmsPageRecord[];
         settings: CompanySettings | null;
         authOtpConfig?: PublicAuthOtpConfig;
         aiPublicConfig?: PublicAiConfig;
@@ -139,6 +152,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setSubscriptionPlans(data.subscriptionPlans || []);
       setCoupons(data.coupons || []);
       setOffers(data.offers || []);
+      setCmsPages(data.cmsPages || []);
       setSettings(data.settings || null);
       if (data.authOtpConfig) setAuthOtpConfig(data.authOtpConfig);
       if (data.aiPublicConfig) setAiPublicConfig(data.aiPublicConfig);
@@ -161,12 +175,29 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     []
   );
 
+  const getPublishedCms = useCallback(
+    (key: CmsAreaKey, lang: SupportedLanguage = 'en') => {
+      const page = cmsPages.find((p) => p.key === key) || null;
+      if (!page) {
+        return { published: true, page: null, locale: null };
+      }
+      if (!page.published) {
+        return { published: false, page, locale: null };
+      }
+      const locale =
+        page.content?.[lang] ||
+        page.content?.en ||
+        null;
+      return { published: true, page, locale };
+    },
+    [cmsPages]
+  );
+
   useEffect(() => {
     void reloadCatalog();
   }, [reloadCatalog]);
 
   // Real-time Firestore onSnapshot listeners layered over /api/bootstrap
-  // Skip empty snapshots so an un-migrated remote Firestore project never blanks out API bootstrap data.
   useEffect(() => {
     const unsubs: Array<() => void> = [];
     try {
@@ -213,6 +244,20 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       );
       unsubs.push(
         onSnapshot(
+          collection(db, 'cms_pages'),
+          (snap) => {
+            if (snap.empty) return;
+            setCmsPages(
+              snap.docs
+                .map((d) => d.data() as CmsPageRecord)
+                .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+            );
+          },
+          (err) => console.debug('Firestore cms_pages listener skipped:', err.message)
+        )
+      );
+      unsubs.push(
+        onSnapshot(
           doc(db, 'company_settings', 'default'),
           (snap) => {
             if (!snap.exists()) return;
@@ -248,6 +293,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         subscriptionPlans,
         coupons,
         offers,
+        cmsPages,
+        getPublishedCms,
         settings,
         authOtpConfig,
         aiPublicConfig,
@@ -265,6 +312,6 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
 export function useCatalog() {
   const ctx = useContext(CatalogContext);
-  if (!ctx) throw new Error('useCatalog must be used inside CatalogProvider');
+  if (!ctx) throw new Error('useAuth/useCatalog must be used inside CatalogProvider');
   return ctx;
 }

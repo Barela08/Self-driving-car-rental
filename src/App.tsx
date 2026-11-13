@@ -34,7 +34,9 @@ const AppShell: React.FC<{ quotaExceeded: boolean }> = ({ quotaExceeded }) => {
     const title =
       settings?.websiteTitle ||
       (settings?.brandName || settings?.companyName
-        ? `${settings.brandName || settings.companyName} — Self-Drive Luxury Mobility in ${settings.operatingCityName || 'Mumbai'}`
+        ? settings.operatingCityName
+          ? `${settings.brandName || settings.companyName} — Self-Drive Luxury Mobility in ${settings.operatingCityName}`
+          : `${settings.brandName || settings.companyName} — Self-Drive Luxury Mobility`
         : 'EliteDrive Car Rentals — Self-Drive Mobility');
     document.title = title;
 

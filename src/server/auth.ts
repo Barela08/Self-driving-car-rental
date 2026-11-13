@@ -34,8 +34,6 @@ const SESSION_SECRET =
     .update(`elitedrive:${firebaseConfig.projectId}:${firebaseConfig.appId}`)
     .digest('hex');
 
-const BOOTSTRAP_OWNER_EMAILS = ['nileshbarela08@gmail.com', 'barelanilesh483@gmail.com', 'nbgamer126@gmail.com'];
-
 interface SessionPayload {
   uid: string;
   email: string;
@@ -304,50 +302,27 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       db.collection('users').doc(uid).get(),
       loadRolesList(),
     ]);
-    const isBootstrapOwner = Boolean(
-      email && BOOTSTRAP_OWNER_EMAILS.includes(email.toLowerCase()) && emailVerified
-    );
-
     let profile: UserProfile;
     if (snap.exists) {
       profile = snap.data() as UserProfile;
-      if (isBootstrapOwner && profile.role !== 'super_admin') {
-        profile = {
-          ...profile,
-          role: 'super_admin',
-          roleId: 'role-super-admin',
-          roleName: 'Super Admin (Owner)',
-          branchScope: 'all',
-          kycStatus: 'Verified',
-          active: true,
-        };
-        await db.collection('users').doc(uid).update({
-          role: 'super_admin',
-          roleId: 'role-super-admin',
-          roleName: 'Super Admin (Owner)',
-          branchScope: 'all',
-          kycStatus: 'Verified',
-          active: true,
-          updatedAt: new Date().toISOString(),
-        });
-      }
     } else {
       const now = new Date().toISOString();
       profile = {
         uid,
         displayName: name || email?.split('@')[0] || 'Customer',
-        role: isBootstrapOwner ? 'super_admin' : 'customer',
-        ...(isBootstrapOwner ? { roleId: 'role-super-admin', roleName: 'Super Admin (Owner)', branchScope: 'all' } : {}),
+        ...(email ? { email: email.toLowerCase() } : {}),
+        ...(phoneNumber ? { phone: phoneNumber } : {}),
+        role: 'customer',
         active: true,
         accountStatus: 'active',
-        kycStatus: isBootstrapOwner ? 'Verified' : 'Not Started',
+        kycStatus: 'Not Started',
         createdAt: now,
         updatedAt: now,
       };
       await db.collection('users').doc(uid).set(profile);
       await db.collection('users').doc(uid).collection('private').doc('info').set({
         uid,
-        email: email || '',
+        email: (email || '').toLowerCase(),
         phone: phoneNumber || '',
         savedAddresses: [],
         favouriteVehicleIds: [],
@@ -367,14 +342,6 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         },
         { merge: true }
       );
-      if (isBootstrapOwner) {
-        await db.collection('admins').doc(uid).set({
-          uid,
-          role: 'super_admin',
-          active: true,
-          updatedAt: now,
-        });
-      }
     }
 
     if (profile.accountStatus === 'suspended' || (profile.role !== 'customer' && profile.active === false)) {

@@ -59,6 +59,7 @@ export type InventorySubTab =
 interface AdminVehiclesPanelProps {
   profile: UserProfile;
   roles?: CustomRole[];
+  focusMode?: 'all' | 'vehicles' | 'inventory';
   vehicles: Vehicle[];
   vehiclePrivate: VehiclePrivateDetails[];
   branches?: Branch[];
@@ -131,6 +132,7 @@ function deriveModelKey(v: Vehicle): string {
 export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
   profile,
   roles,
+  focusMode = 'all',
   vehicles,
   vehiclePrivate,
   branches = [],
@@ -163,9 +165,21 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
   const canDeleteArchive = canManageVehicles || hasPerm('delete_archive_vehicles');
   const canExportInventory = canManageVehicles || hasPerm('export_inventory') || hasPerm('export_reports');
 
-  const [subTab, setSubTab] = useState<InventorySubTab>('all');
+  const [subTab, setSubTab] = useState<InventorySubTab>(
+    focusMode === 'inventory' ? 'overview' : 'all'
+  );
   const [inventoryOverview, setInventoryOverview] = useState<InventoryOverviewApiResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
+
+  useEffect(() => {
+    const vehicleTabs: InventorySubTab[] = ['all', 'add', 'bulk', 'categories', 'documents', 'history'];
+    const inventoryTabs: InventorySubTab[] = ['overview', 'calendar', 'reserved', 'active', 'maintenance', 'assignments', 'history'];
+    if (focusMode === 'vehicles') {
+      setSubTab((prev) => (vehicleTabs.includes(prev) ? prev : 'all'));
+    } else if (focusMode === 'inventory') {
+      setSubTab((prev) => (inventoryTabs.includes(prev) ? prev : 'overview'));
+    }
+  }, [focusMode]);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | VehicleStatus | 'ARCHIVED'>('ALL');
@@ -195,7 +209,7 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
   const [setVehMaintFlag, setSetVehMaintFlag] = useState(true);
 
   // Form states
-  const [branchId, setBranchId] = useState(profile.branchIds?.[0] || profile.branchId || 'branch-central-hub');
+  const [branchId, setBranchId] = useState(profile.branchIds?.[0] || profile.branchId || '');
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
@@ -338,7 +352,7 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
     setUnitCount('1');
     setRegistrationNumbersText('');
     setUnitCode('');
-    setBranchId(accessibleBranches[0]?.id || profile.branchIds?.[0] || profile.branchId || 'branch-central-hub');
+    setBranchId(accessibleBranches[0]?.id || profile.branchIds?.[0] || profile.branchId || '');
     setName(preset?.name || '');
     setBrand(preset?.brand || '');
     setModel(preset?.model || '');
@@ -801,7 +815,10 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
     setHistoryLoading(false);
   };
 
-  const INVENTORY_SUBTABS: { key: InventorySubTab; label: string; visible: boolean }[] = [
+  const vehicleSubtabKeys: InventorySubTab[] = ['all', 'add', 'bulk', 'categories', 'documents', 'history'];
+  const inventorySubtabKeys: InventorySubTab[] = ['overview', 'calendar', 'reserved', 'active', 'maintenance', 'assignments', 'history'];
+
+  const ALL_INVENTORY_SUBTABS: { key: InventorySubTab; label: string; visible: boolean }[] = [
     { key: 'all', label: `All Vehicles (${vehicles.filter((v) => !v.archived).length})`, visible: true },
     { key: 'add', label: 'Add Vehicle', visible: canAddVehicle },
     { key: 'bulk', label: 'Bulk Add Vehicles', visible: canBulkAdd },
@@ -827,6 +844,12 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
     { key: 'assignments', label: 'Vehicle Assignment', visible: canAssignVehicle || hasPerm('view_inventory') },
     { key: 'history', label: 'Vehicle History', visible: canViewHistory },
   ];
+
+  const INVENTORY_SUBTABS = ALL_INVENTORY_SUBTABS.filter((t) => {
+    if (focusMode === 'vehicles') return vehicleSubtabKeys.includes(t.key);
+    if (focusMode === 'inventory') return inventorySubtabKeys.includes(t.key);
+    return true;
+  });
 
   const isUnitGridTab =
     subTab === 'all' || subTab === 'reserved' || subTab === 'active' || subTab === 'maintenance';
@@ -923,7 +946,7 @@ export const AdminVehiclesPanel: React.FC<AdminVehiclesPanelProps> = ({
       {subTab === 'bulk' && canBulkAdd && (
         <BulkAddVehiclesSubsection
           branches={accessibleBranches}
-          defaultBranchId={accessibleBranches[0]?.id || profile.branchId || 'branch-central-hub'}
+          defaultBranchId={accessibleBranches[0]?.id || profile.branchId || ''}
           onSuccess={onReload}
         />
       )}

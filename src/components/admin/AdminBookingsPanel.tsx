@@ -363,11 +363,11 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
         method: 'POST',
         body: JSON.stringify({ status }),
       });
-      toast.success(`Customer KYC set to ${status}`);
+      toast.success(`Customer document verification set to ${status}`);
       setSelectedBooking((prev) => (prev?.id === booking.id ? { ...prev, kycStatusSnapshot: status } : prev));
       await onReload();
     } catch (err: any) {
-      toast.error(err.message || 'KYC status update failed');
+      toast.error(err.message || 'Document verification status update failed');
     } finally {
       setBusy(false);
     }
@@ -633,7 +633,7 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
                 <th className="py-3 px-3">Rental Window</th>
                 <th className="py-3 px-3">Pickup / Return</th>
                 <th className="py-3 px-3">Amounts (INR)</th>
-                <th className="py-3 px-3">Payment / KYC</th>
+                <th className="py-3 px-3">Payment / Verification</th>
                 <th className="py-3 px-3">Status</th>
                 <th className="py-3 px-3 text-right">Actions</th>
               </tr>
@@ -694,7 +694,7 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
                   <td className="py-3 px-3 align-top text-[11px]">
                     <p className="font-semibold text-ink">{b.paymentStatus}</p>
                     <p className={b.kycStatusSnapshot === 'Verified' ? 'text-emerald-700 font-medium' : 'text-amber-700'}>
-                      KYC: {b.kycStatusSnapshot}
+                      Docs: {b.kycStatusSnapshot}
                     </p>
                   </td>
                   <td className="py-3 px-3 align-top">
@@ -760,7 +760,7 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 shrink-0" />
                     <span>
-                      Handover Blocked: Customer KYC status is <strong>{selectedBooking.kycStatusSnapshot}</strong>. Verify KYC before executing handover.
+                      Handover Blocked: Customer verification status is <strong>{selectedBooking.kycStatusSnapshot}</strong>. Verify documents before executing handover.
                     </span>
                   </div>
                 )}
@@ -978,7 +978,7 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
                 </div>
               </div>
 
-              {/* Payment & KYC Direct Controls */}
+              {/* Payment & Verification Direct Controls */}
               <div className="grid sm:grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl border border-black/10 space-y-2">
                   <p className="font-semibold text-ink">Payment Verification Status</p>
@@ -1007,7 +1007,7 @@ export const AdminBookingsPanel: React.FC<AdminBookingsPanelProps> = ({
                 </div>
 
                 <div className="p-4 rounded-xl border border-black/10 space-y-2">
-                  <p className="font-semibold text-ink">Customer KYC Status</p>
+                  <p className="font-semibold text-ink">Customer Document Verification Status</p>
                   <p className="text-slate-muted">Current Snapshot: {selectedBooking.kycStatusSnapshot}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {(['Verified', 'Under Review', 'Resubmission Required', 'Rejected'] as KycStatus[]).map((st) => (
