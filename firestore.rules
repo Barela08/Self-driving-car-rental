@@ -37,7 +37,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == 'barelanilesh483@gmail.com' && request.auth.token.email_verified == true) ||
+        ((request.auth.token.email == 'barelanilesh483@gmail.com' ||
+          request.auth.token.email == 'nbgamer126@gmail.com') &&
+          request.auth.token.email_verified == true) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -45,11 +47,30 @@ service cloud.firestore {
     // 3. Validation Helpers
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'displayName', 'role', 'accountStatus', 'kycStatus', 'createdAt']) &&
-        data.keys().hasOnly(['uid', 'displayName', 'role', 'branchId', 'accountStatus', 'kycStatus', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'displayName', 'role', 'roleId', 'roleName', 'permissions', 'active',
+          'branchId', 'branchIds', 'branchScope', 'employeeId', 'designation',
+          'joiningDate', 'lastLoginAt', 'mustResetPassword', 'phone', 'email',
+          'internalNotes', 'accountStatus', 'kycStatus', 'createdAt', 'updatedAt'
+        ]) &&
         isValidId(data.uid) &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
-        data.role in ['customer', 'super_admin', 'fleet_manager', 'operations_staff', 'finance_staff', 'support_staff'] &&
+        data.role is string && data.role.size() >= 2 && data.role.size() <= 64 &&
+        (!('roleId' in data) || (data.roleId is string && data.roleId.size() <= 128)) &&
+        (!('roleName' in data) || (data.roleName is string && data.roleName.size() <= 100)) &&
+        (!('permissions' in data) || (data.permissions is list && data.permissions.size() <= 55)) &&
+        (!('active' in data) || data.active is bool) &&
         (!('branchId' in data) || (data.branchId is string && data.branchId.size() <= 128)) &&
+        (!('branchIds' in data) || (data.branchIds is list && data.branchIds.size() <= 30)) &&
+        (!('branchScope' in data) || data.branchScope in ['all', 'assigned']) &&
+        (!('employeeId' in data) || (data.employeeId is string && data.employeeId.size() <= 64)) &&
+        (!('designation' in data) || (data.designation is string && data.designation.size() <= 100)) &&
+        (!('joiningDate' in data) || (data.joiningDate is string && data.joiningDate.size() <= 64)) &&
+        (!('lastLoginAt' in data) || (data.lastLoginAt is string && data.lastLoginAt.size() <= 64)) &&
+        (!('mustResetPassword' in data) || data.mustResetPassword is bool) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+        (!('internalNotes' in data) || (data.internalNotes is string && data.internalNotes.size() <= 2000)) &&
         data.accountStatus in ['active', 'suspended', 'deletion_requested'] &&
         data.kycStatus in ['Not Started', 'Pending', 'Under Review', 'Verified', 'Rejected', 'Resubmission Required', 'Expired'] &&
         data.createdAt is string && data.createdAt.size() <= 64 &&
@@ -58,7 +79,11 @@ service cloud.firestore {
 
     function isValidPrivateInfo(data) {
       return data.keys().hasAll(['uid', 'email', 'marketingConsent', 'serviceConsentVersion', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent', 'serviceConsentVersion', 'serviceConsentAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'phone', 'savedAddresses', 'favouriteVehicleIds',
+          'marketingConsent', 'whatsappConsent', 'whatsappOptOut', 'fcmTokens',
+          'serviceConsentVersion', 'serviceConsentAt', 'updatedAt'
+        ]) &&
         isValidId(data.uid) &&
         data.uid == request.auth.uid &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
@@ -66,6 +91,9 @@ service cloud.firestore {
         (!('savedAddresses' in data) || (data.savedAddresses is list && data.savedAddresses.size() <= 10)) &&
         (!('favouriteVehicleIds' in data) || (data.favouriteVehicleIds is list && data.favouriteVehicleIds.size() <= 50)) &&
         data.marketingConsent is bool &&
+        (!('whatsappConsent' in data) || data.whatsappConsent is bool) &&
+        (!('whatsappOptOut' in data) || data.whatsappOptOut is bool) &&
+        (!('fcmTokens' in data) || (data.fcmTokens is list && data.fcmTokens.size() <= 20)) &&
         data.serviceConsentVersion is string && data.serviceConsentVersion.size() >= 1 && data.serviceConsentVersion.size() <= 32 &&
         (!('serviceConsentAt' in data) || (data.serviceConsentAt is string && data.serviceConsentAt.size() <= 64)) &&
         data.updatedAt is string && data.updatedAt.size() <= 64;
@@ -139,7 +167,11 @@ service cloud.firestore {
         allow update: if isValidId(userId) && isValidId(docId) && isVerifiedUser() && isOwner(userId) &&
           isValidPrivateInfo(incoming()) &&
           incoming().uid == existing().uid &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent', 'serviceConsentVersion', 'serviceConsentAt', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'phone', 'savedAddresses', 'favouriteVehicleIds', 'marketingConsent',
+            'whatsappConsent', 'whatsappOptOut', 'fcmTokens',
+            'serviceConsentVersion', 'serviceConsentAt', 'updatedAt'
+          ]);
         allow delete: if false;
       }
     }
@@ -182,6 +214,18 @@ service cloud.firestore {
 
     match /company_settings/{settingId} {
       allow get: if isValidId(settingId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow get: if isValidId(couponId);
+      allow list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /offers/{offerId} {
+      allow get: if isValidId(offerId);
       allow list: if true;
       allow write: if isAdmin();
     }
@@ -297,6 +341,96 @@ service cloud.firestore {
     // Never expose OTP hashes or challenges to client Firestore reads or writes
     match /whatsapp_otp_challenges/{challengeId} {
       allow read, write: if false;
+    }
+
+    // Owner Admin Control Center operational collections (mutated via server Admin SDK)
+    match /notification_campaigns/{campaignId} {
+      allow get: if isValidId(campaignId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /admin_notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isAdmin();
+      allow list, update: if isAdmin();
+      allow create, delete: if false;
+    }
+
+    match /contact_enquiries/{enquiryId} {
+      allow get: if isValidId(enquiryId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /email_fallbacks/{fallbackId} {
+      allow get: if isValidId(fallbackId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /roles/{roleId} {
+      allow get: if isValidId(roleId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /vehicle_maintenance/{maintenanceId} {
+      allow get: if isValidId(maintenanceId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /refunds/{refundId} {
+      allow get: if isValidId(refundId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /staff_login_history/{entryId} {
+      allow get: if isValidId(entryId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /integrations_checks/{checkId} {
+      allow get: if isValidId(checkId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /inventory_holds/{holdId} {
+      allow get: if isValidId(holdId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /booking_vehicle_assignments/{assignmentId} {
+      allow get: if isValidId(assignmentId) && isAdmin();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Never expose raw payment screenshots to direct client reads or writes
+    match /payment_screenshots/{proofId} {
+      allow read, write: if false;
+    }
+
+    match /rental_agreements/{agreementId} {
+      allow get: if isValidId(agreementId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /customer_reviews/{reviewId} {
+      allow get: if isValidId(reviewId) && (existing().status == 'Approved' || isOwner(existing().userId) || isAdmin());
+      allow list: if resource.data.status == 'Approved' || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
     }
   }
 }

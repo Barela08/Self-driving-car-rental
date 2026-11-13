@@ -7,8 +7,22 @@
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
-        "role": { "type": "string", "enum": ["customer", "super_admin", "fleet_manager", "operations_staff", "finance_staff", "support_staff"] },
+        "role": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "roleId": { "type": "string", "maxLength": 128 },
+        "roleName": { "type": "string", "maxLength": 100 },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "active": { "type": "boolean" },
         "branchId": { "type": "string", "maxLength": 128 },
+        "branchIds": { "type": "array", "items": { "type": "string" } },
+        "branchScope": { "type": "string", "enum": ["all", "assigned"] },
+        "employeeId": { "type": "string", "maxLength": 64 },
+        "designation": { "type": "string", "maxLength": 100 },
+        "joiningDate": { "type": "string", "maxLength": 40 },
+        "lastLoginAt": { "type": "string", "format": "date-time" },
+        "mustResetPassword": { "type": "boolean" },
+        "phone": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 160 },
+        "internalNotes": { "type": "string", "maxLength": 2000 },
         "accountStatus": { "type": "string", "enum": ["active", "suspended", "deletion_requested"] },
         "kycStatus": { "type": "string", "enum": ["Not Started", "Pending", "Under Review", "Verified", "Rejected", "Resubmission Required", "Expired"] },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -17,13 +31,16 @@
     },
     "UserPrivateInfo": {
       "title": "UserPrivateInfo",
-      "description": "Isolated customer PII including email, phone, saved addresses, favorites, and consent records",
+      "description": "Isolated customer PII including email, phone, saved addresses, favorites, WhatsApp opt-out, and consent records",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "email": { "type": "string", "maxLength": 160 },
         "phone": { "type": "string", "maxLength": 24 },
         "marketingConsent": { "type": "boolean" },
+        "whatsappConsent": { "type": "boolean" },
+        "whatsappOptOut": { "type": "boolean" },
+        "fcmTokens": { "type": "array", "items": { "type": "string" } },
         "serviceConsentVersion": { "type": "string", "maxLength": 32 },
         "serviceConsentAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -108,8 +125,13 @@
         },
         "startDate": { "type": "string", "maxLength": 40 },
         "endDate": { "type": "string", "maxLength": 40 },
+        "quantity": { "type": "number" },
+        "assignedVehicleIds": { "type": "array", "items": { "type": "string" } },
+        "assignedVehicleRegs": { "type": "array", "items": { "type": "string" } },
+        "canonicalStatus": { "type": "string", "maxLength": 40 },
+        "canonicalPaymentStatus": { "type": "string", "maxLength": 40 },
         "totalPayable": { "type": "number" },
-        "paymentStatus": { "type": "string", "enum": ["Pending", "Partial Paid", "Paid", "Failed", "Refund Pending", "Refunded"] },
+        "paymentStatus": { "type": "string", "enum": ["Pending", "Pending Verification", "Partial Paid", "Paid", "Failed", "Refund Pending", "Refunded"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "vehicleId", "branchId", "bookingMode", "pickupMode", "status", "startDate", "endDate", "totalPayable", "paymentStatus", "createdAt"]
@@ -249,7 +271,12 @@
         "amountSubmitted": { "type": "number" },
         "utrReference": { "type": "string", "minLength": 6, "maxLength": 32 },
         "transactionRef": { "type": "string", "maxLength": 64 },
-        "status": { "type": "string", "enum": ["Pending Verification", "Approved", "Rejected"] },
+        "paidAmount": { "type": "number" },
+        "paidAt": { "type": "string", "maxLength": 64 },
+        "payerUpiId": { "type": "string", "maxLength": 120 },
+        "amountMismatch": { "type": "boolean" },
+        "isSuspicious": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Pending Verification", "Approved", "Rejected", "Resubmission Requested"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "bookingId", "userId", "amountSubmitted", "utrReference", "status", "createdAt"]
@@ -282,6 +309,229 @@
         "used": { "type": "boolean" }
       },
       "required": ["id", "phone", "otpHash", "attempts", "expiresAt", "used"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Promotional discount code with eligibility and usage caps",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "code": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "discountType": { "type": "string", "enum": ["percent", "flat"] },
+        "discountValue": { "type": "number" },
+        "minBookingAmount": { "type": "number" },
+        "maxDiscountAmount": { "type": "number" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "code", "discountType", "discountValue", "active"]
+    },
+    "Offer": {
+      "title": "Offer",
+      "description": "Storefront promotional offer banner or seasonal highlight",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "offerType": { "type": "string", "enum": ["banner", "festival", "seasonal", "limited_time", "featured_vehicle"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "offerType", "active", "createdAt"]
+    },
+    "NotificationCampaign": {
+      "title": "NotificationCampaign",
+      "description": "Customer promotional broadcast campaign honoring opt-outs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "status": { "type": "string", "enum": ["Sent", "Scheduled"] },
+        "recipientCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "status", "recipientCount", "createdAt"]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "Owner/staff operational alert bell entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "type", "title", "read", "createdAt"]
+    },
+    "ContactEnquiry": {
+      "title": "ContactEnquiry",
+      "description": "Public customer concierge desk enquiry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subject": { "type": "string", "maxLength": 160 },
+        "status": { "type": "string", "enum": ["New", "In Progress", "Resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "subject", "status", "createdAt"]
+    },
+    "CustomRole": {
+      "title": "CustomRole",
+      "description": "System or custom RBAC role with granular permissions and branch scope",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "branchScope": { "type": "string", "enum": ["all", "assigned"] },
+        "isSystem": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "slug", "name", "permissions", "branchScope", "isSystem", "active", "createdAt"]
+    },
+    "VehicleMaintenance": {
+      "title": "VehicleMaintenance",
+      "description": "Branch-scoped fleet service, inspection, and repair logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "vehicleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["Scheduled", "In Progress", "Completed", "Cancelled"] },
+        "costInr": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "vehicleId", "branchId", "type", "status", "createdAt"]
+    },
+    "RefundRecord": {
+      "title": "RefundRecord",
+      "description": "Customer cancellation and security deposit refund ledger entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "branchId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string", "enum": ["booking_cancellation", "security_deposit", "adjustment"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Requested", "Processed", "Rejected", "Failed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "branchId", "type", "amount", "status", "createdAt"]
+    },
+    "StaffLoginHistory": {
+      "title": "StaffLoginHistory",
+      "description": "Immutable staff portal authentication audit record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "maxLength": 64 },
+        "outcome": { "type": "string", "enum": ["success", "denied", "failed"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "role", "outcome", "timestamp"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Enterprise RBAC, permission denial, KYC inspection, and settings audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 120 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorUid", "action", "targetId", "timestamp"]
+    },
+    "IntegrationCheck": {
+      "title": "IntegrationCheck",
+      "description": "Sanitized connectivity health check metadata for external services (no secrets)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "provider": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 40 },
+        "checkedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "provider", "status", "checkedAt"]
+    },
+    "InventoryHold": {
+      "title": "InventoryHold",
+      "description": "Temporary booking inventory hold with automatic expiration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "vehicleIds": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["Active", "Converted", "Expired", "Released"] },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "vehicleIds", "status", "expiresAt", "createdAt"]
+    },
+    "BookingVehicleAssignment": {
+      "title": "BookingVehicleAssignment",
+      "description": "Physical unit assignment linking a booking to specific fleet registration IDs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "vehicleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "registrationNumber": { "type": "string", "maxLength": 40 },
+        "branchId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["Reserved", "Active", "Completed", "Released"] }
+      },
+      "required": ["id", "bookingId", "vehicleId", "status"]
+    },
+    "PaymentScreenshot": {
+      "title": "PaymentScreenshot",
+      "description": "Server-only private storage for customer UPI payment screenshots",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mimeType": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "createdAt"]
+    },
+    "RentalAgreement": {
+      "title": "RentalAgreement",
+      "description": "Timestamped customer self-drive rental agreement acceptance record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "maxLength": 32 },
+        "acceptedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "userId", "version", "acceptedAt"]
+    },
+    "CustomerReview": {
+      "title": "CustomerReview",
+      "description": "Verified customer trip review subject to admin moderation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "vehicleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "rating": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending Moderation", "Approved", "Rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "vehicleId", "userId", "rating", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -352,6 +602,70 @@
     "/whatsapp_otp_challenges/{challengeId}": {
       "schema": { "$ref": "#/entities/WhatsAppOtpChallenge" },
       "description": "Server-only hashed OTP challenges (no client access)"
+    },
+    "/coupons/{couponId}": {
+      "schema": { "$ref": "#/entities/Coupon" },
+      "description": "Active promotional discount coupons"
+    },
+    "/offers/{offerId}": {
+      "schema": { "$ref": "#/entities/Offer" },
+      "description": "Storefront promotional offers and seasonal campaigns"
+    },
+    "/notification_campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/NotificationCampaign" },
+      "description": "Customer campaign dispatch logs honoring opt-outs"
+    },
+    "/admin_notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AdminNotification" },
+      "description": "Admin control center operational alert inbox"
+    },
+    "/contact_enquiries/{enquiryId}": {
+      "schema": { "$ref": "#/entities/ContactEnquiry" },
+      "description": "Public customer contact desk enquiries"
+    },
+    "/roles/{roleId}": {
+      "schema": { "$ref": "#/entities/CustomRole" },
+      "description": "Dynamic system and custom RBAC roles"
+    },
+    "/vehicle_maintenance/{maintenanceId}": {
+      "schema": { "$ref": "#/entities/VehicleMaintenance" },
+      "description": "Fleet service and inspection records"
+    },
+    "/refunds/{refundId}": {
+      "schema": { "$ref": "#/entities/RefundRecord" },
+      "description": "Cancellation and security deposit refund ledger"
+    },
+    "/staff_login_history/{entryId}": {
+      "schema": { "$ref": "#/entities/StaffLoginHistory" },
+      "description": "Immutable staff portal login history"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable RBAC and admin audit log entries"
+    },
+    "/integrations_checks/{checkId}": {
+      "schema": { "$ref": "#/entities/IntegrationCheck" },
+      "description": "Integration health check metadata (no secrets)"
+    },
+    "/inventory_holds/{holdId}": {
+      "schema": { "$ref": "#/entities/InventoryHold" },
+      "description": "Temporary reservation holds during manual UPI payment window"
+    },
+    "/booking_vehicle_assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/BookingVehicleAssignment" },
+      "description": "Physical vehicle unit assignments per booking"
+    },
+    "/payment_screenshots/{proofId}": {
+      "schema": { "$ref": "#/entities/PaymentScreenshot" },
+      "description": "Server-only private UPI payment proof images"
+    },
+    "/rental_agreements/{agreementId}": {
+      "schema": { "$ref": "#/entities/RentalAgreement" },
+      "description": "Accepted self-drive rental agreements"
+    },
+    "/customer_reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/CustomerReview" },
+      "description": "Verified completed-trip customer reviews"
     }
   }
 }

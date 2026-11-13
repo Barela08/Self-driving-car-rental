@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  Download,
   ExternalLink,
   MapPin,
   QrCode,
@@ -22,6 +23,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { apiFetch, formatINR } from '../lib/api';
 import { resolveVehicleImage } from '../lib/mediaAssets';
+import { downloadRentalAgreementPdf } from '../lib/pdfExport';
 import type {
   Booking,
   PaymentAuditLog,
@@ -41,10 +43,21 @@ interface PaymentSessionResponse {
     upiStaticQrImage: string;
     upiPaymentInstructions: string;
     advancePaymentPercent: number;
+    minimumAdvanceAmount?: number;
+    fullPaymentEnabled?: boolean;
+    holdDurationMinutes?: number;
+    balancePaymentRule?: string;
+    securityDepositRule?: string;
   };
   session: PaymentSessionData;
   proofHistory: PaymentProof[];
   paymentAuditTrail: PaymentAuditLog[];
+}
+
+function getLocalDatetimeDefault(): string {
+  const d = new Date();
+  const tzOffsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 16);
 }
 
 export const BookingPaymentPage: React.FC = () => {
@@ -59,8 +72,12 @@ export const BookingPaymentPage: React.FC = () => {
   const [qrMode, setQrMode] = useState<'dynamic' | 'static'>('dynamic');
   const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState('');
   const [secondsLeft, setSecondsLeft] = useState<number>(0);
+  const [holdSecondsLeft, setHoldSecondsLeft] = useState<number | null>(null);
 
   const [utr, setUtr] = useState('');
+  const [paidAmount, setPaidAmount] = useState<string>('');
+  const [paidAt, setPaidAt] = useState<string>(() => getLocalDatetimeDefault());
+  const [payerUpiId, setPayerUpiId] = useState('');
   const [fileName, setFileName] = useState('');
   const [screenshotDataUrl, setScreenshotDataUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -74,11 +91,19 @@ export const BookingPaymentPage: React.FC = () => {
     try {
       const res = await apiFetch<PaymentSessionResponse>(`/api/bookings/${id}/payment-session`);
       setData(res);
+      setPaidAmount(String(Math.round(Number(res.session.exactAmount || 0))));
       const diffSec = Math.max(
         0,
         Math.floor((new Date(res.session.expiresAt).getTime() - Date.now()) / 1000)
       );
       setSecondsLeft(diffSec);
+      if (res.booking.holdExpiresAt) {
+        setHoldSecondsLeft(
+          Math.max(0, Math.floor((new Date(res.booking.holdExpiresAt).getTime() - Date.now()) / 1000))
+        );
+      } else {
+        setHoldSecondsLeft(null);
+      }
     } catch (err: any) {
       setError(err.message || 'Unable to load booking payment session.');
     } finally {
@@ -92,7 +117,6 @@ export const BookingPaymentPage: React.FC = () => {
     }
   }, [firebaseUser, id, loadSession]);
 
-  // Countdown timer
   useEffect(() => {
     if (!data?.session?.expiresAt) return;
     const timer = window.setInterval(() => {
@@ -101,9 +125,14 @@ export const BookingPaymentPage: React.FC = () => {
         Math.floor((new Date(data.session.expiresAt).getTime() - Date.now()) / 1000)
       );
       setSecondsLeft(diff);
+      if (data.booking.holdExpiresAt) {
+        setHoldSecondsLeft(
+          Math.max(0, Math.floor((new Date(data.booking.holdExpiresAt).getTime() - Date.now()) / 1000))
+        );
+      }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [data?.session?.expiresAt]);
+  }, [data?.session?.expiresAt, data?.booking?.holdExpiresAt]);
 
   // Dynamic QR generation
   useEffect(() => {
@@ -202,6 +231,11 @@ export const BookingPaymentPage: React.FC = () => {
       toast.error('Enter a valid 6–30 character alphanumeric UPI UTR / reference number.');
       return;
     }
+    const parsedPaidAmount = Number(paidAmount);
+    if (!Number.isFinite(parsedPaidAmount) || parsedPaidAmount <= 0) {
+      toast.error('Enter the exact INR amount transferred via UPI.');
+      return;
+    }
     if (!fileName && !screenshotDataUrl) {
       toast.error('Please upload your UPI payment screenshot for Finance verification.');
       return;
@@ -212,6 +246,9 @@ export const BookingPaymentPage: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           utrReference: cleanUtr,
+          paidAmount: parsedPaidAmount,
+          paidAt: paidAt ? new Date(paidAt).toISOString() : new Date().toISOString(),
+          payerUpiId: payerUpiId.trim() || undefined,
           screenshotFileName: fileName,
           screenshotDataUrl,
           transactionRef: data.session.transactionRef,
@@ -266,15 +303,25 @@ export const BookingPaymentPage: React.FC = () => {
   const isPaid = booking.paymentStatus === 'Paid' || booking.paymentStatus === 'Partial Paid';
   const isPendingVerification = booking.paymentStatus === 'Pending Verification';
   const isRejected = booking.paymentStatus === 'Failed';
-  const canPayOrRetry = booking.paymentStatus === 'Pending' || booking.paymentStatus === 'Failed';
+  const isBookingExpired = booking.status === 'Expired';
+  const canPayOrRetry =
+    !isBookingExpired && (booking.paymentStatus === 'Pending' || booking.paymentStatus === 'Failed');
   const isExpired = secondsLeft <= 0 && canPayOrRetry;
+  const latestProof = proofHistory[0];
   const latestRejectedProof = proofHistory.find((p) => p.status === 'Rejected');
+  const resubmissionProof =
+    latestProof && (latestProof.status === 'Resubmission Requested' || latestProof.resubmissionRequested)
+      ? latestProof
+      : proofHistory.find((p) => p.status === 'Resubmission Requested' || p.resubmissionRequested);
   const pendingProof = proofHistory.find((p) => p.status === 'Pending Verification');
   const approvedProof = proofHistory.find((p) => p.status === 'Approved');
 
   const mins = Math.floor(secondsLeft / 60);
   const secs = secondsLeft % 60;
   const countdownText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  const holdMins = holdSecondsLeft !== null ? Math.floor(holdSecondsLeft / 60) : 0;
+  const holdSecs = holdSecondsLeft !== null ? holdSecondsLeft % 60 : 0;
+  const holdText = `${String(holdMins).padStart(2, '0')}:${String(holdSecs).padStart(2, '0')}`;
   const instructionLines = paymentSettings.upiPaymentInstructions
     .split('\n')
     .map((l) => l.trim())
@@ -282,7 +329,6 @@ export const BookingPaymentPage: React.FC = () => {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-alabaster text-ink pb-14">
-      {/* Dark Header Strip */}
       <div className="bg-obsidian text-white border-b border-white/10">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-8 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -294,11 +340,12 @@ export const BookingPaymentPage: React.FC = () => {
               Back to My Bookings
             </Link>
             <h1 className="font-display text-2xl sm:text-3xl font-semibold">
-              UPI Checkout · {booking.bookingReference}
+              Manual UPI Checkout | {booking.bookingReference}
             </h1>
             <p className="text-xs text-white/65">
-              Booking Status: <span className="text-gold font-semibold">{booking.status}</span> · Payment Status:{' '}
-              <span className="text-gold font-semibold">{booking.paymentStatus}</span> · EliteDrive (A Product of HackifyPro)
+              Booking Status: <span className="text-gold font-semibold">{booking.status}</span> | Payment Status:{' '}
+              <span className="text-gold font-semibold">{booking.paymentStatus}</span> | Units:{' '}
+              <span className="text-gold font-semibold">{booking.quantity || 1}</span>
             </p>
           </div>
           <div className="sm:text-right">
@@ -313,19 +360,18 @@ export const BookingPaymentPage: React.FC = () => {
       </div>
 
       <div className="max-w-[1280px] mx-auto px-4 sm:px-8 pt-8 grid lg:grid-cols-12 gap-7">
-        {/* LEFT COLUMN: Trusted Backend Booking & Fare Summary */}
         <div className="lg:col-span-5 space-y-5">
-          {/* Vehicle & Trip Details */}
           <div className="bg-white border border-black/10 rounded-xl overflow-hidden">
             <div className="aspect-[16/9] bg-obsidian overflow-hidden relative">
               <img
                 src={resolveVehicleImage(booking.vehicleImage)}
                 alt={booking.vehicleName}
+                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-4 text-white">
                 <p className="text-[11px] font-mono text-gold uppercase">
-                  {booking.vehicleCategory} · {booking.cityName}
+                  {booking.vehicleCategory} | {booking.cityName} | {booking.quantity || 1} Unit(s)
                 </p>
                 <h2 className="font-display text-xl font-semibold">{booking.vehicleName}</h2>
               </div>
@@ -348,22 +394,31 @@ export const BookingPaymentPage: React.FC = () => {
                 <MapPin className="w-4 h-4 text-gold-hover shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold text-ink">
-                    {booking.pickupMode === 'delivery' ? 'Doorstep Delivery' : 'Branch Pickup'} · {booking.branchName}
+                    {booking.pickupMode === 'delivery' ? 'Doorstep Delivery' : 'Branch Pickup'} | {booking.branchName}
                   </p>
                   <p>{booking.pickupAddress}</p>
-                  {booking.isOneWay && (
-                    <p className="text-ink mt-0.5">Return Branch: {booking.returnBranchName}</p>
-                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 text-slate-muted pt-1">
                 <Car className="w-4 h-4 text-gold-hover shrink-0" />
                 <span>
-                  Booking Mode:{' '}
-                  <strong className="text-ink">
-                    {booking.bookingMode === 'instant' ? 'Instant Confirmation (Post-Verification)' : 'Admin Approval'}
+                  Assigned Reg(s):{' '}
+                  <strong className="font-mono text-ink">
+                    {booking.assignedVehicleRegs?.length
+                      ? booking.assignedVehicleRegs.join(', ')
+                      : booking.vehicleId}
                   </strong>
                 </span>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => downloadRentalAgreementPdf(booking, settings)}
+                  className="px-3.5 py-2 border border-black/15 rounded-lg text-xs font-semibold text-ink hover:border-gold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-gold-hover" />
+                  Download Rental Agreement (PDF)
+                </button>
               </div>
             </div>
           </div>
@@ -438,24 +493,25 @@ export const BookingPaymentPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Payment Schedule Toggle when editable */}
             {canPayOrRetry && (
               <div className="pt-3 border-t border-black/10 space-y-2">
                 <p className="font-semibold text-ink">Payment Option</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    disabled={switchingMode}
-                    onClick={() => void handleSwitchMode('full')}
-                    className={`p-2.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
-                      pricing.paymentMode === 'full'
-                        ? 'border-obsidian bg-obsidian text-white'
-                        : 'border-black/15 bg-alabaster text-ink hover:border-gold'
-                    }`}
-                  >
-                    <p className="font-semibold">Full Payment</p>
-                    <p className="font-mono text-[11px] opacity-80">{formatINR(pricing.totalPayable)}</p>
-                  </button>
+                <div className={`grid ${paymentSettings.fullPaymentEnabled !== false ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                  {paymentSettings.fullPaymentEnabled !== false && (
+                    <button
+                      type="button"
+                      disabled={switchingMode}
+                      onClick={() => void handleSwitchMode('full')}
+                      className={`p-2.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
+                        pricing.paymentMode === 'full'
+                          ? 'border-obsidian bg-obsidian text-white'
+                          : 'border-black/15 bg-alabaster text-ink hover:border-gold'
+                      }`}
+                    >
+                      <p className="font-semibold">Full Payment</p>
+                      <p className="font-mono text-[11px] opacity-80">{formatINR(pricing.totalPayable)}</p>
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={switchingMode}
@@ -481,6 +537,9 @@ export const BookingPaymentPage: React.FC = () => {
               <p className="text-[11px] text-slate-muted font-mono">
                 Remaining Balance Due at Vehicle Pickup: {formatINR(pricing.balanceDueAtPickup)}
               </p>
+            )}
+            {paymentSettings.securityDepositRule && (
+              <p className="text-[11px] text-slate-muted">{paymentSettings.securityDepositRule}</p>
             )}
           </div>
 
@@ -537,6 +596,14 @@ export const BookingPaymentPage: React.FC = () => {
                 </div>
               )}
               <div className="flex flex-wrap gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => downloadRentalAgreementPdf(booking, settings)}
+                  className="px-5 py-2.5 border border-black/15 bg-white text-ink text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 hover:border-gold cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-gold-hover" />
+                  Download Rental Agreement (PDF)
+                </button>
                 <Link
                   to="/dashboard"
                   className="px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
@@ -557,27 +624,42 @@ export const BookingPaymentPage: React.FC = () => {
                     Payment Proof Submitted — Pending Verification
                   </h2>
                   <p className="text-xs text-slate-muted mt-1 leading-relaxed">
-                    Your booking is not marked as paid until our Finance team reconciles your UTR against company bank settlement. You will receive an automated WhatsApp confirmation as soon as verification completes.
+                    Your booking hold remains protected while our Finance team reconciles your UTR against company bank settlement.
                   </p>
                 </div>
               </div>
 
               {pendingProof && (
                 <div className="p-4 rounded-xl bg-alabaster border border-black/10 grid sm:grid-cols-12 gap-4 items-center text-xs">
-                  {pendingProof.screenshotDataUrl && (
+                  {(pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl) && (
                     <div className="sm:col-span-4">
                       <img
-                        src={pendingProof.screenshotDataUrl}
+                        src={pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl}
                         alt={`Payment proof ${pendingProof.utrReference}`}
+                        referrerPolicy="no-referrer"
                         className="w-full max-h-40 object-contain rounded-lg border border-black/10 bg-white"
                       />
                     </div>
                   )}
-                  <div className={`${pendingProof.screenshotDataUrl ? 'sm:col-span-8' : 'sm:col-span-12'} space-y-1.5 font-mono`}>
+                  <div
+                    className={`${
+                      pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl
+                        ? 'sm:col-span-8'
+                        : 'sm:col-span-12'
+                    } space-y-1.5 font-mono`}
+                  >
                     <p>Submitted UTR: <strong className="text-ink">{pendingProof.utrReference}</strong></p>
                     <p>Transaction Ref: <strong className="text-ink">{pendingProof.transactionRef || session.transactionRef}</strong></p>
-                    <p>Amount Claimed: <strong className="text-ink">{formatINR(pendingProof.amountSubmitted)}</strong></p>
-                    <p>Submitted At: <span className="text-slate-muted">{new Date(pendingProof.createdAt).toLocaleString('en-IN')}</span></p>
+                    <p>Paid Amount: <strong className="text-ink">{formatINR(pendingProof.paidAmount ?? pendingProof.amountSubmitted)}</strong></p>
+                    {pendingProof.payerUpiId && (
+                      <p>Payer UPI ID: <strong className="text-ink">{pendingProof.payerUpiId}</strong></p>
+                    )}
+                    <p>
+                      Paid At:{' '}
+                      <span className="text-slate-muted">
+                        {new Date(pendingProof.paidAt || pendingProof.createdAt).toLocaleString('en-IN')}
+                      </span>
+                    </p>
                   </div>
                 </div>
               )}
@@ -599,6 +681,22 @@ export const BookingPaymentPage: React.FC = () => {
                 </Link>
               </div>
             </div>
+          ) : isBookingExpired ? (
+            <div className="bg-white border border-red-200 rounded-xl p-8 space-y-4">
+              <AlertTriangle className="w-7 h-7 text-red-700" />
+              <h2 className="font-display text-2xl font-semibold text-ink">
+                Inventory Hold & Booking Expired
+              </h2>
+              <p className="text-sm text-slate-muted leading-relaxed">
+                The temporary hold window for this booking expired before payment proof was submitted. Any remaining fleet units have been released.
+              </p>
+              <Link
+                to={`/vehicles/${booking.vehicleId}`}
+                className="inline-block px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+              >
+                Check Live Availability & Rebook
+              </Link>
+            </div>
           ) : !paymentSettings.upiEnabled ? (
             <div className="bg-white border border-black/15 rounded-xl p-8 space-y-4">
               <AlertTriangle className="w-7 h-7 text-amber-700" />
@@ -606,8 +704,8 @@ export const BookingPaymentPage: React.FC = () => {
                 Online UPI Payments Temporarily Disabled
               </h2>
               <p className="text-sm text-slate-muted leading-relaxed">
-                Company administration has temporarily paused UPI QR submissions. Please contact EliteDrive support at{' '}
-                <strong className="font-mono text-ink">{settings?.supportPhone || '+91 22 4890 9900'}</strong> or pay at your pickup branch.
+                Company administration has temporarily paused UPI QR submissions. Please contact support at{' '}
+                <strong className="font-mono text-ink">{settings?.supportPhone || '+91 22 4890 9900'}</strong> or pay at the central pickup hub.
               </p>
               <Link
                 to="/dashboard"
@@ -618,6 +716,16 @@ export const BookingPaymentPage: React.FC = () => {
             </div>
           ) : (
             <div className="bg-white border border-black/10 rounded-xl p-6 space-y-6">
+              {resubmissionProof && (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    Finance Requested New Payment Proof (Previous UTR: {resubmissionProof.utrReference})
+                  </p>
+                  <p>{resubmissionProof.reviewNotes || 'Please upload a clearer receipt screenshot showing UTR, timestamp, and exact paid amount.'}</p>
+                </div>
+              )}
+
               {isRejected && latestRejectedProof && (
                 <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-1">
                   <p className="font-semibold flex items-center gap-1.5">
@@ -628,17 +736,27 @@ export const BookingPaymentPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Session Header & Timer */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-black/10 pb-4">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-gold-hover">
-                    Dynamic UPI Auto-Fill Checkout
+                    Manual UPI Transfer & Proof Upload
                   </p>
                   <h2 className="font-display text-2xl font-semibold text-ink">
                     Pay Exact Amount: {formatINR(session.exactAmount)}
                   </h2>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {holdSecondsLeft !== null && (
+                    <div
+                      className={`px-3 py-1.5 rounded-lg border font-mono text-xs font-semibold ${
+                        holdSecondsLeft <= 0
+                          ? 'border-red-300 bg-red-50 text-red-800'
+                          : 'border-amber-200 bg-amber-50 text-amber-900'
+                      }`}
+                    >
+                      {holdSecondsLeft <= 0 ? 'Hold Elapsed' : `Unit Hold ${holdText}`}
+                    </div>
+                  )}
                   <div
                     className={`px-3 py-1.5 rounded-lg border font-mono text-xs font-semibold ${
                       isExpired
@@ -646,7 +764,7 @@ export const BookingPaymentPage: React.FC = () => {
                         : 'border-black/15 bg-alabaster text-ink'
                     }`}
                   >
-                    {isExpired ? 'Session Expired' : `Valid for ${countdownText}`}
+                    {isExpired ? 'QR Session Expired' : `QR Valid ${countdownText}`}
                   </div>
                   <button
                     type="button"
@@ -850,6 +968,47 @@ export const BookingPaymentPage: React.FC = () => {
 
                   <div>
                     <label className="block font-semibold text-slate-muted mb-1">
+                      Exact Paid Amount (INR) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={1}
+                      step="0.01"
+                      value={paidAmount}
+                      onChange={(e) => setPaidAmount(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-muted mb-1">
+                      Payment Date & Time *
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={paidAt}
+                      onChange={(e) => setPaidAt(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-muted mb-1">
+                      Your UPI ID (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={payerUpiId}
+                      onChange={(e) => setPayerUpiId(e.target.value)}
+                      placeholder="customer@okaxis"
+                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold text-slate-muted mb-1">
                       Payment Screenshot (PNG / JPG, Max 2 MB) *
                     </label>
                     <label className="flex items-center gap-2 px-3 py-2.5 bg-alabaster border border-black/15 rounded-lg cursor-pointer hover:border-gold">
@@ -871,7 +1030,7 @@ export const BookingPaymentPage: React.FC = () => {
                     />
                     <div className="text-[11px] text-slate-muted">
                       <p className="font-semibold text-ink">{fileName}</p>
-                      <p>Ready for encrypted submission to Finance verification queue.</p>
+                      <p>Stored privately for Finance verification only.</p>
                     </div>
                   </div>
                 )}
@@ -883,7 +1042,7 @@ export const BookingPaymentPage: React.FC = () => {
                   <button
                     type="submit"
                     disabled={submitting || isExpired}
-                    className="px-6 py-3 bg-obsidian text-white font-semibold rounded-xl hover:bg-graphite inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="px-6 py-3 bg-obsidian text-white font-semibold rounded-xl hover:bg-graphite inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
                   >
                     <CheckCircle2 className="w-4 h-4 text-gold" />
                     {submitting ? 'Submitting Proof...' : 'Submit UTR Proof for Verification'}

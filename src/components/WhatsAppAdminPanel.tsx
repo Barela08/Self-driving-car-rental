@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { apiFetch, formatINR } from '../lib/api';
 import type {
-  Branch,
   EmployeeDepartment,
   EmployeeNotificationSetting,
   NotificationEventKey,
@@ -46,11 +45,14 @@ const ALL_EVENTS: { key: NotificationEventKey; label: string }[] = [
 ];
 
 interface WhatsAppAdminPanelProps {
-  branches: Branch[];
   isSuperAdmin: boolean;
+  operatingCityName?: string;
 }
 
-export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches, isSuperAdmin }) => {
+export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({
+  isSuperAdmin,
+  operatingCityName = 'Central Hub',
+}) => {
   const [waData, setWaData] = useState<WhatsAppAdminPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -74,7 +76,6 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
   // Add Employee Notification Rule
   const [empName, setEmpName] = useState('');
   const [empPhone, setEmpPhone] = useState('');
-  const [empBranchId, setEmpBranchId] = useState('all');
   const [empDept, setEmpDept] = useState<EmployeeDepartment>('operations');
   const [empEvents, setEmpEvents] = useState<NotificationEventKey[]>([
     'booking_received',
@@ -175,7 +176,6 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
         body: JSON.stringify({
           name: empName,
           phone: empPhone,
-          branchId: empBranchId,
           department: empDept,
           whatsappEnabled: true,
           events: empEvents,
@@ -304,8 +304,8 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
           <div>
             <p className="font-semibold">WhatsApp Business Sender Verification Notice</p>
             <p className="text-[11px] mt-0.5">
-              {cfg.lastError} While Disconnected or at Zero Budget, EliteDrive automatically routes notifications via{' '}
-              <strong>FCM Push & Email Fallback</strong> and logs every attempt honestly below.
+              {cfg.lastError} While Disconnected or at Zero Budget, notifications automatically route via{' '}
+              <strong>FCM Push & Email Fallback</strong> and log every attempt honestly below.
             </p>
           </div>
         </div>
@@ -527,7 +527,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
         </div>
       )}
 
-      {/* Employee Notification Routing Module */}
+      {/* Employee Notification Routing Module (Single-City Hub) */}
       <div className="grid lg:grid-cols-12 gap-6">
         {isSuperAdmin && (
           <form
@@ -539,7 +539,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
               <h2 className="font-display text-xl font-semibold">Add Employee Alert Recipient</h2>
             </div>
             <p className="text-[11px] text-slate-muted">
-              All notifications originate from the single company WhatsApp number. Assign employees by branch & department.
+              All alerts originate from the single company WhatsApp number for {operatingCityName} operations.
             </p>
             <input
               type="text"
@@ -557,25 +557,14 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
               onChange={(e) => setEmpPhone(e.target.value)}
               className="w-full px-3 py-2 border border-black/15 rounded-lg font-mono"
             />
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={empBranchId}
-                onChange={(e) => setEmpBranchId(e.target.value)}
-                className="px-3 py-2 border border-black/15 rounded-lg bg-white"
-              >
-                <option value="all">All Branches</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.cityName} — {b.name}
-                  </option>
-                ))}
-              </select>
+            <div>
+              <label className="block font-semibold text-slate-muted mb-1">Department</label>
               <select
                 value={empDept}
                 onChange={(e) => setEmpDept(e.target.value as EmployeeDepartment)}
-                className="px-3 py-2 border border-black/15 rounded-lg bg-white"
+                className="w-full px-3 py-2 border border-black/15 rounded-lg bg-white"
               >
-                <option value="super_admin">Super Admin</option>
+                <option value="super_admin">Owner / Super Admin</option>
                 <option value="fleet_manager">Fleet Manager</option>
                 <option value="operations">Operations</option>
                 <option value="finance">Finance</option>
@@ -625,7 +614,7 @@ export const WhatsAppAdminPanel: React.FC<WhatsAppAdminPanelProps> = ({ branches
                     {emp.name} · <span className="font-mono text-gold-hover">{emp.department}</span>
                   </p>
                   <p className="font-mono text-[11px] text-slate-muted">
-                    {emp.phone} · Branch: {emp.branchId === 'all' ? 'All Branches' : branches.find((b) => b.id === emp.branchId)?.name || emp.branchId}
+                    {emp.phone} · {operatingCityName} Desk
                   </p>
                   <p className="text-[11px] text-slate-muted">
                     Events ({emp.events.length}): {emp.events.slice(0, 5).join(', ')}

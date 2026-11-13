@@ -1,10 +1,60 @@
 export type Role =
   | 'customer'
   | 'super_admin'
+  | 'branch_manager'
+  | 'booking_manager'
   | 'fleet_manager'
   | 'operations_staff'
   | 'finance_staff'
-  | 'support_staff';
+  | 'kyc_executive'
+  | 'support_staff'
+  | (string & {});
+
+export type AdminPermission =
+  | 'view_bookings'
+  | 'approve_bookings'
+  | 'cancel_bookings'
+  | 'edit_bookings'
+  | 'manage_handover_return'
+  | 'manage_vehicles'
+  | 'delete_archive_vehicles'
+  | 'manage_vehicle_maintenance'
+  | 'edit_pricing'
+  | 'verify_payments'
+  | 'issue_refunds'
+  | 'manage_coupons'
+  | 'publish_offers'
+  | 'view_customers'
+  | 'edit_customers'
+  | 'view_kyc'
+  | 'view_kyc_documents'
+  | 'review_kyc'
+  | 'export_reports'
+  | 'manage_website_settings'
+  | 'manage_payment_settings'
+  | 'manage_whatsapp'
+  | 'manage_notifications'
+  | 'view_staff'
+  | 'manage_staff'
+  | 'reset_staff_access'
+  | 'view_roles'
+  | 'manage_roles'
+  | 'view_branches'
+  | 'manage_branches'
+  | 'view_integrations'
+  | 'manage_integrations'
+  | 'view_audit_logs'
+  | 'view_analytics'
+  | 'view_inventory'
+  | 'add_vehicle'
+  | 'bulk_add_vehicles'
+  | 'edit_vehicle'
+  | 'change_vehicle_status'
+  | 'assign_vehicle'
+  | 'manage_availability'
+  | 'manage_maintenance'
+  | 'view_vehicle_history'
+  | 'export_inventory';
 
 export type VehicleCategory =
   | 'Hatchback'
@@ -18,7 +68,9 @@ export type VehicleCategory =
 export type VehicleStatus =
   | 'Available'
   | 'Reserved'
+  | 'Rented'
   | 'Active Rental'
+  | 'Under Maintenance'
   | 'Maintenance'
   | 'Inspection'
   | 'Inactive';
@@ -55,6 +107,27 @@ export type BookingStatus =
   | 'Refunded'
   | 'Disputed';
 
+export type CanonicalBookingStatus =
+  | 'DRAFT'
+  | 'PAYMENT_PENDING'
+  | 'PAYMENT_VERIFICATION_PENDING'
+  | 'CONFIRMED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'ACTIVE'
+  | 'COMPLETED'
+  | 'EXPIRED';
+
+export type CanonicalPaymentStatus =
+  | 'NOT_SUBMITTED'
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'VERIFIED'
+  | 'REJECTED'
+  | 'REFUND_PENDING'
+  | 'REFUNDED'
+  | 'PARTIALLY_PAID';
+
 export type KycStatus =
   | 'Not Started'
   | 'Pending'
@@ -75,10 +148,15 @@ export interface City {
 
 export interface Branch {
   id: string;
+  code?: string;
   cityId: string;
   cityName: string;
   name: string;
   address: string;
+  phone?: string;
+  email?: string;
+  managerUid?: string;
+  managerName?: string;
   lat: number;
   lng: number;
   openingHours: string;
@@ -87,10 +165,26 @@ export interface Branch {
   perKmDeliveryFee: number;
   oneWaySupported: boolean;
   active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VehicleDocuments {
+  rcNumber?: string;
+  rcExpiry?: string;
+  pucNumber?: string;
+  pucExpiry?: string;
+  insurancePolicyNumber?: string;
+  insuranceProvider?: string;
+  insuranceExpiry?: string;
+  fitnessExpiry?: string;
 }
 
 export interface Vehicle {
   id: string;
+  modelKey?: string;
+  unitCode?: string;
+  registrationNumber?: string;
   name: string;
   brand: string;
   model: string;
@@ -99,7 +193,9 @@ export interface Vehicle {
   transmission: 'Manual' | 'Automatic';
   fuelType: 'Petrol' | 'Diesel' | 'Electric' | 'Hybrid' | 'CNG';
   seats: number;
+  luggageCapacity?: number;
   ac: boolean;
+  description?: string;
   pricePerHour: number;
   pricePerDay: number;
   pricePerWeek: number;
@@ -118,10 +214,14 @@ export interface Vehicle {
   deliveryEligible: boolean;
   oneWayEligible: boolean;
   status: VehicleStatus;
+  maintenanceStatus?: 'Operational' | 'Scheduled' | 'In Workshop';
+  archived?: boolean;
   rating: number;
   reviewCount: number;
   images: string[];
   features: string[];
+  specifications?: Record<string, string>;
+  documents?: VehicleDocuments;
 }
 
 export interface VehiclePrivateDetails {
@@ -137,6 +237,7 @@ export interface VehiclePrivateDetails {
 }
 
 export interface PricingBreakdown {
+  quantity?: number;
   durationDays: number;
   durationHours: number;
   baseRentalAmount: number;
@@ -209,6 +310,7 @@ export interface Booking {
   userId: string;
   customerName: string;
   customerEmail: string;
+  customerPhone?: string;
   vehicleId: string;
   vehicleName: string;
   vehicleCategory: VehicleCategory;
@@ -230,6 +332,9 @@ export interface Booking {
   isOneWay: boolean;
   startDate: string;
   endDate: string;
+  durationLabel?: string;
+  gstNumber?: string;
+  internalNotes?: string;
   insurancePackageId: string | null;
   insurancePackageName: string | null;
   roadsideRequested: boolean;
@@ -239,13 +344,40 @@ export interface Booking {
   assignedStaffUid?: string | null;
   assignedStaffName?: string | null;
   status: BookingStatus;
+  canonicalStatus?: CanonicalBookingStatus;
   paymentStatus: PaymentStatus;
+  canonicalPaymentStatus?: CanonicalPaymentStatus;
   paymentMethod: 'UPI' | 'Card' | 'NetBanking' | 'Cash';
   kycStatusSnapshot: KycStatus;
+  quantity?: number;
+  assignedVehicleIds?: string[];
+  assignedVehicleRegs?: string[];
+  holdId?: string;
+  holdExpiresAt?: string;
+  rentalAgreementAcceptedAt?: string;
+  rentalAgreementVersion?: string;
+  accessoriesChecklist?: string[];
   pricing: PricingBreakdown;
   handoverOtp?: string;
   handoverInspection?: HandoverInspection | null;
   returnInspection?: ReturnInspection | null;
+  vehicleInspections?: Record<
+    string,
+    {
+      handover?: HandoverInspection | null;
+      return?: ReturnInspection | null;
+    }
+  >;
+  additionalCharges?: {
+    id: string;
+    description: string;
+    amount: number;
+    category: 'extension' | 'fuel' | 'toll' | 'damage' | 'cleaning' | 'other';
+    addedByUid: string;
+    addedByName: string;
+    createdAt: string;
+  }[];
+  additionalChargesTotal?: number;
   statusHistory?: BookingStatusHistory[];
   activePaymentSession?: {
     transactionRef: string;
@@ -257,11 +389,102 @@ export interface Booking {
   updatedAt: string;
 }
 
+export interface InventoryHold {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  userId: string;
+  vehicleIds: string[];
+  modelKey: string;
+  branchId: string;
+  startDate: string;
+  endDate: string;
+  status: 'Active' | 'Converted' | 'Expired' | 'Released';
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BookingVehicleAssignment {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  vehicleId: string;
+  registrationNumber: string;
+  branchId: string;
+  startDate: string;
+  endDate: string;
+  status: 'Reserved' | 'Active' | 'Completed' | 'Released';
+  assignedAt: string;
+  releasedAt?: string;
+}
+
+export interface VehicleAvailabilitySummary {
+  modelKey: string;
+  brand: string;
+  model: string;
+  name: string;
+  category: VehicleCategory;
+  transmission: 'Manual' | 'Automatic';
+  fuelType: 'Petrol' | 'Diesel' | 'Electric' | 'Hybrid' | 'CNG';
+  seats: number;
+  branchId: string;
+  representativeVehicleId: string;
+  unitIds: string[];
+  totalUnits: number;
+  eligibleUnits: number;
+  availableUnits: number;
+  availableVehicleIds: string[];
+  occupiedUnits: number;
+  holdUnits: number;
+  maintenanceUnits: number;
+  availabilityStatus:
+    | 'Available'
+    | 'Only 1 Remaining'
+    | 'Only 2 Remaining'
+    | 'Sold Out'
+    | 'Temporarily Unavailable';
+  statusLabel: string;
+  nextAvailableDate: string | null;
+}
+
+export interface CustomerReview {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  vehicleId: string;
+  vehicleName: string;
+  modelKey?: string;
+  userId: string;
+  customerName: string;
+  rating: number;
+  comment: string;
+  status: 'Pending Moderation' | 'Approved' | 'Rejected';
+  moderatedByUid?: string;
+  moderatedByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserProfile {
   uid: string;
   displayName: string;
   role: Role;
+  roleId?: string;
+  roleName?: string;
+  permissions?: AdminPermission[];
+  active?: boolean;
   branchId?: string;
+  branchIds?: string[];
+  branchScope?: 'all' | 'assigned';
+  employeeId?: string;
+  designation?: string;
+  joiningDate?: string;
+  lastLoginAt?: string;
+  mustResetPassword?: boolean;
+  phone?: string;
+  email?: string;
+  internalNotes?: string;
   accountStatus: 'active' | 'suspended' | 'deletion_requested';
   kycStatus: KycStatus;
   createdAt: string;
@@ -309,7 +532,17 @@ export interface KycVerification {
   appointmentSlot?: string;
   status: KycStatus;
   reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
   rejectionReason?: string;
+  reviewNotes?: string;
+  verificationHistory?: {
+    status: KycStatus;
+    byUid: string;
+    byName: string;
+    at: string;
+    notes: string;
+  }[];
   updatedAt: string;
 }
 
@@ -359,6 +592,8 @@ export interface CustomerSubscription {
   createdAt: string;
 }
 
+export type RentalDurationTier = 'hourly' | 'daily' | 'weekly' | 'monthly';
+
 export interface Coupon {
   id: string;
   code: string;
@@ -367,7 +602,95 @@ export interface Coupon {
   minBookingAmount: number;
   maxDiscountAmount: number;
   description: string;
+  startDate?: string;
+  expiryDate?: string;
+  usageLimitTotal?: number;
+  usageLimitPerCustomer?: number;
+  usedCount?: number;
+  eligibleCategories?: VehicleCategory[];
+  eligibleDurations?: RentalDurationTier[];
+  newCustomerOnly?: boolean;
   active: boolean;
+  createdAt?: string;
+}
+
+export type OfferType = 'banner' | 'festival' | 'seasonal' | 'limited_time' | 'featured_vehicle';
+
+export interface Offer {
+  id: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  offerType: OfferType;
+  badgeText?: string;
+  bannerImage?: string;
+  ctaText: string;
+  ctaLink: string;
+  couponCode?: string;
+  featuredVehicleId?: string;
+  discountLabel?: string;
+  startDate: string;
+  endDate: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface NotificationCampaign {
+  id: string;
+  offerId?: string;
+  offerTitle?: string;
+  title: string;
+  message: string;
+  audienceType: 'all_eligible' | 'selected' | 'segment';
+  segmentKey?: 'all_customers' | 'repeat_customers' | 'new_customers' | 'kyc_verified';
+  selectedUserIds?: string[];
+  channels: ('in_app' | 'fcm' | 'whatsapp')[];
+  scheduledFor?: string;
+  status: 'Sent' | 'Scheduled';
+  recipientCount: number;
+  deliveredCount: number;
+  skippedOptOutCount: number;
+  failedCount: number;
+  createdByUid: string;
+  createdAt: string;
+}
+
+export type AdminNotificationType =
+  | 'new_booking'
+  | 'pending_approval'
+  | 'payment_verification'
+  | 'kyc_review'
+  | 'maintenance'
+  | 'return_reminder'
+  | 'whatsapp_failure'
+  | 'enquiry'
+  | 'system';
+
+export interface AdminNotification {
+  id: string;
+  type: AdminNotificationType;
+  title: string;
+  message: string;
+  targetTab: string;
+  targetId?: string;
+  branchId?: string;
+  targetRoles?: string[];
+  read: boolean;
+  createdAt: string;
+}
+
+export interface ContactEnquiry {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: 'New' | 'In Progress' | 'Resolved';
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Driver {
@@ -454,39 +777,93 @@ export interface NotificationRecord {
 export interface AuditLog {
   id: string;
   actorUid: string;
+  actorName?: string;
   actorRole: string;
+  module?: string;
+  branchId?: string;
+  outcome?: 'success' | 'denied' | 'failed' | 'failure';
   action: string;
   targetType: string;
   targetId: string;
   details: string;
+  metadata?: Record<string, any>;
   timestamp: string;
+}
+
+export interface EnabledPaymentMethods {
+  upi: boolean;
+  cashAtPickup: boolean;
+  cardOnline: boolean;
+  netBanking: boolean;
+}
+
+export interface SocialLinks {
+  instagram?: string;
+  facebook?: string;
+  youtube?: string;
+  twitter?: string;
+  linkedin?: string;
+  other?: string;
 }
 
 export interface CompanySettings {
   id: string;
   companyName: string;
+  websiteTitle?: string;
   tagline: string;
+  logoUrl?: string;
+  faviconUrl?: string;
+  registrationInfo?: string;
   supportPhone: string;
+  secondaryPhone?: string;
   roadsideEmergencyPhone: string;
   supportEmail: string;
   whatsappNumber: string;
+  businessHours?: string;
+  operatingCityId?: string;
+  operatingCityName?: string;
+  operatingCityState?: string;
+  officeName?: string;
+  businessAddress?: string;
+  officeImages?: string[];
+  hubLat?: number;
+  hubLng?: number;
+  serviceRadiusKm?: number;
+  baseDeliveryFee?: number;
+  perKmDeliveryFee?: number;
+  googleMapsUrl?: string;
+  socialLinks?: SocialLinks;
   upiEnabled?: boolean;
   upiId?: string;
   upiMerchantName?: string;
   upiStaticQrImage?: string;
   upiPaymentInstructions?: string;
+  upiVerificationRequired?: boolean;
+  holdDurationMinutes?: number;
+  minimumAdvanceAmount?: number;
+  fullPaymentEnabled?: boolean;
+  securityDepositRule?: string;
+  enabledPaymentMethods?: EnabledPaymentMethods;
   taxRatePercent: number;
   advancePaymentPercent: number;
+  balancePaymentRule?: string;
   roadsideAddonPerDay: number;
   driverAddonPerDay: number;
   heroBannerHeadline: string;
   heroBannerSubcopy: string;
+  heroBannerImage?: string;
+  fleetSectionHeading?: string;
+  offersSectionHeading?: string;
+  footerTagline?: string;
   aboutSummary: string;
   termsSummary: string;
   privacySummary: string;
   cancellationSummary: string;
+  refundSummary?: string;
+  rentalRulesSummary?: string;
   faqs: { question: string; answer: string }[];
   testimonials: { name: string; role: string; city: string; quote: string }[];
+  updatedAt?: string;
 }
 
 export type NotificationEventKey =
@@ -512,7 +889,7 @@ export interface EmployeeNotificationSetting {
   id: string;
   name: string;
   phone: string;
-  branchId: string; // 'all' or specific branch ID
+  branchId: string;
   department: EmployeeDepartment;
   whatsappEnabled: boolean;
   events: NotificationEventKey[];
@@ -588,17 +965,33 @@ export interface PaymentProof {
   userId: string;
   customerName: string;
   amountSubmitted: number;
+  paidAmount?: number;
+  paidAt?: string;
+  payerUpiId?: string;
+  expectedAmount?: number;
+  amountMismatch?: boolean;
+  isSuspicious?: boolean;
+  suspiciousReason?: string;
   utrReference: string;
   transactionRef?: string;
   upiUri?: string;
   expiresAt?: string;
   screenshotStorageRef: string;
+  screenshotProxyUrl?: string;
   screenshotDataUrl?: string;
   paymentMode: PaymentMode;
-  status: 'Pending Verification' | 'Approved' | 'Rejected';
+  status: 'Pending Verification' | 'Approved' | 'Rejected' | 'Resubmission Requested';
+  resubmissionRequested?: boolean;
   reviewedByUid?: string;
   reviewedByName?: string;
   reviewNotes?: string;
+  verificationHistory?: {
+    action: string;
+    byUid: string;
+    byName: string;
+    at: string;
+    notes?: string;
+  }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -632,7 +1025,9 @@ export interface PaymentAuditLog {
     | 'PAYMENT_VERIFIED'
     | 'PAYMENT_REJECTED'
     | 'DUPLICATE_UTR_BLOCKED'
-    | 'PAYMENT_SETTINGS_UPDATED';
+    | 'PAYMENT_SETTINGS_UPDATED'
+    | 'REFUND_PROCESSED'
+    | 'REFUND_REJECTED';
   expectedAmount?: number;
   submittedAmount?: number;
   statusBefore?: string;
@@ -643,3 +1038,87 @@ export interface PaymentAuditLog {
 
 export type OtpPurpose = 'registration' | 'login' | 'password_recovery' | 'verification';
 
+export interface CustomRole {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  color: string;
+  isSystem: boolean;
+  active: boolean;
+  branchScope: 'all' | 'assigned';
+  permissions: AdminPermission[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VehicleMaintenanceRecord {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  branchId: string;
+  type: 'Routine Service' | 'Repair' | 'Inspection' | 'Tyre / Battery' | 'Bodywork' | 'Compliance Renewal';
+  status: 'Scheduled' | 'In Progress' | 'Completed';
+  odometerKm: number;
+  costInr: number;
+  serviceCenter: string;
+  notes: string;
+  startedAt: string;
+  completedAt?: string;
+  createdByUid: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RefundRecord {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  paymentId?: string;
+  userId: string;
+  customerName: string;
+  branchId: string;
+  type: 'booking_cancellation' | 'security_deposit' | 'adjustment';
+  amount: number;
+  reason: string;
+  refundReference?: string;
+  notes?: string;
+  status: 'Pending' | 'Processing' | 'Processed' | 'Rejected';
+  requestedByUid: string;
+  requestedByName: string;
+  processedByUid?: string;
+  processedByName?: string;
+  processedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffLoginHistory {
+  id: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  role: string;
+  branchId?: string;
+  portal: 'admin' | 'staff' | 'customer';
+  outcome: 'success' | 'denied' | 'failed';
+  reason?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  timestamp: string;
+}
+
+export interface IntegrationStatusItem {
+  key: 'google_maps' | 'razorpay' | 'firebase' | 'whatsapp' | 'fcm_push' | 'gemini_ai';
+  name: string;
+  category: string;
+  status: 'Connected' | 'Configuration Required' | 'Disconnected' | 'Error';
+  configured: boolean;
+  description: string;
+  requiredEnvVars: string[];
+  presentEnvVars: string[];
+  lastCheckedAt: string;
+  lastError?: string | null;
+  metadata?: Record<string, string | number | boolean>;
+}

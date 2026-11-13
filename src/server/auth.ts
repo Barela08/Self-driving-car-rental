@@ -2,17 +2,30 @@ import crypto from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import { db } from './db.ts';
-import type { Role, UserProfile } from '../types.ts';
+import { hasAdminPermission, resolveUserPermissions } from '../lib/permissions.ts';
+import type {
+  AdminNotificationType,
+  AdminPermission,
+  CustomRole,
+  Role,
+  StaffLoginHistory,
+  UserProfile,
+} from '../types.ts';
 
-export interface AuthRequest extends Request {
-  authUser?: {
-    uid: string;
-    email?: string;
-    profile: UserProfile;
-  };
+export interface AuthUserContext {
+  uid: string;
+  email?: string;
+  profile: UserProfile;
+  permissions: AdminPermission[];
+  branchScope: 'all' | 'assigned';
+  allowedBranchIds: 'ALL' | string[];
+  roleDoc?: CustomRole | null;
 }
 
-// Persistent HMAC secret for server-issued session tokens (survives hot reloads inside same container)
+export interface AuthRequest extends Request {
+  authUser?: AuthUserContext;
+}
+
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   crypto
@@ -20,11 +33,13 @@ const SESSION_SECRET =
     .update(`elitedrive:${firebaseConfig.projectId}:${firebaseConfig.appId}`)
     .digest('hex');
 
+const BOOTSTRAP_OWNER_EMAILS = ['barelanilesh483@gmail.com', 'nbgamer126@gmail.com'];
+
 interface SessionPayload {
   uid: string;
   email: string;
   role: Role;
-  tv: number; // tokenVersion for Logout from All Devices
+  tv: number;
   exp: number;
 }
 
@@ -41,17 +56,24 @@ function base64UrlDecode(str: string): Buffer {
   return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
 }
 
-export function signSessionToken(params: { uid: string; email: string; role: Role; tokenVersion: number }): string {
+export function signSessionToken(params: {
+  uid: string;
+  email: string;
+  role: Role;
+  tokenVersion: number;
+}): string {
   const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload: SessionPayload = {
     uid: params.uid,
     email: params.email,
     role: params.role,
     tv: params.tokenVersion,
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7, // 7 days
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
   };
   const body = base64UrlEncode(JSON.stringify(payload));
-  const sig = base64UrlEncode(crypto.createHmac('sha256', SESSION_SECRET).update(`${header}.${body}`).digest());
+  const sig = base64UrlEncode(
+    crypto.createHmac('sha256', SESSION_SECRET).update(`${header}.${body}`).digest()
+  );
   return `${header}.${body}.${sig}`;
 }
 
@@ -82,7 +104,6 @@ function verifyServerSessionToken(token: string): SessionPayload | null {
   }
 }
 
-// Google x509 public certificate cache for verifying Firebase Google Sign-In ID tokens without firebase-admin ADC
 let cachedCerts: { certs: Record<string, string>; expiresAt: number } | null = null;
 
 async function getGooglePublicCerts(): Promise<Record<string, string>> {
@@ -166,6 +187,81 @@ export async function revokeAllUserSessions(uid: string): Promise<void> {
   );
 }
 
+export async function loadRolesList(): Promise<CustomRole[]> {
+  const snap = await db.collection('roles').get();
+  return snap.docs.map((d) => d.data() as CustomRole);
+}
+
+export function resolveBranchScopeForProfile(
+  profile: Partial<UserProfile>,
+  roleDoc?: CustomRole | null
+): { branchScope: 'all' | 'assigned'; allowedBranchIds: 'ALL' | string[] } {
+  if (profile.role === 'super_admin') {
+    return { branchScope: 'all', allowedBranchIds: 'ALL' };
+  }
+  const effectiveScope: 'all' | 'assigned' =
+    profile.branchScope === 'assigned' || profile.branchScope === 'all'
+      ? profile.branchScope
+      : roleDoc?.branchScope || 'all';
+
+  if (effectiveScope === 'all') {
+    return { branchScope: 'all', allowedBranchIds: 'ALL' };
+  }
+
+  const branchIds = new Set<string>();
+  if (Array.isArray(profile.branchIds)) {
+    for (const id of profile.branchIds) {
+      if (id && id !== 'all') branchIds.add(id);
+    }
+  }
+  if (profile.branchId && profile.branchId !== 'all') {
+    branchIds.add(profile.branchId);
+  }
+  return {
+    branchScope: 'assigned',
+    allowedBranchIds: Array.from(branchIds),
+  };
+}
+
+export function isBranchAllowed(
+  authUser: Pick<AuthUserContext, 'allowedBranchIds' | 'profile'> | undefined,
+  branchId?: string | null
+): boolean {
+  if (!authUser) return false;
+  if (authUser.profile.role === 'super_admin' || authUser.allowedBranchIds === 'ALL') {
+    return true;
+  }
+  if (!branchId) return true;
+  return authUser.allowedBranchIds.includes(branchId);
+}
+
+export function assertBranchAccess(
+  req: AuthRequest,
+  res: Response,
+  branchId?: string | null
+): boolean {
+  if (isBranchAllowed(req.authUser, branchId)) return true;
+  res.status(403).json({
+    error: `Forbidden: Your account is restricted to assigned branch(es) and cannot access records for '${branchId}'.`,
+  });
+  return false;
+}
+
+export function filterByBranch<T>(
+  items: T[],
+  authUser: Pick<AuthUserContext, 'allowedBranchIds' | 'profile'> | undefined,
+  getBranchId: (item: T) => string | undefined | null
+): T[] {
+  if (!authUser || authUser.profile.role === 'super_admin' || authUser.allowedBranchIds === 'ALL') {
+    return items;
+  }
+  const allowed = authUser.allowedBranchIds;
+  return items.filter((item) => {
+    const bid = getBranchId(item);
+    return !bid || allowed.includes(bid);
+  });
+}
+
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -183,7 +279,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     if (sessionPayload) {
       const currentVersion = await getTokenVersion(sessionPayload.uid);
       if (sessionPayload.tv !== currentVersion) {
-        return res.status(401).json({ error: 'Session was signed out from another device. Please log in again.' });
+        return res.status(401).json({ error: 'Session was signed out or revoked. Please log in again.' });
       }
       uid = sessionPayload.uid;
       email = sessionPayload.email;
@@ -199,25 +295,51 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       name = firebaseDecoded.name;
     }
 
-    const profileRef = db.collection('users').doc(uid);
-    const snap = await profileRef.get();
+    const [snap, rolesList] = await Promise.all([
+      db.collection('users').doc(uid).get(),
+      loadRolesList(),
+    ]);
+    const isBootstrapOwner = Boolean(
+      email && BOOTSTRAP_OWNER_EMAILS.includes(email.toLowerCase()) && emailVerified
+    );
 
     let profile: UserProfile;
     if (snap.exists) {
       profile = snap.data() as UserProfile;
+      if (isBootstrapOwner && profile.role !== 'super_admin') {
+        profile = {
+          ...profile,
+          role: 'super_admin',
+          roleId: 'role-super-admin',
+          roleName: 'Super Admin (Owner)',
+          branchScope: 'all',
+          kycStatus: 'Verified',
+          active: true,
+        };
+        await db.collection('users').doc(uid).update({
+          role: 'super_admin',
+          roleId: 'role-super-admin',
+          roleName: 'Super Admin (Owner)',
+          branchScope: 'all',
+          kycStatus: 'Verified',
+          active: true,
+          updatedAt: new Date().toISOString(),
+        });
+      }
     } else {
       const now = new Date().toISOString();
-      const isBootstrapOwner = email?.toLowerCase() === 'barelanilesh483@gmail.com' && emailVerified;
       profile = {
         uid,
         displayName: name || email?.split('@')[0] || 'Customer',
         role: isBootstrapOwner ? 'super_admin' : 'customer',
+        ...(isBootstrapOwner ? { roleId: 'role-super-admin', roleName: 'Super Admin (Owner)', branchScope: 'all' } : {}),
+        active: true,
         accountStatus: 'active',
         kycStatus: isBootstrapOwner ? 'Verified' : 'Not Started',
         createdAt: now,
         updatedAt: now,
       };
-      await profileRef.set(profile);
+      await db.collection('users').doc(uid).set(profile);
       await db.collection('users').doc(uid).collection('private').doc('info').set({
         uid,
         email: email || '',
@@ -225,6 +347,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         savedAddresses: [],
         favouriteVehicleIds: [],
         marketingConsent: false,
+        whatsappConsent: true,
+        whatsappOptOut: false,
         serviceConsentVersion: 'v1.0',
         serviceConsentAt: now,
         updatedAt: now,
@@ -248,14 +372,40 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       }
     }
 
-    if (profile.accountStatus === 'suspended') {
-      return res.status(403).json({ error: 'Your account is suspended. Please contact support.' });
+    if (profile.accountStatus === 'suspended' || (profile.role !== 'customer' && profile.active === false)) {
+      return res.status(403).json({
+        error: 'Your account is suspended or deactivated. Please contact the Owner.',
+      });
     }
+
+    const roleDoc =
+      rolesList.find(
+        (r) =>
+          (profile.roleId && r.id === profile.roleId) ||
+          r.slug === profile.role ||
+          r.id === profile.role
+      ) || null;
+
+    if (profile.role !== 'customer' && profile.role !== 'super_admin' && roleDoc && !roleDoc.active) {
+      return res.status(403).json({
+        error: `Assigned role '${roleDoc.name}' is currently deactivated. Contact Super Admin.`,
+      });
+    }
+
+    const permissions = resolveUserPermissions(profile, rolesList);
+    const { branchScope, allowedBranchIds } = resolveBranchScopeForProfile(profile, roleDoc);
+    profile.permissions = permissions;
+    profile.branchScope = branchScope;
+    if (roleDoc && !profile.roleName) profile.roleName = roleDoc.name;
 
     req.authUser = {
       uid,
       email,
       profile,
+      permissions,
+      branchScope,
+      allowedBranchIds,
+      roleDoc,
     };
     next();
   } catch (err: any) {
@@ -269,7 +419,39 @@ export function requireStaffRole(allowedRoles: Role[]) {
     const role = req.authUser?.profile.role;
     if (!role || !allowedRoles.includes(role)) {
       return res.status(403).json({
-        error: `Forbidden: Role '${role || 'guest'}' lacks permission for this operation.`,
+        error: `Forbidden: Role '${role || 'guest'}' lacks access to this area.`,
+      });
+    }
+    next();
+  };
+}
+
+export function requirePermission(permission: AdminPermission | AdminPermission[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    const profile = req.authUser?.profile;
+    if (!profile || profile.role === 'customer') {
+      return res.status(403).json({ error: 'Forbidden: Staff or Owner credentials required.' });
+    }
+    const list = Array.isArray(permission) ? permission : [permission];
+    const granted = req.authUser?.permissions || [];
+    const allowed =
+      profile.role === 'super_admin' ||
+      list.some((p) => granted.includes(p) || hasAdminPermission(profile, p));
+    if (!allowed) {
+      void writeAuditLog({
+        actorUid: profile.uid,
+        actorName: profile.displayName,
+        actorRole: profile.role,
+        module: 'Security / RBAC',
+        branchId: profile.branchId,
+        outcome: 'denied',
+        action: 'PERMISSION_DENIED',
+        targetType: 'route',
+        targetId: req.originalUrl || req.path,
+        details: `Denied access: missing ${list.join(' or ')}.`,
+      });
+      return res.status(403).json({
+        error: `Forbidden: Missing required permission (${list.join(' or ')}).`,
       });
     }
     next();
@@ -278,20 +460,80 @@ export function requireStaffRole(allowedRoles: Role[]) {
 
 export async function writeAuditLog(params: {
   actorUid: string;
+  actorName?: string;
   actorRole: string;
+  module?: string;
+  branchId?: string;
+  outcome?: 'success' | 'denied' | 'failed';
   action: string;
   targetType: string;
   targetId: string;
   details: string;
+  metadata?: Record<string, any>;
 }) {
   try {
     const id = `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await db.collection('audit_logs').doc(id).set({
       id,
+      outcome: 'success',
       ...params,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
     console.error('Failed to write audit log:', err);
   }
+}
+
+export async function writeStaffLoginHistory(
+  entry: Omit<StaffLoginHistory, 'id' | 'timestamp'>
+) {
+  try {
+    const id = `slog-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.collection('staff_login_history').doc(id).set({
+      id,
+      ...entry,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to write staff login history:', err);
+  }
+}
+
+export async function writeAdminNotification(params: {
+  type: AdminNotificationType;
+  title: string;
+  message: string;
+  targetTab: string;
+  targetId?: string;
+  branchId?: string;
+  targetRoles?: string[];
+}) {
+  try {
+    const id = `anotif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    await db.collection('admin_notifications').doc(id).set({
+      id,
+      ...params,
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to write admin notification:', err);
+  }
+}
+
+export function signScreenshotSignature(proofId: string, expUnixSec: number): string {
+  return crypto
+    .createHmac('sha256', SESSION_SECRET)
+    .update(`proof:${proofId}:${expUnixSec}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+export function verifyScreenshotSignature(proofId: string, expStr: string, sigStr: string): boolean {
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return false;
+  const expected = signScreenshotSignature(proofId, exp);
+  const a = Buffer.from(String(sigStr || ''));
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

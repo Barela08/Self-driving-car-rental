@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Lock, Mail, User, Phone, ArrowRight, MessageSquare, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, setSessionToken } from '../lib/api';
+import { canAccessAdminConsole } from '../lib/permissions';
 
 interface AuthPortalProps {
   portal: 'customer' | 'admin' | 'staff';
@@ -41,18 +42,18 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
   }, [otpCooldown]);
 
   if (!loading && profile) {
-    if (portal === 'admin' && ['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) {
+    if (portal === 'admin' && canAccessAdminConsole(profile)) {
       return <Navigate to="/dashboard/admin" replace />;
     }
     if (portal === 'staff' && profile.role !== 'customer') {
       return <Navigate to="/dashboard/staff" replace />;
     }
     if (portal === 'customer') {
-      if (['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) {
-        return <Navigate to="/dashboard/admin" replace />;
-      }
       if (['operations_staff', 'support_staff'].includes(profile.role)) {
         return <Navigate to="/dashboard/staff" replace />;
+      }
+      if (canAccessAdminConsole(profile)) {
+        return <Navigate to="/dashboard/admin" replace />;
       }
       const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
       return <Navigate to={redirectTo} replace />;
@@ -154,10 +155,14 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     setBusy(false);
     if (!loggedProfile) return;
 
-    if (['super_admin', 'fleet_manager', 'finance_staff'].includes(loggedProfile.role)) {
+    if (portal === 'staff' && loggedProfile.role !== 'customer') {
+      navigate('/dashboard/staff');
+    } else if (portal === 'admin' && canAccessAdminConsole(loggedProfile)) {
       navigate('/dashboard/admin');
     } else if (['operations_staff', 'support_staff'].includes(loggedProfile.role)) {
       navigate('/dashboard/staff');
+    } else if (canAccessAdminConsole(loggedProfile)) {
+      navigate('/dashboard/admin');
     } else {
       const redirectTo = (location.state as { redirectTo?: string } | null)?.redirectTo || '/dashboard';
       navigate(redirectTo);
@@ -229,10 +234,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     const logged = await loginWithGoogle();
     setBusy(false);
     if (logged) {
-      if (['super_admin', 'fleet_manager', 'finance_staff'].includes(logged.role)) {
-        navigate('/dashboard/admin');
-      } else if (['operations_staff', 'support_staff'].includes(logged.role)) {
+      if (['operations_staff', 'support_staff'].includes(logged.role)) {
         navigate('/dashboard/staff');
+      } else if (canAccessAdminConsole(logged)) {
+        navigate('/dashboard/admin');
       } else {
         navigate('/dashboard');
       }
@@ -243,7 +248,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     portal === 'admin'
       ? 'Management & Fleet Admin Console'
       : portal === 'staff'
-        ? 'Branch & Operations Staff Portal'
+        ? 'Operations Hub Staff Portal'
         : 'Customer Account & Self-Drive Access';
 
   return (

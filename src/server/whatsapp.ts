@@ -496,10 +496,10 @@ async function notifyEligibleEmployees(params: {
 
   for (const emp of employees) {
     const isSuperAdmin = emp.department === 'super_admin';
-    const matchesBranch = emp.branchId === 'all' || emp.branchId === params.branchId;
+    const matchesHub = emp.branchId === 'all' || emp.branchId === 'branch-central-hub' || emp.branchId === params.branchId;
     const subscribed = Array.isArray(emp.events) && emp.events.includes(params.eventKey);
 
-    if (!subscribed || (!isSuperAdmin && !matchesBranch)) continue;
+    if (!subscribed || (!isSuperAdmin && !matchesHub)) continue;
 
     const normPhone = normalizeIndianPhone(emp.phone);
     if (!normPhone || seenPhones.has(normPhone)) continue;

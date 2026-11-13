@@ -26,6 +26,12 @@ interface UpiPaymentProofPanelProps {
   onSkip?: () => void;
 }
 
+function getLocalDatetimeDefault(): string {
+  const d = new Date();
+  const tzOffsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+}
+
 export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
   bookingId,
   bookingReference,
@@ -42,9 +48,16 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrMode, setQrMode] = useState<'dynamic' | 'static'>('dynamic');
   const [utr, setUtr] = useState('');
+  const [paidAmount, setPaidAmount] = useState<string>(() => String(Math.round(Number(amountDue || 0))));
+  const [paidAt, setPaidAt] = useState<string>(() => getLocalDatetimeDefault());
+  const [payerUpiId, setPayerUpiId] = useState('');
   const [fileName, setFileName] = useState('');
   const [screenshotDataUrl, setScreenshotDataUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setPaidAmount(String(Math.round(Number(amountDue || 0))));
+  }, [amountDue]);
 
   const txRef = transactionRef || `TX-${bookingReference.replace(/[^A-Z0-9]/gi, '').slice(0, 12)}`;
   const formattedAmt = (Math.round(Number(amountDue) * 100) / 100).toFixed(2);
@@ -109,6 +122,11 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
       toast.error('Enter a valid 6–30 character alphanumeric UPI UTR / Reference number.');
       return;
     }
+    const parsedPaidAmount = Number(paidAmount);
+    if (!Number.isFinite(parsedPaidAmount) || parsedPaidAmount <= 0) {
+      toast.error('Enter the exact INR amount transferred via UPI.');
+      return;
+    }
     if (!fileName && !screenshotDataUrl) {
       toast.error('Please attach your UPI payment screenshot.');
       return;
@@ -119,6 +137,9 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
         method: 'POST',
         body: JSON.stringify({
           utrReference: cleanUtr,
+          paidAmount: parsedPaidAmount,
+          paidAt: paidAt ? new Date(paidAt).toISOString() : new Date().toISOString(),
+          payerUpiId: payerUpiId.trim() || undefined,
           screenshotFileName: fileName,
           screenshotDataUrl,
           transactionRef: txRef,
@@ -185,7 +206,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
           )}
 
           {qrMode === 'static' && upiStaticQrImage ? (
-            <img src={upiStaticQrImage} alt="Company static UPI QR" className="w-40 h-40 object-contain" />
+            <img src={upiStaticQrImage} alt="Company static UPI QR" referrerPolicy="no-referrer" className="w-40 h-40 object-contain" />
           ) : qrDataUrl ? (
             <img src={qrDataUrl} alt={`UPI QR for ${bookingReference}`} className="w-40 h-40 object-contain" />
           ) : (
@@ -236,26 +257,60 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
           <p className="text-slate-muted leading-relaxed">
             {upiPaymentInstructions
               ? upiPaymentInstructions.split('\n')[0]
-              : 'Scan the QR using GPay, PhonePe, Paytm, or BHIM. Enter your UTR number and upload the receipt screenshot below.'}{' '}
+              : 'Scan the QR using GPay, PhonePe, Paytm, or BHIM. Enter your UTR number, paid amount, and upload the receipt screenshot below.'}{' '}
             <strong className="text-ink">Payment is confirmed only after Finance verifies your UTR.</strong>
           </p>
 
-          <div>
-            <label className="block font-semibold text-slate-muted mb-1">UPI UTR / Transaction Reference</label>
-            <input
-              type="text"
-              required
-              minLength={6}
-              maxLength={30}
-              value={utr}
-              onChange={(e) => setUtr(e.target.value)}
-              placeholder="e.g. 431209876543"
-              className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono uppercase focus:outline-none focus:border-gold"
-            />
+          <div className="grid sm:grid-cols-2 gap-2.5">
+            <div>
+              <label className="block font-semibold text-slate-muted mb-1">UPI UTR / Reference *</label>
+              <input
+                type="text"
+                required
+                minLength={6}
+                maxLength={30}
+                value={utr}
+                onChange={(e) => setUtr(e.target.value)}
+                placeholder="e.g. 431209876543"
+                className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono uppercase focus:outline-none focus:border-gold"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-muted mb-1">Paid Amount (INR) *</label>
+              <input
+                type="number"
+                required
+                min={1}
+                step="0.01"
+                value={paidAmount}
+                onChange={(e) => setPaidAmount(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono focus:outline-none focus:border-gold"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-muted mb-1">Paid Date & Time *</label>
+              <input
+                type="datetime-local"
+                required
+                value={paidAt}
+                onChange={(e) => setPaidAt(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono focus:outline-none focus:border-gold"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-muted mb-1">Payer UPI ID (Optional)</label>
+              <input
+                type="text"
+                value={payerUpiId}
+                onChange={(e) => setPayerUpiId(e.target.value)}
+                placeholder="name@okicici"
+                className="w-full px-3 py-2 bg-white border border-black/15 rounded-lg font-mono focus:outline-none focus:border-gold"
+              />
+            </div>
           </div>
 
           <div>
-            <label className="block font-semibold text-slate-muted mb-1">Upload Payment Screenshot</label>
+            <label className="block font-semibold text-slate-muted mb-1">Upload Payment Screenshot *</label>
             <label className="flex items-center gap-2 px-3 py-2 bg-white border border-black/15 rounded-lg cursor-pointer hover:border-gold">
               <Upload className="w-4 h-4 text-gold-hover shrink-0" />
               <span className="truncate text-ink">{fileName || 'Select PNG/JPG receipt screenshot...'}</span>
@@ -267,7 +322,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2.5 bg-obsidian text-white font-semibold rounded-lg hover:bg-graphite inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2.5 bg-obsidian text-white font-semibold rounded-lg hover:bg-graphite inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               <CheckCircle2 className="w-4 h-4 text-gold" />
               {submitting ? 'Submitting Proof...' : 'Submit Payment Proof'}
@@ -276,7 +331,7 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
               <button
                 type="button"
                 onClick={onSkip}
-                className="px-4 py-2.5 border border-black/15 bg-white text-ink font-semibold rounded-lg hover:border-obsidian cursor-pointer"
+                className="px-4 py-2.5 border border-black/15 bg-white text-ink font-semibold rounded-lg hover:border-obsidian cursor-pointer whitespace-nowrap shrink-0"
               >
                 Upload Later in Dashboard
               </button>
@@ -287,3 +342,4 @@ export const UpiPaymentProofPanel: React.FC<UpiPaymentProofPanelProps> = ({
     </div>
   );
 };
+

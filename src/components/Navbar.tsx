@@ -6,7 +6,7 @@ import { useCatalog } from '../context/CatalogContext';
 
 export const Navbar: React.FC = () => {
   const { profile, logout } = useAuth();
-  const { settings } = useCatalog();
+  const { settings, isPreviewMode } = useCatalog();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -15,16 +15,20 @@ export const Navbar: React.FC = () => {
 
   const getDashboardPath = () => {
     if (!profile) return '/login';
-    if (['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) return '/admin';
-    if (['operations_staff', 'support_staff'].includes(profile.role)) return '/staff';
+    if (['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) {
+      return '/dashboard/admin';
+    }
+    if (['operations_staff', 'support_staff'].includes(profile.role)) {
+      return '/dashboard/staff';
+    }
     return '/dashboard';
   };
 
   const navItems = [
     { label: 'Fleet', to: '/vehicles' },
-    { label: 'Branches', to: '/#branches' },
+    { label: 'Offers', to: '/#offers' },
     { label: 'Subscriptions', to: '/#subscriptions' },
-    { label: 'Support', to: '/#faq' },
+    { label: 'Contact', to: '/#contact' },
   ];
 
   const handlePrimaryAction = () => {
@@ -39,12 +43,19 @@ export const Navbar: React.FC = () => {
   return (
     <header className="sticky top-0 z-40 bg-obsidian/95 backdrop-blur-md border-b border-white/10 text-white">
       <div className="max-w-[1440px] mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Single-line Brand Wordmark */}
+        {/* Zone 1: Single-line Brand Wordmark / Logo */}
         <Link
-          to="/"
-          className="font-display text-xl font-semibold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-gold transition-colors"
+          to={isPreviewMode ? '/?preview=1' : '/'}
+          className="flex items-center gap-2.5 font-display text-xl font-semibold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-gold transition-colors"
         >
-          {brandName}
+          {settings?.logoUrl && (
+            <img
+              src={settings.logoUrl}
+              alt={`${brandName} logo`}
+              className="h-7 w-7 object-contain rounded"
+            />
+          )}
+          <span>{brandName}</span>
         </Link>
 
         {/* Zone 2: 4 concise single-line nav links */}
@@ -63,7 +74,7 @@ export const Navbar: React.FC = () => {
               </Link>
             );
           })}
-          {profile && (
+          {profile && !isPreviewMode && (
             <Link
               to={getDashboardPath()}
               className="whitespace-nowrap shrink-0 transition-colors hover:text-gold text-white/90"
@@ -75,7 +86,11 @@ export const Navbar: React.FC = () => {
 
         {/* Zone 3: 1 Primary CTA */}
         <div className="hidden md:flex items-center gap-4 shrink-0">
-          {profile ? (
+          {isPreviewMode ? (
+            <span className="px-3.5 py-1.5 text-xs font-semibold border border-gold/40 text-gold rounded-md whitespace-nowrap shrink-0">
+              Preview Mode
+            </span>
+          ) : profile ? (
             <div className="flex items-center gap-4">
               <button
                 onClick={handlePrimaryAction}
@@ -123,25 +138,33 @@ export const Navbar: React.FC = () => {
               {item.label}
             </Link>
           ))}
-          <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
-            <button
-              onClick={handlePrimaryAction}
-              className="flex-1 py-2.5 px-4 text-xs font-semibold bg-gold text-obsidian rounded-md"
-            >
-              {profile ? 'Open Dashboard' : 'Sign in / Register'}
-            </button>
-            {profile && (
+          {isPreviewMode ? (
+            <div className="pt-2 border-t border-white/10">
+              <span className="block text-center py-2 text-xs font-semibold text-gold border border-gold/30 rounded-md">
+                Owner Preview Mode (Read-Only)
+              </span>
+            </div>
+          ) : (
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
               <button
-                onClick={() => {
-                  setMobileOpen(false);
-                  void logout();
-                }}
-                className="py-2.5 px-3 text-xs text-white/70 border border-white/15 rounded-md"
+                onClick={handlePrimaryAction}
+                className="flex-1 py-2.5 px-4 text-xs font-semibold bg-gold text-obsidian rounded-md"
               >
-                Sign out
+                {profile ? 'Open Dashboard' : 'Sign in / Register'}
               </button>
-            )}
-          </div>
+              {profile && (
+                <button
+                  onClick={() => {
+                    setMobileOpen(false);
+                    void logout();
+                  }}
+                  className="py-2.5 px-3 text-xs text-white/70 border border-white/15 rounded-md"
+                >
+                  Sign out
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </header>

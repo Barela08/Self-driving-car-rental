@@ -8,6 +8,7 @@ import {
   Car,
   CheckCircle2,
   CreditCard,
+  Download,
   FileText,
   Heart,
   LifeBuoy,
@@ -15,15 +16,18 @@ import {
   MapPin,
   MessageCircle,
   ShieldCheck,
+  Star,
   Trash2,
   User,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
 import { apiFetch, formatINR } from '../lib/api';
+import { downloadBookingInvoicePdf, downloadRentalAgreementPdf } from '../lib/pdfExport';
 import { resolveVehicleImage } from '../lib/mediaAssets';
 import type {
   Booking,
+  CustomerReview,
   CustomerSubscription,
   InvoiceRecord,
   KycVerification,
@@ -49,12 +53,15 @@ interface DashboardPayload {
   roadsideRequests: RoadsideRequest[];
   supportTickets: SupportTicket[];
   notifications: NotificationRecord[];
+  reviews?: CustomerReview[];
 }
 
 export const CustomerDashboard: React.FC = () => {
   const { profile, firebaseUser, loading: authLoading, logout, logoutAllDevices, refreshProfile } = useAuth();
-  const { branches, vehicles, settings } = useCatalog();
+  const { branches, vehicles, settings, isPreviewMode } = useCatalog();
   const navigate = useNavigate();
+  const operatingCity = settings?.operatingCityName || 'Mumbai';
+  const centralHub = branches.find((b) => b.id === 'branch-central-hub') || branches[0];
 
   const [tab, setTab] = useState<TabKey>('bookings');
   const [data, setData] = useState<DashboardPayload | null>(null);
@@ -95,7 +102,12 @@ export const CustomerDashboard: React.FC = () => {
   const [otpVerified, setOtpVerified] = useState(false);
   const [newAddrLabel, setNewAddrLabel] = useState('');
   const [newAddrText, setNewAddrText] = useState('');
-  const [newAddrCity, setNewAddrCity] = useState('Mumbai');
+  const [newAddrCity, setNewAddrCity] = useState(operatingCity);
+
+  // Verified Customer Review state
+  const [reviewBookingId, setReviewBookingId] = useState<string | null>(null);
+  const [reviewRating, setReviewRating] = useState<number>(5);
+  const [reviewComment, setReviewComment] = useState<string>('');
 
   const loadDashboard = useCallback(async () => {
     if (!firebaseUser) return;
@@ -142,6 +154,10 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const handleCancelBooking = async (booking: Booking) => {
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Cancelling bookings is disabled in preview mode.');
+      return;
+    }
     setBusyId(booking.id);
     try {
       await apiFetch(`/api/bookings/${booking.id}/cancel`, {
@@ -157,14 +173,50 @@ export const CustomerDashboard: React.FC = () => {
     }
   };
 
+  const handleSubmitReview = async (e: React.FormEvent, booking: Booking) => {
+    e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Review submission is disabled in preview mode.');
+      return;
+    }
+    if (!reviewComment.trim()) {
+      toast.error('Please write a short review of your rental experience.');
+      return;
+    }
+    setBusyId(`rev-${booking.id}`);
+    try {
+      await apiFetch('/api/reviews', {
+        method: 'POST',
+        body: JSON.stringify({
+          bookingId: booking.id,
+          rating: reviewRating,
+          comment: reviewComment.trim(),
+        }),
+      });
+      toast.success('Thank you! Your verified review was submitted for moderation.');
+      setReviewBookingId(null);
+      setReviewComment('');
+      setReviewRating(5);
+      await loadDashboard();
+    } catch (err: any) {
+      toast.error(err.message || 'Unable to submit review');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleKycSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: KYC submission is disabled in preview mode.');
+      return;
+    }
     if (kycMode === 'online' && (!licenseNumber || !licenseExpiry || !idProofNumber)) {
       toast.error('Please enter your Driving Licence number, expiry date, and ID proof number.');
       return;
     }
     if (kycMode === 'branch_appointment' && (!kycBranchId || !appointmentDate)) {
-      toast.error('Please choose a branch and preferred appointment date.');
+      toast.error('Please select a preferred hub appointment date.');
       return;
     }
     setBusyId('kyc');
@@ -199,6 +251,10 @@ export const CustomerDashboard: React.FC = () => {
 
   const handleRoadsideSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: SOS dispatch is disabled in preview mode.');
+      return;
+    }
     if (!rsaBookingId) {
       toast.error('Please select the booking requiring roadside assistance.');
       return;
@@ -239,6 +295,10 @@ export const CustomerDashboard: React.FC = () => {
 
   const handleSupportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Ticket submission is disabled in preview mode.');
+      return;
+    }
     if (!supSubject.trim() || !supMessage.trim()) {
       toast.error('Please enter both subject and message.');
       return;
@@ -266,6 +326,10 @@ export const CustomerDashboard: React.FC = () => {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Profile edits are disabled in preview mode.');
+      return;
+    }
     setBusyId('profile');
     try {
       await apiFetch('/api/me/profile', {
@@ -333,17 +397,20 @@ export const CustomerDashboard: React.FC = () => {
 
   const handleAddSavedAddress = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Saving addresses is disabled in preview mode.');
+      return;
+    }
     if (!newAddrLabel.trim() || !newAddrText.trim()) return;
-    const cityObj = branches.find((b) => b.cityName === newAddrCity);
     const updated: SavedAddress[] = [
       ...(data?.privateInfo?.savedAddresses || []),
       {
         id: `addr-${Date.now()}`,
         label: newAddrLabel.trim(),
         address: newAddrText.trim(),
-        cityName: newAddrCity,
-        lat: cityObj?.lat || 19.076,
-        lng: cityObj?.lng || 72.8777,
+        cityName: operatingCity,
+        lat: settings?.hubLat || centralHub?.lat || 19.076,
+        lng: settings?.hubLng || centralHub?.lng || 72.8777,
       },
     ];
     try {
@@ -361,6 +428,10 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const handleRemoveAddress = async (id: string) => {
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Action disabled in preview mode.');
+      return;
+    }
     const updated = (data?.privateInfo?.savedAddresses || []).filter((a) => a.id !== id);
     await apiFetch('/api/me/profile', {
       method: 'PUT',
@@ -370,6 +441,10 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const handleRemoveFavourite = async (vehId: string) => {
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Action disabled in preview mode.');
+      return;
+    }
     const updated = (data?.privateInfo?.favouriteVehicleIds || []).filter((id) => id !== vehId);
     await apiFetch('/api/me/profile', {
       method: 'PUT',
@@ -379,6 +454,10 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const handleRequestDeletion = async () => {
+    if (isPreviewMode) {
+      toast.info('Owner User Preview: Action disabled in preview mode.');
+      return;
+    }
     setBusyId('delete');
     try {
       await apiFetch('/api/me/profile', {
@@ -508,8 +587,14 @@ export const CustomerDashboard: React.FC = () => {
                   <div className="space-y-4">
                     {data.bookings.map((bk) => {
                       const isExpanded = expandedBookingId === bk.id;
-                      const canCancel = !['Active Rental', 'Completed', 'Cancelled', 'Refunded'].includes(bk.status);
-                      const needsPayment = bk.paymentStatus === 'Pending' || bk.paymentStatus === 'Failed';
+                      const canCancel = !['Active Rental', 'Completed', 'Cancelled', 'Refunded', 'Expired'].includes(bk.status);
+                      const needsPayment =
+                        bk.status !== 'Expired' && (bk.paymentStatus === 'Pending' || bk.paymentStatus === 'Failed');
+                      const bkProofs = (data?.paymentProofs || []).filter((p) => p.bookingId === bk.id);
+                      const resubmissionRequestedProof = bkProofs.find(
+                        (p) => p.status === 'Resubmission Requested' || p.resubmissionRequested
+                      );
+                      const existingReview = (data?.reviews || []).find((r) => r.bookingId === bk.id);
 
                       return (
                         <div key={bk.id} className="bg-white border border-black/10 rounded-xl overflow-hidden">
@@ -518,31 +603,50 @@ export const CustomerDashboard: React.FC = () => {
                               <img
                                 src={resolveVehicleImage(bk.vehicleImage)}
                                 alt={bk.vehicleName}
+                                referrerPolicy="no-referrer"
                                 className="w-full h-full object-cover"
                               />
                             </div>
                             <div className="md:col-span-6 space-y-2">
                               <div className="flex flex-wrap items-center gap-2 text-xs">
                                 <span className="font-mono font-semibold text-ink">{bk.bookingReference}</span>
-                                <span className="text-slate-muted">·</span>
+                                <span className="text-slate-muted">|</span>
                                 <span className="font-semibold text-gold-hover">{bk.status}</span>
-                                <span className="text-slate-muted">·</span>
+                                <span className="text-slate-muted">|</span>
                                 <span className="text-slate-muted">Payment: {bk.paymentStatus}</span>
+                                {(bk.quantity || 1) > 1 && (
+                                  <>
+                                    <span className="text-slate-muted">|</span>
+                                    <span className="font-mono font-semibold text-ink">{bk.quantity} Units</span>
+                                  </>
+                                )}
                               </div>
                               <h3 className="font-display text-xl font-semibold text-ink">{bk.vehicleName}</h3>
+                              {Array.isArray(bk.assignedVehicleRegs) && bk.assignedVehicleRegs.length > 0 && (
+                                <p className="text-[11px] font-mono text-ink bg-alabaster border border-black/10 inline-block px-2 py-0.5 rounded">
+                                  Assigned Reg(s): {bk.assignedVehicleRegs.join(', ')}
+                                </p>
+                              )}
                               <p className="text-xs text-slate-muted">
                                 <Calendar className="w-3.5 h-3.5 inline mr-1" />
                                 {new Date(bk.startDate).toLocaleString('en-IN')} → {new Date(bk.endDate).toLocaleString('en-IN')}
                               </p>
                               <p className="text-xs text-slate-muted">
                                 <MapPin className="w-3.5 h-3.5 inline mr-1" />
-                                {bk.pickupMode === 'delivery' ? 'Doorstep Delivery: ' : 'Branch Pickup: '}
+                                {bk.pickupMode === 'delivery' ? 'Doorstep Delivery: ' : 'Hub Pickup: '}
                                 {bk.pickupAddress}
-                                {bk.isOneWay ? ` → One-Way Return: ${bk.returnBranchName}` : ''}
+                                {bk.returnAddress && bk.returnAddress !== bk.pickupAddress
+                                  ? ` → Return: ${bk.returnAddress}`
+                                  : ''}
                               </p>
                               {bk.handoverOtp && ['Confirmed', 'Ready for Pickup', 'KYC Verified'].includes(bk.status) && (
                                 <p className="text-xs font-mono bg-alabaster border border-black/10 inline-block px-2.5 py-1 rounded">
                                   Handover OTP: <strong className="text-ink">{bk.handoverOtp}</strong>
+                                </p>
+                              )}
+                              {resubmissionRequestedProof && needsPayment && (
+                                <p className="text-[11px] font-semibold text-amber-900 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded">
+                                  Finance Requested New Proof: {resubmissionRequestedProof.reviewNotes || 'Please re-upload UTR screenshot.'}
                                 </p>
                               )}
                             </div>
@@ -564,17 +668,19 @@ export const CustomerDashboard: React.FC = () => {
                                   <button
                                     type="button"
                                     onClick={() => handleOpenPaymentPage(bk)}
-                                    className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg hover:bg-gold-bright cursor-pointer"
+                                    className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg hover:bg-gold-bright cursor-pointer whitespace-nowrap shrink-0"
                                   >
-                                    {bk.paymentStatus === 'Failed'
-                                      ? `Retry UPI Payment (${formatINR(bk.pricing.amountDueNow)})`
-                                      : `Pay via UPI QR (${formatINR(bk.pricing.amountDueNow)})`}
+                                    {resubmissionRequestedProof
+                                      ? `Resubmit UPI Proof (${formatINR(bk.pricing.amountDueNow)})`
+                                      : bk.paymentStatus === 'Failed'
+                                        ? `Retry UPI Payment (${formatINR(bk.pricing.amountDueNow)})`
+                                        : `Pay via UPI QR (${formatINR(bk.pricing.amountDueNow)})`}
                                   </button>
                                 )}
                                 {bk.paymentStatus === 'Pending Verification' && (
                                   <Link
                                     to={`/bookings/${bk.id}/pay`}
-                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold"
+                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold whitespace-nowrap shrink-0"
                                   >
                                     Awaiting Finance Verification
                                   </Link>
@@ -582,7 +688,7 @@ export const CustomerDashboard: React.FC = () => {
                                 {(bk.paymentStatus === 'Paid' || bk.paymentStatus === 'Partial Paid') && (
                                   <Link
                                     to={`/bookings/${bk.id}/pay`}
-                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold"
+                                    className="px-3 py-1.5 bg-alabaster border border-black/15 text-ink text-xs font-semibold rounded-lg hover:border-gold whitespace-nowrap shrink-0"
                                   >
                                     Payment Summary
                                   </Link>
@@ -592,7 +698,7 @@ export const CustomerDashboard: React.FC = () => {
                                     type="button"
                                     disabled={busyId === bk.id}
                                     onClick={() => void handleCancelBooking(bk)}
-                                    className="px-3 py-1.5 border border-black/15 text-xs font-semibold rounded-lg hover:border-red-600 hover:text-red-700 cursor-pointer"
+                                    className="px-3 py-1.5 border border-black/15 text-xs font-semibold rounded-lg hover:border-red-600 hover:text-red-700 cursor-pointer whitespace-nowrap shrink-0"
                                   >
                                     Cancel
                                   </button>
@@ -600,7 +706,7 @@ export const CustomerDashboard: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => setExpandedBookingId(isExpanded ? null : bk.id)}
-                                  className="px-3 py-1.5 bg-obsidian text-white text-xs font-semibold rounded-lg cursor-pointer"
+                                  className="px-3 py-1.5 bg-obsidian text-white text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                                 >
                                   {isExpanded ? 'Hide Timeline' : 'Details & History'}
                                 </button>
@@ -614,7 +720,7 @@ export const CustomerDashboard: React.FC = () => {
                                 <p className="font-semibold text-ink uppercase tracking-wider text-[11px]">Itemized Fare Summary</p>
                                 <div className="space-y-1 font-mono tabular-nums text-slate-muted">
                                   <div className="flex justify-between">
-                                    <span>Base Rental ({bk.pricing.durationDays}d)</span>
+                                    <span>Base Rental ({bk.pricing.quantity || bk.quantity || 1}x | {bk.pricing.durationDays}d)</span>
                                     <span>{formatINR(bk.pricing.baseRentalAmount)}</span>
                                   </div>
                                   {bk.pricing.weekendSurcharge > 0 && (
@@ -627,12 +733,6 @@ export const CustomerDashboard: React.FC = () => {
                                     <div className="flex justify-between">
                                       <span>Delivery Charge</span>
                                       <span>{formatINR(bk.pricing.deliveryCharge)}</span>
-                                    </div>
-                                  )}
-                                  {bk.pricing.oneWayCharge > 0 && (
-                                    <div className="flex justify-between">
-                                      <span>One-Way Fee</span>
-                                      <span>{formatINR(bk.pricing.oneWayCharge)}</span>
                                     </div>
                                   )}
                                   {bk.pricing.insuranceCharge > 0 && (
@@ -660,6 +760,86 @@ export const CustomerDashboard: React.FC = () => {
                                     <span>{bk.pricing.includedKmAllowance} km (Extra ₹{bk.pricing.extraKmRate}/km)</span>
                                   </div>
                                 </div>
+
+                                {bk.status === 'Completed' && (
+                                  <div className="mt-4 p-3.5 rounded-lg bg-white border border-black/10 space-y-2">
+                                    <p className="font-semibold text-ink">Verified Trip Review</p>
+                                    {existingReview ? (
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between">
+                                          <span className="inline-flex items-center gap-1 font-mono font-bold text-ink">
+                                            <Star className="w-3.5 h-3.5 fill-gold text-gold" />
+                                            {existingReview.rating.toFixed(1)} / 5
+                                          </span>
+                                          <span className="text-[11px] font-semibold text-gold-hover">
+                                            {existingReview.status}
+                                          </span>
+                                        </div>
+                                        <p className="text-slate-muted">{existingReview.comment}</p>
+                                      </div>
+                                    ) : reviewBookingId === bk.id ? (
+                                      <form onSubmit={(e) => void handleSubmitReview(e, bk)} className="space-y-2">
+                                        <div className="flex items-center gap-1.5">
+                                          {[1, 2, 3, 4, 5].map((starVal) => (
+                                            <button
+                                              key={starVal}
+                                              type="button"
+                                              onClick={() => setReviewRating(starVal)}
+                                              className="p-1 cursor-pointer"
+                                            >
+                                              <Star
+                                                className={`w-4 h-4 ${
+                                                  starVal <= reviewRating
+                                                    ? 'fill-gold text-gold'
+                                                    : 'text-black/20'
+                                                }`}
+                                              />
+                                            </button>
+                                          ))}
+                                          <span className="font-mono text-[11px] text-slate-muted ml-1">
+                                            {reviewRating}/5
+                                          </span>
+                                        </div>
+                                        <textarea
+                                          rows={2}
+                                          required
+                                          value={reviewComment}
+                                          onChange={(e) => setReviewComment(e.target.value)}
+                                          placeholder="Share feedback about vehicle condition and pickup service..."
+                                          className="w-full px-2.5 py-1.5 border border-black/15 rounded-lg text-xs"
+                                        />
+                                        <div className="flex gap-2">
+                                          <button
+                                            type="submit"
+                                            disabled={busyId === `rev-${bk.id}`}
+                                            className="px-3 py-1.5 bg-obsidian text-white text-xs font-semibold rounded-lg cursor-pointer"
+                                          >
+                                            {busyId === `rev-${bk.id}` ? 'Submitting...' : 'Submit Review'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setReviewBookingId(null)}
+                                            className="px-3 py-1.5 border border-black/15 rounded-lg text-xs cursor-pointer"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </form>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setReviewBookingId(bk.id);
+                                          setReviewRating(5);
+                                          setReviewComment('');
+                                        }}
+                                        className="px-3 py-1.5 bg-gold text-obsidian font-semibold rounded-lg hover:bg-gold-bright cursor-pointer"
+                                      >
+                                        Rate & Review This Trip
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
                               <div className="space-y-2">
@@ -683,12 +863,30 @@ export const CustomerDashboard: React.FC = () => {
                                   <div className="p-3 rounded bg-white border border-black/10 space-y-1">
                                     <p className="font-semibold text-ink">Return Settlement</p>
                                     <p className="text-slate-muted">
-                                      Extra Km: {bk.returnInspection.extraKmDriven} km ({formatINR(bk.returnInspection.extraKmCharges)}) ·
-                                      Late Fee: {formatINR(bk.returnInspection.lateReturnCharges)} ·
+                                      Extra Km: {bk.returnInspection.extraKmDriven} km ({formatINR(bk.returnInspection.extraKmCharges)}) |{' '}
+                                      Late Fee: {formatINR(bk.returnInspection.lateReturnCharges)} |{' '}
                                       Deposit Refund: <strong className="text-ink">{formatINR(bk.returnInspection.depositRefundAmount)}</strong>
                                     </p>
                                   </div>
                                 )}
+                                <div className="pt-2 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadBookingInvoicePdf(bk, settings)}
+                                    className="px-3.5 py-2 bg-obsidian text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 hover:bg-graphite cursor-pointer whitespace-nowrap shrink-0"
+                                  >
+                                    <Download className="w-3.5 h-3.5 text-gold" />
+                                    Download Tax Invoice (PDF)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadRentalAgreementPdf(bk, settings)}
+                                    className="px-3.5 py-2 border border-black/15 bg-white text-ink text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 hover:border-gold cursor-pointer whitespace-nowrap shrink-0"
+                                  >
+                                    <FileText className="w-3.5 h-3.5 text-gold-hover" />
+                                    Rental Agreement (PDF)
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -708,7 +906,7 @@ export const CustomerDashboard: React.FC = () => {
                     <div>
                       <h2 className="font-display text-2xl font-semibold">Driver KYC & Document Verification</h2>
                       <p className="text-xs text-slate-muted mt-1">
-                        Choose encrypted online verification or schedule an in-person verification visit at an EliteDrive branch.
+                        Choose encrypted online verification or schedule an in-person verification visit at our {operatingCity} operations hub.
                       </p>
                     </div>
                   </div>
@@ -730,7 +928,7 @@ export const CustomerDashboard: React.FC = () => {
                         kycMode === 'branch_appointment' ? 'bg-obsidian text-white' : 'text-slate-muted'
                       }`}
                     >
-                      Offline Branch Appointment
+                      Hub Office Appointment
                     </button>
                   </div>
 
@@ -808,19 +1006,16 @@ export const CustomerDashboard: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-muted mb-1">Select Branch for Document Check</label>
-                          <select
-                            value={kycBranchId}
-                            onChange={(e) => setKycBranchId(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-black/15 rounded-lg bg-white"
-                          >
-                            {branches.map((b) => (
-                              <option key={b.id} value={b.id}>
-                                {b.cityName} — {b.name} ({b.openingHours})
-                              </option>
-                            ))}
-                          </select>
+                        <div className="p-3.5 rounded-lg bg-alabaster border border-black/10 text-xs space-y-1">
+                          <p className="font-semibold text-ink">
+                            {settings?.officeName || centralHub?.name || `${operatingCity} Central Operating Hub`}
+                          </p>
+                          <p className="text-slate-muted">
+                            {settings?.businessAddress || centralHub?.address || `${operatingCity} Operations Lounge`}
+                          </p>
+                          <p className="text-[11px] font-mono text-gold-hover">
+                            Hours: {settings?.businessHours || centralHub?.openingHours || '06:00 AM – 11:30 PM'}
+                          </p>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
                           <div>
@@ -859,7 +1054,7 @@ export const CustomerDashboard: React.FC = () => {
                         ? 'Submitting...'
                         : kycMode === 'online'
                           ? 'Submit Online KYC'
-                          : 'Schedule Branch Appointment'}
+                          : 'Schedule Hub Appointment'}
                     </button>
                   </form>
                 </div>
@@ -902,16 +1097,27 @@ export const CustomerDashboard: React.FC = () => {
                         Submitted UPI Proofs
                       </p>
                       {data!.paymentProofs!.map((pf) => (
-                        <div key={pf.id} className="p-3 rounded-lg bg-alabaster border border-black/10 flex justify-between text-xs">
+                        <div key={pf.id} className="p-3 rounded-lg bg-alabaster border border-black/10 flex justify-between items-start gap-3 text-xs">
                           <div>
                             <p className="font-mono font-semibold text-ink">
-                              {pf.bookingReference} · UTR {pf.utrReference}
+                              {pf.bookingReference} | UTR {pf.utrReference}
                             </p>
-                            {pf.reviewNotes && <p className="text-slate-muted text-[11px]">{pf.reviewNotes}</p>}
+                            {pf.payerUpiId && (
+                              <p className="text-[11px] font-mono text-slate-muted">Payer: {pf.payerUpiId}</p>
+                            )}
+                            {pf.paidAt && (
+                              <p className="text-[11px] text-slate-muted">
+                                Paid {new Date(pf.paidAt).toLocaleString('en-IN')}
+                              </p>
+                            )}
+                            {pf.reviewNotes && <p className="text-slate-muted text-[11px] mt-0.5">{pf.reviewNotes}</p>}
                           </div>
-                          <div className="text-right font-mono">
-                            <p className="font-semibold">{formatINR(pf.amountSubmitted)}</p>
+                          <div className="text-right font-mono shrink-0">
+                            <p className="font-semibold">{formatINR(pf.paidAmount ?? pf.amountSubmitted)}</p>
                             <p className="text-[11px] text-gold-hover">{pf.status}</p>
+                            {pf.amountMismatch && (
+                              <p className="text-[10px] text-red-700 font-semibold">Amount Mismatch</p>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -948,20 +1154,35 @@ export const CustomerDashboard: React.FC = () => {
                     <p className="text-xs text-slate-muted">Tax invoices are generated automatically after payment verification.</p>
                   ) : (
                     <div className="space-y-3">
-                      {data.invoices.map((inv) => (
-                        <div key={inv.id} className="p-4 rounded-lg bg-alabaster border border-black/10 text-xs space-y-1.5">
-                          <div className="flex justify-between font-semibold text-ink">
-                            <span className="font-mono">{inv.invoiceNumber}</span>
-                            <span className="font-mono">{formatINR(inv.totalAmount)}</span>
+                      {data.invoices.map((inv) => {
+                        const matchedBooking = data.bookings.find((b) => b.id === inv.bookingId);
+                        return (
+                          <div key={inv.id} className="p-4 rounded-lg bg-alabaster border border-black/10 text-xs space-y-2">
+                            <div className="flex justify-between font-semibold text-ink">
+                              <span className="font-mono">{inv.invoiceNumber}</span>
+                              <span className="font-mono">{formatINR(inv.totalAmount)}</span>
+                            </div>
+                            <p className="text-slate-muted">
+                              Booking {inv.bookingReference} · Subtotal {formatINR(inv.subtotal)} · GST {formatINR(inv.taxAmount)}
+                            </p>
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                              <p className="text-slate-muted">
+                                Deposit Held: {formatINR(inv.depositHeld)} · Deposit Refunded: {formatINR(inv.depositRefunded)}
+                              </p>
+                              {matchedBooking && (
+                                <button
+                                  type="button"
+                                  onClick={() => downloadBookingInvoicePdf(matchedBooking, settings)}
+                                  className="px-2.5 py-1 bg-obsidian text-white text-[11px] font-semibold rounded inline-flex items-center gap-1 hover:bg-graphite cursor-pointer"
+                                >
+                                  <Download className="w-3 h-3 text-gold" />
+                                  Download PDF
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <p className="text-slate-muted">
-                            Booking {inv.bookingReference} · Subtotal {formatINR(inv.subtotal)} · GST {formatINR(inv.taxAmount)}
-                          </p>
-                          <p className="text-slate-muted">
-                            Deposit Held: {formatINR(inv.depositHeld)} · Deposit Refunded: {formatINR(inv.depositRefunded)}
-                          </p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1314,15 +1535,12 @@ export const CustomerDashboard: React.FC = () => {
                         onChange={(e) => setNewAddrLabel(e.target.value)}
                         className="px-3 py-2 border border-black/15 rounded-lg"
                       />
-                      <select
-                        value={newAddrCity}
-                        onChange={(e) => setNewAddrCity(e.target.value)}
-                        className="px-3 py-2 border border-black/15 rounded-lg bg-white"
-                      >
-                        {Array.from(new Set(branches.map((b) => b.cityName))).map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
+                      <input
+                        type="text"
+                        readOnly
+                        value={newAddrCity || operatingCity}
+                        className="px-3 py-2 border border-black/15 rounded-lg bg-alabaster text-slate-muted font-medium"
+                      />
                       <button type="submit" className="px-3 py-2 bg-obsidian text-white font-semibold rounded-lg cursor-pointer">
                         Add Address
                       </button>
