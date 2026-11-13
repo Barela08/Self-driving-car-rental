@@ -11,6 +11,7 @@ import {
   getTokenVersion,
   loadRolesList,
   requireAuth,
+  requireMasterAdmin,
   requirePermission,
   revokeAllUserSessions,
   signScreenshotSignature,
@@ -46,9 +47,21 @@ import {
   ALL_ADMIN_PERMISSIONS,
   ROLE_DEFAULT_PERMISSIONS,
   canAccessAdminConsole,
+  canAccessMasterConsole,
   resolveUserPermissions,
 } from './src/lib/permissions.ts';
-import { sendWhatsAppOtp, verifyWhatsAppOtp } from './src/server/otp.ts';
+import {
+  getAuthOtpConfig,
+  sendWhatsAppOtp,
+  updateAuthOtpConfig,
+  verifyWhatsAppOtp,
+  writeOtpLog,
+} from './src/server/otp.ts';
+import {
+  getAiConfig,
+  handleAiAssistantChat,
+  updateAiConfig,
+} from './src/server/aiAssistant.ts';
 import {
   dispatchWhatsAppTemplate,
   getWhatsAppConfig,
@@ -87,13 +100,53 @@ import type {
   PaymentProof,
   PaymentSessionData,
   PickupMode,
+  PlatformTenantConfig,
   RefundRecord,
   Role,
+  SocialProfileItem,
   SubscriptionPlan,
+  SupportedLanguage,
   UserProfile,
   Vehicle,
   VehicleMaintenanceRecord,
 } from './src/types.ts';
+
+function buildVirtualCentralHub(settings: Partial<CompanySettings>): Branch {
+  return {
+    id: 'branch-central-hub',
+    code: 'HUB-01',
+    cityId: settings.operatingCityId || 'city-mumbai',
+    cityName: settings.operatingCityName || 'Mumbai',
+    name: settings.officeName || `${settings.companyName || 'EliteDrive'} Flagship Hub`,
+    address: settings.businessAddress || settings.operatingCityName || 'Mumbai',
+    lat: Number(settings.hubLat ?? 19.0607),
+    lng: Number(settings.hubLng ?? 72.8362),
+    openingHours: settings.businessHours || '06:00 AM – 11:30 PM',
+    deliveryRadiusKm: Number(settings.serviceRadiusKm ?? 35),
+    baseDeliveryFee: Number(settings.baseDeliveryFee ?? 299),
+    perKmDeliveryFee: Number(settings.perKmDeliveryFee ?? 25),
+    oneWaySupported: false,
+    active: true,
+  };
+}
+
+function resolveOperatingHub(
+  allBranches: Branch[],
+  settings: Partial<CompanySettings>,
+  preferredBranchId?: string | null
+): { hub: Branch; effectiveBranches: Branch[] } {
+  const activeBranches = allBranches.filter((b) => b.active);
+  if (activeBranches.length === 0) {
+    const virtualHub = buildVirtualCentralHub(settings);
+    return { hub: virtualHub, effectiveBranches: [virtualHub] };
+  }
+  const targetId = String(preferredBranchId || 'branch-central-hub');
+  const hub =
+    activeBranches.find((b) => b.id === targetId) ||
+    activeBranches.find((b) => b.id === 'branch-central-hub') ||
+    activeBranches[0];
+  return { hub, effectiveBranches: allBranches };
+}
 
 function buildScreenshotProxyUrl(proofId: string): string {
   const exp = Math.floor(Date.now() / 1000) + 60 * 60; // 1 hour signed view token
@@ -355,17 +408,29 @@ async function startServer() {
   // --- PUBLIC CATALOG & BOOTSTRAP ---
   app.get('/api/bootstrap', async (_req, res) => {
     try {
-      const [citiesSnap, branchesSnap, vehiclesSnap, insSnap, plansSnap, couponsSnap, offersSnap, settingsSnap] =
-        await Promise.all([
-          db.collection('cities').get(),
-          db.collection('branches').get(),
-          db.collection('vehicles').get(),
-          db.collection('insurance_packages').get(),
-          db.collection('subscription_plans').get(),
-          db.collection('coupons').where('active', '==', true).get(),
-          db.collection('offers').where('active', '==', true).get(),
-          db.collection('company_settings').doc('default').get(),
-        ]);
+      const [
+        citiesSnap,
+        branchesSnap,
+        vehiclesSnap,
+        insSnap,
+        plansSnap,
+        couponsSnap,
+        offersSnap,
+        settingsSnap,
+        authOtpCfg,
+        aiCfg,
+      ] = await Promise.all([
+        db.collection('cities').get(),
+        db.collection('branches').get(),
+        db.collection('vehicles').get(),
+        db.collection('insurance_packages').get(),
+        db.collection('subscription_plans').get(),
+        db.collection('coupons').where('active', '==', true).get(),
+        db.collection('offers').where('active', '==', true).get(),
+        db.collection('company_settings').doc('default').get(),
+        getAuthOtpConfig(),
+        getAiConfig(),
+      ]);
 
       const nowMs = Date.now();
       const activeVehicles = vehiclesSnap.docs
@@ -397,6 +462,17 @@ async function startServer() {
         coupons: activeCoupons,
         offers: activeOffers,
         settings: settingsSnap.exists ? settingsSnap.data() : null,
+        authOtpConfig: {
+          demoOtpEnabled: authOtpCfg.demoOtpEnabled,
+          firebasePhoneAuthEnabled: authOtpCfg.firebasePhoneAuthEnabled,
+          whatsappOtpEnabled: authOtpCfg.whatsappOtpEnabled,
+          environmentMode: authOtpCfg.environmentMode || 'development',
+        },
+        aiPublicConfig: {
+          enabled: aiCfg.enabled,
+          bookingEnabled: aiCfg.bookingEnabled,
+          allowedLanguages: aiCfg.allowedLanguages,
+        },
       });
     } catch (err: any) {
       console.error('Bootstrap error:', err);
@@ -743,7 +819,7 @@ async function startServer() {
     }
   });
 
-  // --- LOCATION SERVICEABILITY & DELIVERY FEE VALIDATION (MULTI-BRANCH AWARE) ---
+  // --- LOCATION SERVICEABILITY & DELIVERY FEE VALIDATION (MULTI-BRANCH + SINGLE-HUB FALLBACK) ---
   app.post('/api/locations/validate', async (req, res) => {
     try {
       const { vehicleId, pickupMode, pickupLat, pickupLng, returnLat, returnLng, pickupBranchId } = req.body;
@@ -757,18 +833,14 @@ async function startServer() {
         return res.status(404).json({ serviceable: false, reason: 'Selected vehicle was not found.' });
       }
       const vehicle = vehSnap.data() as Vehicle;
-      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
-      const targetBranchId = String(pickupBranchId || vehicle.branchId || 'branch-central-hub');
-      const hub =
-        allBranches.find((b) => b.id === targetBranchId) ||
-        allBranches.find((b) => b.id === 'branch-central-hub') ||
-        allBranches[0];
-
-      if (!hub) {
-        return res.status(404).json({ serviceable: false, reason: 'Operating branch was not found.' });
-      }
-
       const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as CompanySettings;
+      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
+      const { hub, effectiveBranches } = resolveOperatingHub(
+        allBranches,
+        settings,
+        pickupBranchId || vehicle.branchId
+      );
+
       const defaultLat = hub.id === 'branch-central-hub' ? (settings.hubLat ?? hub.lat) : hub.lat;
       const defaultLng = hub.id === 'branch-central-hub' ? (settings.hubLng ?? hub.lng) : hub.lng;
 
@@ -779,7 +851,7 @@ async function startServer() {
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
         returnLng: Number(returnLng ?? pickupLng ?? defaultLng),
         pickupBranch: hub,
-        allBranches,
+        allBranches: effectiveBranches,
         vehicle,
         settings,
       });
@@ -879,17 +951,14 @@ async function startServer() {
       }
 
       const vehicle = vehSnap.data() as Vehicle;
-      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
-      const targetBranchId = String(pickupBranchId || vehicle.branchId || 'branch-central-hub');
-      const hub =
-        allBranches.find((b) => b.id === targetBranchId) ||
-        allBranches.find((b) => b.id === 'branch-central-hub') ||
-        allBranches[0];
-      if (!hub) {
-        return res.status(404).json({ error: 'Operating branch configuration missing.' });
-      }
-
       const settings = settingsSnap.data() as CompanySettings;
+      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
+      const { hub, effectiveBranches } = resolveOperatingHub(
+        allBranches,
+        settings,
+        pickupBranchId || vehicle.branchId
+      );
+
       const defaultLat = hub.id === 'branch-central-hub' ? (settings.hubLat ?? hub.lat) : hub.lat;
       const defaultLng = hub.id === 'branch-central-hub' ? (settings.hubLng ?? hub.lng) : hub.lng;
 
@@ -900,7 +969,7 @@ async function startServer() {
         returnLat: Number(returnLat ?? pickupLat ?? defaultLat),
         returnLng: Number(returnLng ?? pickupLng ?? defaultLng),
         pickupBranch: hub,
-        allBranches,
+        allBranches: effectiveBranches,
         vehicle,
         settings,
       });
@@ -1164,6 +1233,11 @@ async function startServer() {
       if (matchedRole && !profile.roleName) profile.roleName = matchedRole.name;
       if (matchedRole && !profile.branchScope) profile.branchScope = matchedRole.branchScope;
 
+      if (portal === 'master' && !canAccessMasterConsole(profile)) {
+        return res.status(403).json({
+          error: 'Access denied: Master Admin platform privileges are required for this portal.',
+        });
+      }
       if (portal === 'admin' && !canAccessAdminConsole(profile, rolesList)) {
         if (profile.role !== 'customer') {
           await writeStaffLoginHistory({
@@ -1174,14 +1248,21 @@ async function startServer() {
             branchId: profile.branchId,
             portal: 'admin',
             outcome: 'denied',
-            reason: 'Account lacks Admin Console permissions',
+            reason: 'Account lacks Business Owner/Admin Console privileges',
             ipAddress: req.ip || 'unknown',
           });
         }
-        return res.status(403).json({ error: 'Access denied: This account does not have Admin Console privileges.' });
+        return res.status(403).json({
+          error:
+            profile.role === 'master_admin'
+              ? 'Master Admin accounts must sign in at the Platform Master Admin Portal (/master-admin).'
+              : 'Access denied: This account does not have Admin Console privileges.',
+        });
       }
-      if (portal === 'staff' && profile.role === 'customer') {
-        return res.status(403).json({ error: 'Access denied: Customer accounts cannot enter the Staff Operations Portal.' });
+      if (portal === 'staff' && (profile.role === 'customer' || profile.role === 'master_admin')) {
+        return res.status(403).json({
+          error: 'Access denied: Only branch operations staff may enter the Staff Operations Portal.',
+        });
       }
 
       const now = new Date().toISOString();
@@ -1229,6 +1310,51 @@ async function startServer() {
       tokenVersion,
     });
     res.json({ profile: req.authUser!.profile, token });
+  });
+
+  app.post('/api/auth/sync-phone', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const profile = req.authUser!.profile;
+      const phone = req.authUser!.phoneNumber || String(req.body?.phone || '');
+      const normalized = normalizeIndianPhone(phone);
+      const displayName = String(req.body?.displayName || '').trim();
+      const now = new Date().toISOString();
+
+      if (displayName && (!profile.displayName || profile.displayName === 'Customer')) {
+        await db.collection('users').doc(uid).update({ displayName, updatedAt: now, lastLoginAt: now });
+        profile.displayName = displayName;
+      } else {
+        await db.collection('users').doc(uid).update({ lastLoginAt: now });
+      }
+
+      if (normalized) {
+        await db.collection('users').doc(uid).collection('private').doc('info').set(
+          { phone: `+${normalized}`, updatedAt: now },
+          { merge: true }
+        );
+        await writeOtpLog({
+          phone: normalized,
+          purpose: 'login',
+          channel: 'firebase_phone',
+          status: 'verified',
+          userId: uid,
+          isDemoMode: false,
+          detail: 'Verified via Firebase Phone Authentication.',
+        });
+      }
+
+      const tokenVersion = await getTokenVersion(uid);
+      const token = signSessionToken({
+        uid,
+        email: req.authUser!.email || '',
+        role: profile.role,
+        tokenVersion,
+      });
+      res.json({ profile, token });
+    } catch (err) {
+      res.status(500).json({ error: 'Unable to sync Firebase Phone Auth session.' });
+    }
   });
 
   app.post('/api/auth/logout-all', requireAuth, async (req: AuthRequest, res) => {
@@ -1322,13 +1448,18 @@ async function startServer() {
       });
 
       if (!result.ok) {
-        return res.status(result.statusCode).json({ error: result.message, cooldownSeconds: result.cooldownSeconds });
+        return res.status(result.statusCode).json({
+          error: result.message,
+          cooldownSeconds: result.cooldownSeconds,
+          deliveryChannel: result.deliveryChannel,
+        });
       }
       return res.json({
         challengeId: result.challengeId,
         expiresInSeconds: result.expiresInSeconds,
         cooldownSeconds: result.cooldownSeconds,
         deliveryChannel: result.deliveryChannel,
+        isDemoOtpEligible: Boolean(result.isDemoOtpEligible),
         message: result.message,
       });
     } catch (err) {
@@ -1470,17 +1601,14 @@ async function startServer() {
       }
 
       const vehicle = vehSnap.data() as Vehicle;
-      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
-      const targetBranchId = String(pickupBranchId || vehicle.branchId || 'branch-central-hub');
-      const hub =
-        allBranches.find((b) => b.id === targetBranchId) ||
-        allBranches.find((b) => b.id === 'branch-central-hub') ||
-        allBranches[0];
-      if (!hub) {
-        return res.status(404).json({ error: 'Assigned operating branch is unavailable.' });
-      }
-
       const settings = settingsSnap.data() as CompanySettings;
+      const allBranches = branchesSnap.docs.map((d) => d.data() as Branch);
+      const { hub, effectiveBranches } = resolveOperatingHub(
+        allBranches,
+        settings,
+        pickupBranchId || vehicle.branchId
+      );
+
       const resolvedPaymentMode = ((paymentMode || 'full') as PaymentMode) === 'advance_balance' ? 'advance_balance' : 'full';
       if (resolvedPaymentMode === 'full' && settings.fullPaymentEnabled === false) {
         return res.status(400).json({ error: 'Full payment upfront is disabled; please select Advance + Balance mode.' });
@@ -1503,7 +1631,7 @@ async function startServer() {
         returnLat: resolvedReturnLat,
         returnLng: resolvedReturnLng,
         pickupBranch: hub,
-        allBranches,
+        allBranches: effectiveBranches,
         vehicle,
         settings,
       });
@@ -5869,7 +5997,7 @@ async function startServer() {
     }
   );
 
-  // Full Website & Central Hub Settings Sync (Preserves Multi-Branch Vehicles)
+  // Full Website & Central Hub Settings Sync (Preserves Multi-Branch Vehicles + Validates Dynamic Social URLs)
   app.put(
     '/api/admin/settings',
     requireAuth,
@@ -5880,6 +6008,55 @@ async function startServer() {
         const body = { ...req.body } as Partial<CompanySettings>;
         delete body.id;
         const now = new Date().toISOString();
+
+        // Validate & normalize structured socialProfiles if supplied
+        if (Array.isArray(body.socialProfiles)) {
+          const sanitizedProfiles: SocialProfileItem[] = [];
+          for (let idx = 0; idx < body.socialProfiles.length; idx++) {
+            const p = body.socialProfiles[idx];
+            const cleanUrl = String(p?.url || '').trim();
+            if (!cleanUrl || (!cleanUrl.startsWith('https://') && !cleanUrl.startsWith('http://'))) {
+              return res.status(400).json({
+                error: `Social link '${p?.displayName || p?.platform || idx + 1}' must begin with https:// or http://`,
+              });
+            }
+            sanitizedProfiles.push({
+              id: String(p.id || `soc-${p.platform || 'custom'}-${idx + 1}`),
+              platform: (p.platform || 'custom') as SocialProfileItem['platform'],
+              displayName: String(p.displayName || p.platform || 'Social Link').trim().slice(0, 60),
+              url: cleanUrl.slice(0, 300),
+              enabled: p.enabled !== false,
+              order: Number(p.order ?? idx + 1),
+            });
+          }
+          body.socialProfiles = sanitizedProfiles;
+          // Mirror enabled profiles back to legacy socialLinks for backward compatibility
+          const legacyLinks: CompanySettings['socialLinks'] = {
+            instagram: '',
+            facebook: '',
+            youtube: '',
+            twitter: '',
+            linkedin: '',
+            other: '',
+          };
+          for (const item of sanitizedProfiles.filter((s) => s.enabled)) {
+            if (item.platform === 'instagram') legacyLinks.instagram = item.url;
+            else if (item.platform === 'facebook') legacyLinks.facebook = item.url;
+            else if (item.platform === 'youtube') legacyLinks.youtube = item.url;
+            else if (item.platform === 'twitter') legacyLinks.twitter = item.url;
+            else if (item.platform === 'linkedin') legacyLinks.linkedin = item.url;
+            else if (!legacyLinks.other) legacyLinks.other = item.url;
+          }
+          body.socialLinks = legacyLinks;
+        }
+
+        // Validate hex colors if provided
+        if (body.primaryColor && !/^#[0-9A-Fa-f]{6}$/.test(String(body.primaryColor).trim())) {
+          return res.status(400).json({ error: 'Primary accent color must be a valid 6-digit hex color (e.g. #C8A24D).' });
+        }
+        if (body.secondaryColor && !/^#[0-9A-Fa-f]{6}$/.test(String(body.secondaryColor).trim())) {
+          return res.status(400).json({ error: 'Secondary dark surface color must be a valid 6-digit hex color (e.g. #0F1420).' });
+        }
 
         await db.collection('company_settings').doc('default').set({ ...body, updatedAt: now }, { merge: true });
         const mergedSnap = await db.collection('company_settings').doc('default').get();
@@ -8050,6 +8227,375 @@ async function startServer() {
       }
     }
   );
+
+  // --- AI BOOKING CONCIERGE ASSISTANT (SERVER-SIDE @google/genai + REAL TOOLS) ---
+  app.post('/api/ai/assistant', rateLimit(30, 60000), async (req, res) => {
+    try {
+      // Optionally hydrate signed-in customer context if Authorization Bearer header is provided
+      if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        await new Promise<void>((resolve) => {
+          requireAuth(req as any, { ...res, status: () => ({ json: () => resolve() }) } as any, () => resolve());
+        }).catch(() => undefined);
+      }
+      const authUser = (req as AuthRequest).authUser;
+      const { message, history, language } = req.body as {
+        message?: string;
+        history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+        language?: SupportedLanguage;
+      };
+
+      const reply = await handleAiAssistantChat({
+        message: String(message || ''),
+        history: Array.isArray(history) ? history : [],
+        language: language === 'hi' || language === 'mr' ? language : 'en',
+        userId: authUser?.uid,
+        userProfile: authUser?.profile || null,
+      });
+
+      res.json(reply);
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'AI Concierge could not process your request.' });
+    }
+  });
+
+  // --- BUSINESS ADMIN AI & AUTH/OTP CONFIGURATION ---
+  app.get(
+    '/api/admin/ai-config',
+    requireAuth,
+    requirePermission(['manage_ai_config', 'manage_integrations', 'manage_website_settings']),
+    async (_req, res) => {
+      try {
+        const [config, logsSnap] = await Promise.all([
+          getAiConfig(),
+          db.collection('ai_usage_logs').orderBy('createdAt', 'desc').limit(80).get(),
+        ]);
+        res.json({ config, logs: logsSnap.docs.map((d) => d.data()) });
+      } catch {
+        res.status(500).json({ error: 'Failed to load AI configuration.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/ai-config',
+    requireAuth,
+    requirePermission(['manage_ai_config', 'manage_website_settings']),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = req.authUser!.profile;
+        const config = await updateAiConfig(req.body || {}, actor.uid);
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorName: actor.displayName,
+          actorRole: actor.role,
+          module: 'AI Assistant',
+          action: 'UPDATE_AI_CONFIG',
+          targetType: 'ai_config',
+          targetId: 'default',
+          details: `AI Assistant ${config.enabled ? 'Enabled' : 'Disabled'} (${config.modelName}, bookings ${config.bookingEnabled ? 'on' : 'off'}).`,
+        });
+        res.json({ config });
+      } catch {
+        res.status(500).json({ error: 'Failed to update AI configuration.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/admin/auth-otp-config',
+    requireAuth,
+    requirePermission(['manage_auth_config', 'manage_integrations', 'manage_website_settings']),
+    async (_req, res) => {
+      try {
+        const [config, logsSnap] = await Promise.all([
+          getAuthOtpConfig(),
+          db.collection('otp_verification_logs').orderBy('createdAt', 'desc').limit(100).get(),
+        ]);
+        res.json({ config, logs: logsSnap.docs.map((d) => d.data()) });
+      } catch {
+        res.status(500).json({ error: 'Failed to load Auth & OTP configuration.' });
+      }
+    }
+  );
+
+  app.put(
+    '/api/admin/auth-otp-config',
+    requireAuth,
+    requirePermission(['manage_auth_config', 'manage_website_settings']),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = req.authUser!.profile;
+        const config = await updateAuthOtpConfig(req.body || {}, actor.uid);
+        await writeAuditLog({
+          actorUid: actor.uid,
+          actorName: actor.displayName,
+          actorRole: actor.role,
+          module: 'Auth & OTP',
+          action: 'UPDATE_AUTH_OTP_CONFIG',
+          targetType: 'auth_otp_config',
+          targetId: 'default',
+          details: `Demo OTP=${config.demoOtpEnabled}, FirebasePhone=${config.firebasePhoneAuthEnabled}, WhatsAppOTP=${config.whatsappOtpEnabled}, TestPhones=${config.authorizedTestPhones.length}.`,
+        });
+        res.json({ config });
+      } catch {
+        res.status(500).json({ error: 'Failed to update Auth & OTP configuration.' });
+      }
+    }
+  );
+
+  // --- MASTER ADMIN PLATFORM CONTROL PLANE (ISOLATED — REJECTS BUSINESS OWNERS & STAFF WITH 403) ---
+  app.get('/api/master/overview', requireAuth, requireMasterAdmin, async (_req, res) => {
+    try {
+      const [
+        tenantsSnap,
+        usersSnap,
+        vehiclesSnap,
+        bookingsSnap,
+        paymentsSnap,
+        branchesSnap,
+        authOtpConfig,
+        aiConfig,
+        waConfig,
+        aiLogsSnap,
+        otpLogsSnap,
+        auditLogsSnap,
+      ] = await Promise.all([
+        db.collection('platform_tenants').get(),
+        db.collection('users').get(),
+        db.collection('vehicles').get(),
+        db.collection('bookings').get(),
+        db.collection('payments').get(),
+        db.collection('branches').get(),
+        getAuthOtpConfig(),
+        getAiConfig(),
+        getWhatsAppConfig(),
+        db.collection('ai_usage_logs').orderBy('createdAt', 'desc').limit(100).get(),
+        db.collection('otp_verification_logs').orderBy('createdAt', 'desc').limit(100).get(),
+        db.collection('audit_logs').orderBy('timestamp', 'desc').limit(120).get(),
+      ]);
+
+      const users = usersSnap.docs.map((d) => d.data() as UserProfile);
+      const owners = users.filter((u) => u.role === 'super_admin');
+      const staff = users.filter((u) => !['customer', 'super_admin', 'master_admin'].includes(u.role));
+      const customers = users.filter((u) => u.role === 'customer');
+      const vehicles = vehiclesSnap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.archived);
+      const bookings = bookingsSnap.docs.map((d) => d.data() as Booking);
+      const payments = paymentsSnap.docs.map((d) => d.data() as any);
+      const verifiedRevenue = payments
+        .filter((p) => p.status === 'Verified' || p.status === 'Success')
+        .reduce((acc, p) => acc + Number(p.amount || 0), 0);
+
+      res.json({
+        summary: {
+          totalTenants: tenantsSnap.size,
+          totalOwners: owners.length,
+          totalStaff: staff.length,
+          totalCustomers: customers.length,
+          totalVehicles: vehicles.length,
+          activeBranches: branchesSnap.docs.map((d) => d.data() as Branch).filter((b) => b.active).length,
+          totalBookings: bookings.length,
+          verifiedRevenueInr: verifiedRevenue,
+          environmentMode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+          geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
+          mapsKeyConfigured: Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY),
+        },
+        tenants: tenantsSnap.docs.map((d) => d.data() as PlatformTenantConfig),
+        owners,
+        authOtpConfig,
+        aiConfig,
+        waConfig,
+        aiLogs: aiLogsSnap.docs.map((d) => d.data()),
+        otpLogs: otpLogsSnap.docs.map((d) => d.data()),
+        auditLogs: auditLogsSnap.docs.map((d) => d.data()),
+      });
+    } catch (err) {
+      console.error('Master overview error:', err);
+      res.status(500).json({ error: 'Failed to load Master Admin platform overview.' });
+    }
+  });
+
+  app.put('/api/master/tenants/:id', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const tenantId = req.params.id;
+      const ref = db.collection('platform_tenants').doc(tenantId);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Tenant record not found.' });
+
+      const body = req.body || {};
+      const patch: Partial<PlatformTenantConfig> = {
+        ...(body.businessName !== undefined ? { businessName: String(body.businessName).trim().slice(0, 120) } : {}),
+        ...(body.primaryCity !== undefined ? { primaryCity: String(body.primaryCity).trim().slice(0, 80) } : {}),
+        ...(body.status === 'active' || body.status === 'suspended' ? { status: body.status } : {}),
+        ...(body.aiAssistantEnabled !== undefined ? { aiAssistantEnabled: Boolean(body.aiAssistantEnabled) } : {}),
+        ...(body.demoOtpEnabled !== undefined ? { demoOtpEnabled: Boolean(body.demoOtpEnabled) } : {}),
+        ...(body.whatsappAutomationEnabled !== undefined
+          ? { whatsappAutomationEnabled: Boolean(body.whatsappAutomationEnabled) }
+          : {}),
+        ...(body.firebasePhoneAuthEnabled !== undefined
+          ? { firebasePhoneAuthEnabled: Boolean(body.firebasePhoneAuthEnabled) }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      await ref.set(patch, { merge: true });
+      const updated = (await ref.get()).data() as PlatformTenantConfig;
+
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Master Platform',
+        action: 'UPDATE_TENANT_FLAGS',
+        targetType: 'platform_tenant',
+        targetId: tenantId,
+        details: `Updated tenant '${updated.businessName}' (status=${updated.status}, ai=${updated.aiAssistantEnabled}).`,
+      });
+      res.json({ tenant: updated });
+    } catch {
+      res.status(500).json({ error: 'Failed to update platform tenant.' });
+    }
+  });
+
+  app.post('/api/master/owners', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const { displayName, email, password, phone, businessName, primaryCity } = req.body || {};
+      const cleanEmail = String(email || '').trim().toLowerCase();
+      if (!displayName || !cleanEmail || !password || String(password).length < 6) {
+        return res.status(400).json({ error: 'Owner displayName, valid email, and password (min 6 chars) required.' });
+      }
+      const existing = await db.collection('auth_credentials').where('email', '==', cleanEmail).limit(1).get();
+      if (!existing.empty) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+
+      const now = new Date().toISOString();
+      const uid = `owner-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+      const ownerProfile: UserProfile = {
+        uid,
+        displayName: String(displayName).trim(),
+        email: cleanEmail,
+        phone: String(phone || '').trim(),
+        role: 'super_admin',
+        roleId: 'role-super-admin',
+        roleName: 'Super Admin (Owner)',
+        permissions: ROLE_DEFAULT_PERMISSIONS.super_admin,
+        active: true,
+        branchId: 'branch-central-hub',
+        branchIds: ['branch-central-hub'],
+        branchScope: 'all',
+        accountStatus: 'active',
+        kycStatus: 'Verified',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.collection('users').doc(uid).set(ownerProfile);
+      await db.collection('users').doc(uid).collection('private').doc('info').set({
+        uid,
+        email: cleanEmail,
+        phone: String(phone || '').trim(),
+        savedAddresses: [],
+        favouriteVehicleIds: [],
+        marketingConsent: false,
+        whatsappConsent: true,
+        whatsappOptOut: false,
+        serviceConsentVersion: 'v1.0',
+        serviceConsentAt: now,
+        updatedAt: now,
+      });
+      await db.collection('auth_credentials').doc(uid).set({
+        uid,
+        email: cleanEmail,
+        passwordHash: hashPassword(String(password)),
+        tokenVersion: 1,
+        updatedAt: now,
+      });
+      await db.collection('admins').doc(uid).set({
+        uid,
+        role: 'super_admin',
+        branchId: 'branch-central-hub',
+        active: true,
+        updatedAt: now,
+      });
+
+      let tenant: PlatformTenantConfig | null = null;
+      if (businessName) {
+        const tId = `tenant-${Date.now()}`;
+        tenant = {
+          id: tId,
+          businessName: String(businessName).trim(),
+          slug: String(businessName).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40),
+          ownerUid: uid,
+          ownerName: ownerProfile.displayName,
+          ownerEmail: cleanEmail,
+          primaryCity: String(primaryCity || 'Mumbai').trim(),
+          status: 'active',
+          aiAssistantEnabled: true,
+          demoOtpEnabled: process.env.NODE_ENV !== 'production',
+          whatsappAutomationEnabled: false,
+          firebasePhoneAuthEnabled: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await db.collection('platform_tenants').doc(tId).set(tenant);
+      }
+
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Master Platform',
+        action: 'CREATE_BUSINESS_OWNER',
+        targetType: 'user',
+        targetId: uid,
+        details: `Provisioned Owner '${ownerProfile.displayName}' (${cleanEmail}).`,
+      });
+
+      res.json({ owner: ownerProfile, tenant });
+    } catch {
+      res.status(500).json({ error: 'Failed to create business owner.' });
+    }
+  });
+
+  app.put('/api/master/auth-otp-config', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const config = await updateAuthOtpConfig(req.body || {}, actor.uid);
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Master Platform',
+        action: 'MASTER_UPDATE_AUTH_OTP',
+        targetType: 'auth_otp_config',
+        targetId: 'default',
+        details: `Updated global Auth/OTP flags (DemoOTP=${config.demoOtpEnabled}, FirebasePhone=${config.firebasePhoneAuthEnabled}).`,
+      });
+      res.json({ config });
+    } catch {
+      res.status(500).json({ error: 'Failed to update global Auth & OTP settings.' });
+    }
+  });
+
+  app.put('/api/master/ai-config', requireAuth, requireMasterAdmin, async (req: AuthRequest, res) => {
+    try {
+      const actor = req.authUser!.profile;
+      const config = await updateAiConfig(req.body || {}, actor.uid);
+      await writeAuditLog({
+        actorUid: actor.uid,
+        actorName: actor.displayName,
+        actorRole: actor.role,
+        module: 'Master Platform',
+        action: 'MASTER_UPDATE_AI_CONFIG',
+        targetType: 'ai_config',
+        targetId: 'default',
+        details: `Updated global AI Assistant config (enabled=${config.enabled}, model=${config.modelName}).`,
+      });
+      res.json({ config });
+    } catch {
+      res.status(500).json({ error: 'Failed to update global AI configuration.' });
+    }
+  });
 
   // JSON 404 for unknown API paths
   app.all('/api/*', (req, res) => {

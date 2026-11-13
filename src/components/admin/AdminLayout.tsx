@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   BarChart3,
   Bell,
+  Bot,
   Building2,
   CalendarClock,
   Car,
@@ -113,6 +114,12 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     label: 'Integrations Console',
     icon: PlugZap,
     requiredAny: ['view_integrations', 'manage_integrations', 'manage_whatsapp'],
+  },
+  {
+    key: 'ai_auth',
+    label: 'AI & Auth / OTP Config',
+    icon: Bot,
+    requiredAny: ['manage_ai_config', 'manage_auth_config', 'manage_website_settings', 'manage_integrations'],
   },
   {
     key: 'audit_history',

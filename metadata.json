@@ -2,5 +2,5 @@
   "name": "EliteDrive Car Rentals",
   "description": "Premium car rental booking platform with multi-panel access for users, staff, and admins.",
   "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -12,6 +12,7 @@ import {
 import {
   AlertTriangle,
   ArrowRight,
+  Building2,
   CheckCircle2,
   LocateFixed,
   MapPin,
@@ -96,7 +97,6 @@ function useAutocompleteSuggestions(input: string, biasCenter: { lat: number; ln
           }
         })
         .catch((err: unknown) => {
-          console.error('Autocomplete error:', err);
           const msg = String(err);
           if (
             msg.includes('RESOURCE_EXHAUSTED') ||
@@ -150,21 +150,35 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
 }) => {
   const navigate = useNavigate();
   const { settings } = useCatalog();
-  const activeBranches = branches.filter((b) => b.active !== false);
-  const centralHub =
-    branches.find((b) => b.id === (value.pickupBranchId || vehicle.branchId)) ||
-    branches.find((b) => b.id === vehicle.branchId) ||
-    branches.find((b) => b.id === 'branch-central-hub') ||
-    branches[0];
 
-  const isCentralHub = !centralHub || centralHub.id === 'branch-central-hub';
-  const hubLat = Number((isCentralHub ? settings?.hubLat : undefined) ?? centralHub?.lat ?? 19.076);
-  const hubLng = Number((isCentralHub ? settings?.hubLng : undefined) ?? centralHub?.lng ?? 72.8777);
-  const hubRadiusKm = Number((isCentralHub ? settings?.serviceRadiusKm : undefined) ?? centralHub?.deliveryRadiusKm ?? 25);
-  const operatingCity = centralHub?.cityName || vehicle.cityName || settings?.operatingCityName || 'Mumbai';
+  // Branch visibility MUST hide all branch UI whenever activeBranches.length === 0
+  const activeBranches = branches.filter((b) => b.active === true);
+  const hasBranches = activeBranches.length > 0;
+
+  const selectedActiveBranch = hasBranches
+    ? activeBranches.find((b) => b.id === value.pickupBranchId) ||
+      activeBranches.find((b) => b.id === vehicle.branchId) ||
+      activeBranches[0]
+    : null;
+
+  const hubLat = Number(selectedActiveBranch?.lat ?? settings?.hubLat ?? 19.076);
+  const hubLng = Number(selectedActiveBranch?.lng ?? settings?.hubLng ?? 72.8777);
+  const hubRadiusKm = Number(
+    selectedActiveBranch?.deliveryRadiusKm ?? settings?.serviceRadiusKm ?? 25
+  );
+  const operatingCity =
+    selectedActiveBranch?.cityName ||
+    settings?.operatingCityName ||
+    vehicle.cityName ||
+    'Mumbai';
   const hubAddress =
-    (isCentralHub ? settings?.businessAddress : undefined) || centralHub?.address || `${operatingCity} Fleet Hub`;
-  const hubName = (isCentralHub ? settings?.officeName : undefined) || centralHub?.name || vehicle.branchName || `${operatingCity} Hub`;
+    selectedActiveBranch?.address ||
+    settings?.businessAddress ||
+    `${operatingCity} Central Fleet Lounge`;
+  const hubName =
+    selectedActiveBranch?.name ||
+    settings?.officeName ||
+    `${operatingCity} Central Hub`;
 
   const [activeTab, setActiveTab] = useState<'pickup' | 'return'>('pickup');
   const [sameReturn, setSameReturn] = useState(
@@ -218,7 +232,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
           method: 'POST',
           body: JSON.stringify({
             vehicleId: vehicle.id,
-            pickupBranchId: draft.pickupBranchId,
+            pickupBranchId: hasBranches ? draft.pickupBranchId : 'branch-central-hub',
             pickupMode: draft.pickupMode,
             pickupLat: draft.pickupLat,
             pickupLng: draft.pickupLng,
@@ -227,17 +241,19 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
           }),
         });
 
+        const resolvedBranchId =
+          res.branchId || selectedActiveBranch?.id || draft.pickupBranchId || 'branch-central-hub';
         onChange({
           ...draft,
-          pickupBranchId: res.branchId || centralHub?.id || draft.pickupBranchId || 'branch-central-hub',
-          returnBranchId: centralHub?.id || draft.returnBranchId || 'branch-central-hub',
+          pickupBranchId: resolvedBranchId,
+          returnBranchId: selectedActiveBranch?.id || draft.returnBranchId || 'branch-central-hub',
           isOneWay: false,
           serviceable: res.serviceable,
           serviceReason: res.reason,
           distanceKm: res.distanceKm,
           deliveryCharge: res.deliveryCharge || 0,
           oneWayCharge: res.oneWayCharge || 0,
-          suggestedBranch: res.suggestedBranch || null,
+          suggestedBranch: hasBranches ? res.suggestedBranch || null : null,
         });
       } catch (err: any) {
         onChange({
@@ -250,8 +266,33 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
         setValidating(false);
       }
     },
-    [vehicle.id, centralHub?.id, onChange]
+    [vehicle.id, hasBranches, selectedActiveBranch?.id, onChange]
   );
+
+  const handleSelectBranch = (branchId: string) => {
+    const chosen = activeBranches.find((b) => b.id === branchId);
+    if (!chosen) return;
+    setPanCommand({ lat: chosen.lat, lng: chosen.lng });
+    if (value.pickupMode === 'branch') {
+      void validateAndSync({
+        ...value,
+        pickupBranchId: chosen.id,
+        returnBranchId: chosen.id,
+        pickupAddress: chosen.address,
+        pickupLat: chosen.lat,
+        pickupLng: chosen.lng,
+        returnAddress: chosen.address,
+        returnLat: chosen.lat,
+        returnLng: chosen.lng,
+      });
+    } else {
+      void validateAndSync({
+        ...value,
+        pickupBranchId: chosen.id,
+        returnBranchId: chosen.id,
+      });
+    }
+  };
 
   const handleSwitchPinTab = (nextTab: 'pickup' | 'return') => {
     setActiveTab(nextTab);
@@ -366,7 +407,6 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
         setPanCommand({ lat, lng });
       }
     } catch (err) {
-      console.error('Place fetchFields error:', err);
       const msg = String(err);
       if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
         window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
@@ -435,7 +475,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
       className={
         fullScreenMobile
           ? 'fixed inset-0 z-50 bg-obsidian flex flex-col'
-          : 'relative rounded-xl overflow-hidden border border-black/15 h-[320px] sm:h-[380px] lg:h-[430px] w-full bg-alabaster'
+          : 'relative rounded-xl overflow-hidden border border-white/15 h-[320px] sm:h-[380px] lg:h-[420px] w-full bg-obsidian'
       }
     >
       {fullScreenMobile && (
@@ -453,82 +493,78 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
 
       <div className="relative flex-1 w-full h-full">
         {MAPS_API_KEY ? (
-          <>
-            <GoogleMap
-              mapId="DEMO_MAP_ID"
-              defaultCenter={{ lat: hubLat, lng: hubLng }}
-              defaultZoom={13}
-              gestureHandling="greedy"
-              disableDefaultUI={false}
-              internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-              onCameraChanged={handleCameraChanged}
-              style={{ width: '100%', height: '100%' }}
-            >
-              <MapPanSync target={panCommand} onPanned={handleClearPan} />
+          <GoogleMap
+            mapId="DEMO_MAP_ID"
+            defaultCenter={{ lat: hubLat, lng: hubLng }}
+            defaultZoom={13}
+            gestureHandling="greedy"
+            disableDefaultUI={false}
+            internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+            onCameraChanged={handleCameraChanged}
+            style={{ width: '100%', height: '100%' }}
+          >
+            <MapPanSync target={panCommand} onPanned={handleClearPan} />
 
-              {/* Branch Service Coverage Circles */}
-              {activeBranches.length > 0 ? (
-                activeBranches.map((branch) => {
-                  const isCurrent = branch.id === (centralHub?.id || vehicle.branchId);
-                  return (
-                    <React.Fragment key={branch.id}>
-                      <Circle
-                        center={{ lat: branch.lat, lng: branch.lng }}
-                        radius={Number(branch.deliveryRadiusKm || hubRadiusKm) * 1000}
-                        strokeColor={isCurrent ? '#C8A24D' : '#6B7280'}
-                        strokeOpacity={isCurrent ? 0.85 : 0.45}
-                        strokeWeight={isCurrent ? 2 : 1}
-                        fillColor={isCurrent ? '#C8A24D' : '#6B7280'}
-                        fillOpacity={isCurrent ? 0.08 : 0.03}
+            {hasBranches ? (
+              activeBranches.map((branch) => {
+                const isCurrent = branch.id === selectedActiveBranch?.id;
+                return (
+                  <React.Fragment key={branch.id}>
+                    <Circle
+                      center={{ lat: branch.lat, lng: branch.lng }}
+                      radius={Number(branch.deliveryRadiusKm || hubRadiusKm) * 1000}
+                      strokeColor={isCurrent ? '#C8A24D' : '#6B7280'}
+                      strokeOpacity={isCurrent ? 0.85 : 0.45}
+                      strokeWeight={isCurrent ? 2 : 1}
+                      fillColor={isCurrent ? '#C8A24D' : '#6B7280'}
+                      fillOpacity={isCurrent ? 0.08 : 0.03}
+                    />
+                    <AdvancedMarker position={{ lat: branch.lat, lng: branch.lng }} title={branch.name}>
+                      <Pin
+                        background={isCurrent ? '#0B0B0D' : '#374151'}
+                        borderColor={isCurrent ? '#C8A24D' : '#9CA3AF'}
+                        glyphColor={isCurrent ? '#C8A24D' : '#FFFFFF'}
                       />
-                      <AdvancedMarker position={{ lat: branch.lat, lng: branch.lng }} title={branch.name}>
-                        <Pin
-                          background={isCurrent ? '#0B0B0D' : '#374151'}
-                          borderColor={isCurrent ? '#C8A24D' : '#9CA3AF'}
-                          glyphColor={isCurrent ? '#C8A24D' : '#FFFFFF'}
-                        />
-                      </AdvancedMarker>
-                    </React.Fragment>
-                  );
-                })
-              ) : (
-                <>
-                  <Circle
-                    center={{ lat: hubLat, lng: hubLng }}
-                    radius={hubRadiusKm * 1000}
-                    strokeColor="#C8A24D"
-                    strokeOpacity={0.8}
-                    strokeWeight={2}
-                    fillColor="#C8A24D"
-                    fillOpacity={0.07}
-                  />
-                  <AdvancedMarker position={{ lat: hubLat, lng: hubLng }} title={hubName}>
-                    <Pin background="#0B0B0D" borderColor="#C8A24D" glyphColor="#C8A24D" />
-                  </AdvancedMarker>
-                </>
-              )}
-
-              {/* Draggable Delivery Pickup / Return Marker */}
-              {value.pickupMode === 'delivery' && (
-                <AdvancedMarker
-                  position={{ lat: pendingPoint.lat, lng: pendingPoint.lng }}
-                  draggable
-                  title={activeTab === 'pickup' ? 'Drag to adjust Pickup location' : 'Drag to adjust Return location'}
-                  onDragEnd={(ev) => void handleMarkerDragEnd(ev)}
-                >
-                  <Pin background="#C8A24D" borderColor="#0B0B0D" glyphColor="#0B0B0D" scale={1.15} />
+                    </AdvancedMarker>
+                  </React.Fragment>
+                );
+              })
+            ) : (
+              <>
+                <Circle
+                  center={{ lat: hubLat, lng: hubLng }}
+                  radius={hubRadiusKm * 1000}
+                  strokeColor="#C8A24D"
+                  strokeOpacity={0.8}
+                  strokeWeight={2}
+                  fillColor="#C8A24D"
+                  fillOpacity={0.07}
+                />
+                <AdvancedMarker position={{ lat: hubLat, lng: hubLng }} title={hubName}>
+                  <Pin background="#0B0B0D" borderColor="#C8A24D" glyphColor="#C8A24D" />
                 </AdvancedMarker>
-              )}
-            </GoogleMap>
-          </>
+              </>
+            )}
+
+            {value.pickupMode === 'delivery' && (
+              <AdvancedMarker
+                position={{ lat: pendingPoint.lat, lng: pendingPoint.lng }}
+                draggable
+                title={activeTab === 'pickup' ? 'Drag to adjust Pickup location' : 'Drag to adjust Return location'}
+                onDragEnd={(ev) => void handleMarkerDragEnd(ev)}
+              >
+                <Pin background="#C8A24D" borderColor="#0B0B0D" glyphColor="#0B0B0D" scale={1.15} />
+              </AdvancedMarker>
+            )}
+          </GoogleMap>
         ) : (
-          <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center bg-alabaster space-y-2">
+          <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center bg-navy-deep space-y-2.5 text-ivory">
             <MapPin className="w-7 h-7 text-gold" />
-            <p className="text-sm font-semibold text-ink">
-              {hubName} | {hubRadiusKm} km Service Coverage
+            <p className="text-sm font-semibold text-white">
+              {hubName} · {hubRadiusKm} km Service Coverage
             </p>
-            <p className="text-xs text-slate-muted max-w-sm">
-              Interactive map tiles load when Google Maps key is active. Use GPS or enter your {operatingCity} address below and confirm coverage.
+            <p className="text-xs text-ivory/65 max-w-sm">
+              Enter your {operatingCity} street address or landmark below or enable GPS to verify delivery radius.
             </p>
             {value.pickupMode === 'delivery' && (
               <input
@@ -536,42 +572,41 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
                 value={pendingPoint.address}
                 onChange={(e) => setPendingPoint((p) => ({ ...p, address: e.target.value }))}
                 placeholder={`Enter street / landmark in ${operatingCity}`}
-                className="w-full max-w-sm px-3 py-2 text-xs bg-white border border-black/15 rounded-lg"
+                className="w-full max-w-sm px-3 py-2 text-xs bg-obsidian border border-white/15 rounded-lg text-white placeholder:text-ivory/40"
               />
             )}
           </div>
         )}
 
-        {/* Floating Bottom GPS & Pin Confirmation Bar */}
         {value.pickupMode === 'delivery' && (
-          <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/95 backdrop-blur-sm border border-black/15 rounded-xl p-2.5 shadow-lg">
+          <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-obsidian/95 backdrop-blur-md border border-white/15 rounded-xl p-2.5 shadow-xl">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-muted">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gold">
                 {resolvingPin
                   ? 'Resolving address...'
                   : activeTab === 'pickup'
                     ? 'Selected Pickup Spot (Drag Gold Pin)'
                     : 'Selected Return Spot (Drag Gold Pin)'}
               </p>
-              <p className="text-xs font-medium text-ink truncate">{pendingPoint.address}</p>
+              <p className="text-xs font-medium text-white truncate">{pendingPoint.address}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={handleUseCurrentLocation}
                 disabled={gpsLoading}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border border-black/15 rounded-lg bg-alabaster hover:border-gold cursor-pointer whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border border-white/20 rounded-lg bg-navy-deep text-ivory hover:border-gold cursor-pointer whitespace-nowrap"
               >
-                <LocateFixed className="w-3.5 h-3.5 text-gold-hover" />
-                {gpsLoading ? 'Locating...' : 'Use My Current Location'}
+                <LocateFixed className="w-3.5 h-3.5 text-gold" />
+                {gpsLoading ? 'Locating...' : 'Use GPS'}
               </button>
               <button
                 type="button"
                 disabled={validating}
                 onClick={() => void handleConfirmPinLocation()}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-obsidian text-white rounded-lg hover:bg-graphite cursor-pointer whitespace-nowrap disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-gold text-obsidian rounded-lg hover:bg-gold-bright cursor-pointer whitespace-nowrap disabled:opacity-50"
               >
-                <Navigation className="w-3.5 h-3.5 text-gold" />
+                <Navigation className="w-3.5 h-3.5" />
                 {activeTab === 'pickup' ? 'Confirm Pickup' : 'Confirm Return'}
               </button>
             </div>
@@ -583,28 +618,28 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Pickup Mode Toggle + Mobile Fullscreen Map Button */}
+      {/* Pickup Mode Toggle + Branch Picker ONLY when activeBranches.length > 0 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex flex-wrap p-1 bg-alabaster border border-black/10 rounded-lg">
+        <div className="inline-flex flex-wrap p-1 bg-obsidian border border-white/15 rounded-xl">
           <button
             type="button"
             onClick={() => handleModeChange('branch')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
               value.pickupMode === 'branch'
-                ? 'bg-obsidian text-white'
-                : 'text-slate-muted hover:text-ink'
+                ? 'bg-gold text-obsidian'
+                : 'text-ivory/70 hover:text-white'
             }`}
           >
-            Self Pickup ({operatingCity} Hub — Free)
+            Self Pickup ({operatingCity} Lounge — Free)
           </button>
           <button
             type="button"
             disabled={!vehicle.deliveryEligible}
             onClick={() => handleModeChange('delivery')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40 ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40 ${
               value.pickupMode === 'delivery'
-                ? 'bg-obsidian text-white'
-                : 'text-slate-muted hover:text-ink'
+                ? 'bg-gold text-obsidian'
+                : 'text-ivory/70 hover:text-white'
             }`}
           >
             Doorstep Delivery ({operatingCity})
@@ -614,29 +649,50 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
         <button
           type="button"
           onClick={() => setFullScreenMobile((prev) => !prev)}
-          className="lg:hidden inline-flex items-center gap-1.5 text-xs font-semibold text-ink border border-black/15 px-3 py-1.5 rounded-md cursor-pointer"
+          className="lg:hidden inline-flex items-center gap-1.5 text-xs font-semibold text-ivory border border-white/15 px-3 py-1.5 rounded-lg cursor-pointer"
         >
           {fullScreenMobile ? (
-            <Minimize2 className="w-3.5 h-3.5" />
+            <Minimize2 className="w-3.5 h-3.5 text-gold" />
           ) : (
-            <Maximize2 className="w-3.5 h-3.5" />
+            <Maximize2 className="w-3.5 h-3.5 text-gold" />
           )}
           {fullScreenMobile ? 'Close Map' : 'Expand Map'}
         </button>
       </div>
 
-      {/* Desktop Side-by-Side (Controls Left / Interactive Map Right) + Mobile Stack */}
+      {/* Render Branch Switcher ONLY when active branches exist in DB */}
+      {hasBranches && activeBranches.length > 1 && (
+        <div className="p-3 rounded-xl bg-obsidian/70 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-ivory">
+            <Building2 className="w-3.5 h-3.5 text-gold" />
+            Active Pickup Branch
+          </span>
+          <select
+            value={selectedActiveBranch?.id || ''}
+            onChange={(e) => handleSelectBranch(e.target.value)}
+            className="px-3 py-1.5 rounded-lg bg-navy-deep border border-white/15 text-ivory text-xs focus:outline-none focus:border-gold"
+          >
+            {activeBranches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} — {b.cityName}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Side-by-Side Controls & Map */}
       <div className="grid lg:grid-cols-12 gap-4 items-start">
         <div className="lg:col-span-5 space-y-3">
           {value.pickupMode === 'delivery' ? (
-            <div className="space-y-3 p-3.5 rounded-xl border border-black/10 bg-white">
+            <div className="space-y-3 p-3.5 rounded-xl border border-white/10 bg-obsidian/70">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="inline-flex p-1 bg-alabaster border border-black/10 rounded-lg text-xs">
+                <div className="inline-flex p-1 bg-navy-deep border border-white/10 rounded-lg text-xs">
                   <button
                     type="button"
                     onClick={() => handleSwitchPinTab('pickup')}
                     className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
-                      activeTab === 'pickup' ? 'bg-gold text-obsidian' : 'text-slate-muted hover:text-ink'
+                      activeTab === 'pickup' ? 'bg-gold text-obsidian' : 'text-ivory/70 hover:text-white'
                     }`}
                   >
                     1. Pickup Spot
@@ -646,14 +702,14 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
                     disabled={sameReturn}
                     onClick={() => handleSwitchPinTab('return')}
                     className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer disabled:opacity-40 ${
-                      activeTab === 'return' ? 'bg-gold text-obsidian' : 'text-slate-muted hover:text-ink'
+                      activeTab === 'return' ? 'bg-gold text-obsidian' : 'text-ivory/70 hover:text-white'
                     }`}
                   >
                     2. Return Spot
                   </button>
                 </div>
 
-                <label className="inline-flex items-center gap-1.5 text-[11px] text-ink cursor-pointer">
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-ivory cursor-pointer">
                   <input
                     type="checkbox"
                     checked={sameReturn}
@@ -670,32 +726,32 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
                         });
                       }
                     }}
-                    className="accent-obsidian"
+                    className="accent-gold"
                   />
                   <span>Same return spot</span>
                 </label>
               </div>
 
               <div className="relative">
-                <Search className="w-4 h-4 text-slate-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-ivory/50 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
                   placeholder={`Search landmark or area in ${operatingCity}...`}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-navy-deep border border-white/15 rounded-lg text-white placeholder:text-ivory/40 focus:outline-none focus:border-gold"
                 />
                 {(suggestions.length > 0 || searchLoading) && (
-                  <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-black/15 rounded-lg shadow-xl z-30 max-h-56 overflow-y-auto">
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-obsidian border border-white/15 rounded-lg shadow-2xl z-30 max-h-56 overflow-y-auto">
                     {searchLoading && (
-                      <div className="px-3 py-2 text-xs text-slate-muted">Searching places...</div>
+                      <div className="px-3 py-2 text-xs text-ivory/60">Searching places...</div>
                     )}
                     {suggestions.map((sug, idx) => (
                       <button
                         key={idx}
                         type="button"
                         onClick={() => void handleSelectSuggestion(sug)}
-                        className="w-full text-left px-3 py-2.5 text-xs hover:bg-alabaster border-b border-black/5 last:border-0 flex items-start gap-2 cursor-pointer"
+                        className="w-full text-left px-3 py-2.5 text-xs text-ivory hover:bg-white/5 border-b border-white/10 last:border-0 flex items-start gap-2 cursor-pointer"
                       >
                         <MapPin className="w-3.5 h-3.5 text-gold shrink-0 mt-0.5" />
                         <span>{sug.placePrediction?.text.text}</span>
@@ -715,7 +771,7 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
                         setPendingPoint({ lat: addr.lat, lng: addr.lng, address: addr.address });
                         setPanCommand({ lat: addr.lat, lng: addr.lng });
                       }}
-                      className="text-[11px] px-2.5 py-1 border border-black/15 rounded-md bg-alabaster hover:border-gold transition-colors cursor-pointer"
+                      className="text-[11px] px-2.5 py-1 border border-white/15 rounded-md bg-navy-deep text-ivory hover:border-gold transition-colors cursor-pointer"
                     >
                       {addr.label}: {addr.cityName}
                     </button>
@@ -724,34 +780,34 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
               )}
             </div>
           ) : (
-            <div className="p-3.5 rounded-xl border border-black/10 bg-white space-y-1 text-xs">
-              <p className="font-semibold text-ink">Hub Self-Pickup Selected</p>
-              <p className="text-slate-muted leading-relaxed">
-                Collect keys directly at <strong>{hubName}</strong> ({hubAddress}). Switch to Doorstep Delivery above to drop a custom pickup pin.
+            <div className="p-3.5 rounded-xl border border-white/10 bg-obsidian/70 space-y-1 text-xs">
+              <p className="font-semibold text-white">Lounge Self-Pickup Selected</p>
+              <p className="text-ivory/70 leading-relaxed">
+                Collect keys directly at <strong className="text-gold">{hubName}</strong> ({hubAddress}). Switch to Doorstep Delivery above to drop a custom pickup pin.
               </p>
             </div>
           )}
 
           {/* Confirmed Pickup & Return Readout */}
           <div className="space-y-2.5">
-            <div className="p-3 rounded-lg border border-black/10 bg-alabaster">
-              <p className="text-[11px] font-semibold text-slate-muted">Confirmed Pickup Location</p>
-              <p className="text-xs font-semibold text-ink mt-1 leading-relaxed">
+            <div className="p-3 rounded-xl border border-white/10 bg-obsidian/60">
+              <p className="text-[11px] font-semibold text-ivory/55">Confirmed Pickup Location</p>
+              <p className="text-xs font-semibold text-white mt-1 leading-relaxed">
                 {value.pickupAddress}
               </p>
               {value.pickupMode === 'delivery' && value.distanceKm !== undefined && (
-                <p className="text-[11px] font-mono tabular-nums text-slate-muted mt-1">
+                <p className="text-[11px] font-mono tabular-nums text-gold mt-1">
                   {value.distanceKm} km from {hubName}
                 </p>
               )}
             </div>
 
-            <div className="p-3 rounded-lg border border-black/10 bg-alabaster">
-              <p className="text-[11px] font-semibold text-slate-muted">Confirmed Return Location</p>
-              <p className="text-xs font-semibold text-ink mt-1 leading-relaxed">
+            <div className="p-3 rounded-xl border border-white/10 bg-obsidian/60">
+              <p className="text-[11px] font-semibold text-ivory/55">Confirmed Return Location</p>
+              <p className="text-xs font-semibold text-white mt-1 leading-relaxed">
                 {value.returnAddress || value.pickupAddress}
               </p>
-              <p className="text-[11px] text-slate-muted mt-1">
+              <p className="text-[11px] text-ivory/55 mt-1">
                 Service zone: {operatingCity} ({hubRadiusKm} km radius)
               </p>
             </div>
@@ -761,31 +817,31 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
         <div className="lg:col-span-7">{mapBox}</div>
       </div>
 
-      {/* Backend Serviceability Status + Nearest Branch Suggestion */}
+      {/* Serviceability Verification Banner */}
       <div
-        className={`p-3 rounded-lg border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs ${
+        className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs ${
           validating
-            ? 'border-black/10 bg-alabaster text-slate-muted'
+            ? 'border-white/15 bg-obsidian/60 text-ivory/70'
             : value.serviceable
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-              : 'border-red-200 bg-red-50 text-red-950'
+              ? 'border-emerald-500/30 bg-emerald-950/30 text-emerald-200'
+              : 'border-red-500/35 bg-red-950/35 text-red-200'
         }`}
       >
         <div className="flex items-start gap-2.5 flex-1">
           {value.serviceable ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           ) : (
-            <AlertTriangle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           )}
           <div>
             {validating ? (
               <span>Validating {operatingCity} service radius and doorstep delivery fees...</span>
             ) : value.serviceable ? (
               <span className="font-medium">
-                {operatingCity} serviceable zone verified |{' '}
+                {operatingCity} serviceable zone verified ·{' '}
                 {value.pickupMode === 'delivery'
                   ? `Doorstep delivery fee ${formatINR(value.deliveryCharge)}`
-                  : 'Free Central Hub self-pickup'}
+                  : 'Free Central Lounge self-pickup'}
               </span>
             ) : (
               <span className="font-medium">{value.serviceReason}</span>
@@ -793,14 +849,16 @@ const InnerMapWidget: React.FC<LocationMapPickerProps> = ({
           </div>
         </div>
 
-        {!validating && !value.serviceable && value.suggestedBranch && (
+        {hasBranches && !validating && !value.serviceable && value.suggestedBranch && (
           <button
             type="button"
-            onClick={() => navigate(`/vehicles?branchId=${encodeURIComponent(value.suggestedBranch!.branchId)}`)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-obsidian text-white text-xs font-semibold rounded-lg hover:bg-graphite whitespace-nowrap shrink-0 cursor-pointer"
+            onClick={() =>
+              navigate(`/vehicles?branchId=${encodeURIComponent(value.suggestedBranch!.branchId)}`)
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg hover:bg-gold-bright whitespace-nowrap shrink-0 cursor-pointer"
           >
             Switch to {value.suggestedBranch.branchName} ({value.suggestedBranch.distanceKm} km)
-            <ArrowRight className="w-3.5 h-3.5 text-gold" />
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
@@ -818,4 +876,3 @@ export const LocationMapPicker: React.FC<LocationMapPickerProps> = (props) => {
     </APIProvider>
   );
 };
-

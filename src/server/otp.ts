@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { db } from './db.ts';
 import { dispatchWhatsAppTemplate, getWhatsAppConfig, normalizeIndianPhone } from './whatsapp.ts';
-import type { OtpPurpose } from '../types.ts';
+import type { AuthOtpConfig, OtpPurpose, OtpVerificationLog } from '../types.ts';
 
 const OTP_HMAC_SECRET =
   process.env.OTP_HMAC_SECRET ||
@@ -19,6 +19,7 @@ interface OtpChallengeDoc {
   userId?: string;
   salt: string;
   otpHash: string;
+  isDemoMode?: boolean;
   attempts: number;
   maxAttempts: number;
   used: boolean;
@@ -38,6 +39,85 @@ function hashIp(ip: string): string {
   return crypto.createHash('sha256').update(String(ip || 'unknown')).digest('hex').slice(0, 16);
 }
 
+export async function getAuthOtpConfig(): Promise<AuthOtpConfig> {
+  const snap = await db.collection('auth_otp_config').doc('default').get();
+  const now = new Date().toISOString();
+  const isProd = process.env.NODE_ENV === 'production';
+  const defaults: AuthOtpConfig = {
+    id: 'default',
+    demoOtpEnabled: !isProd,
+    authorizedTestPhones: ['919820011223'],
+    firebasePhoneAuthEnabled: true,
+    whatsappOtpEnabled: false,
+    otpExpirySeconds: 300,
+    otpMaxAttempts: 5,
+    environmentMode: isProd ? 'production' : 'development',
+    updatedAt: now,
+  };
+  if (!snap.exists) return defaults;
+  const data = snap.data() as Partial<AuthOtpConfig>;
+  return {
+    ...defaults,
+    ...data,
+    // Demo OTP can NEVER be active in production runtime
+    demoOtpEnabled: isProd ? false : Boolean(data.demoOtpEnabled),
+    authorizedTestPhones: Array.isArray(data.authorizedTestPhones)
+      ? data.authorizedTestPhones.map((p) => normalizeIndianPhone(String(p))).filter(Boolean)
+      : defaults.authorizedTestPhones,
+    environmentMode: isProd ? 'production' : 'development',
+  };
+}
+
+export async function updateAuthOtpConfig(
+  patch: Partial<AuthOtpConfig>,
+  updatedByUid: string
+): Promise<AuthOtpConfig> {
+  const current = await getAuthOtpConfig();
+  const isProd = process.env.NODE_ENV === 'production';
+  const nextPhones = Array.isArray(patch.authorizedTestPhones)
+    ? Array.from(
+        new Set(
+          patch.authorizedTestPhones
+            .map((p) => normalizeIndianPhone(String(p)))
+            .filter((p) => p.length >= 10 && p.length <= 15)
+        )
+      )
+    : current.authorizedTestPhones;
+
+  const next: AuthOtpConfig = {
+    id: 'default',
+    demoOtpEnabled: isProd ? false : patch.demoOtpEnabled !== undefined ? Boolean(patch.demoOtpEnabled) : current.demoOtpEnabled,
+    authorizedTestPhones: nextPhones,
+    firebasePhoneAuthEnabled:
+      patch.firebasePhoneAuthEnabled !== undefined
+        ? Boolean(patch.firebasePhoneAuthEnabled)
+        : current.firebasePhoneAuthEnabled,
+    whatsappOtpEnabled:
+      patch.whatsappOtpEnabled !== undefined ? Boolean(patch.whatsappOtpEnabled) : current.whatsappOtpEnabled,
+    otpExpirySeconds: Math.max(60, Math.min(900, Number(patch.otpExpirySeconds ?? current.otpExpirySeconds ?? 300))),
+    otpMaxAttempts: Math.max(3, Math.min(10, Number(patch.otpMaxAttempts ?? current.otpMaxAttempts ?? 5))),
+    environmentMode: isProd ? 'production' : 'development',
+    updatedByUid,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await db.collection('auth_otp_config').doc('default').set(next, { merge: true });
+  return next;
+}
+
+export async function writeOtpLog(params: Omit<OtpVerificationLog, 'id' | 'createdAt'>): Promise<void> {
+  try {
+    const id = `otplog-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    await db.collection('otp_verification_logs').doc(id).set({
+      id,
+      ...params,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to write OTP verification log:', err);
+  }
+}
+
 export async function sendWhatsAppOtp(params: {
   phone: string;
   purpose: OtpPurpose;
@@ -51,6 +131,7 @@ export async function sendWhatsAppOtp(params: {
   expiresInSeconds?: number;
   cooldownSeconds?: number;
   deliveryChannel?: string;
+  isDemoOtpEligible?: boolean;
   message: string;
 }> {
   const normalizedPhone = normalizeIndianPhone(params.phone);
@@ -62,12 +143,18 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  const config = await getWhatsAppConfig();
-  const cooldownMs = (config.otpCooldownSeconds || 60) * 1000;
-  const expirySeconds = config.otpExpirySeconds || 300;
-  const maxAttempts = config.otpMaxAttempts || 5;
+  const [waConfig, authOtpConfig] = await Promise.all([getWhatsAppConfig(), getAuthOtpConfig()]);
+  const cooldownMs = (waConfig.otpCooldownSeconds || 60) * 1000;
+  const expirySeconds = authOtpConfig.otpExpirySeconds || waConfig.otpExpirySeconds || 300;
+  const maxAttempts = authOtpConfig.otpMaxAttempts || waConfig.otpMaxAttempts || 5;
   const nowMs = Date.now();
   const ipDigest = hashIp(params.ip);
+
+  const isNonProd = process.env.NODE_ENV !== 'production';
+  const isAuthorizedTestPhone = authOtpConfig.authorizedTestPhones
+    .map((p) => normalizeIndianPhone(p))
+    .includes(normalizedPhone);
+  const demoEligible = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && isAuthorizedTestPhone);
 
   // Per-number & per-IP rate limiting + cooldown check
   const allChallengesSnap = await db.collection('whatsapp_otp_challenges').get();
@@ -100,7 +187,7 @@ export async function sendWhatsAppOtp(params: {
   }
 
   const newest = recentForPhone.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (newest && nowMs - new Date(newest.createdAt).getTime() < cooldownMs) {
+  if (newest && nowMs - new Date(newest.createdAt).getTime() < cooldownMs && !demoEligible) {
     const waitSec = Math.ceil((cooldownMs - (nowMs - new Date(newest.createdAt).getTime())) / 1000);
     return {
       ok: false,
@@ -110,15 +197,14 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Generate 6-digit CSPRNG OTP — NEVER logged or returned in HTTP responses
-  const code = String(crypto.randomInt(100000, 1000000));
+  // Generate OTP — NEVER use fixed OTP unless demoEligible (non-prod + enabled + authorized phone)
+  const code = demoEligible ? '555555' : String(crypto.randomInt(100000, 1000000));
   const salt = crypto.randomBytes(16).toString('hex');
   const otpHash = hashOtp(code, salt, normalizedPhone, params.purpose);
   const challengeId = `otp-${nowMs}-${crypto.randomBytes(4).toString('hex')}`;
   const nowIso = new Date(nowMs).toISOString();
   const expiresAt = new Date(nowMs + expirySeconds * 1000).toISOString();
 
-  // Invalidate any prior unused challenges for the same phone + purpose
   for (const prev of recentForPhone) {
     if (!prev.used && prev.purpose === params.purpose) {
       await db.collection('whatsapp_otp_challenges').doc(prev.id).update({ used: true });
@@ -132,6 +218,7 @@ export async function sendWhatsAppOtp(params: {
     ...(params.userId ? { userId: params.userId } : {}),
     salt,
     otpHash,
+    isDemoMode: demoEligible,
     attempts: 0,
     maxAttempts,
     used: false,
@@ -142,7 +229,54 @@ export async function sendWhatsAppOtp(params: {
 
   await db.collection('whatsapp_otp_challenges').doc(challengeId).set(challengeDoc);
 
-  // Dispatch authentication template (fallback never exposes raw OTP in notification_logs; notice informs user)
+  // Demo Verification Mode: Never fabricate an SMS or WhatsApp dispatch
+  if (demoEligible) {
+    await writeOtpLog({
+      phone: normalizedPhone,
+      purpose: params.purpose,
+      channel: 'demo_otp',
+      status: 'sent',
+      challengeId,
+      ...(params.userId ? { userId: params.userId } : {}),
+      isDemoMode: true,
+      detail: 'Demo Verification Mode issued for authorized test phone (no SMS/WhatsApp message dispatched).',
+    });
+
+    return {
+      ok: true,
+      statusCode: 200,
+      challengeId,
+      expiresInSeconds: expirySeconds,
+      cooldownSeconds: 5,
+      deliveryChannel: 'Demo Verification Mode',
+      isDemoOtpEligible: true,
+      message: `Demo Verification Mode active for +${normalizedPhone}. Enter verification code 555555. No SMS or WhatsApp OTP was sent.`,
+    };
+  }
+
+  // WhatsApp automation remains disabled unless explicitly enabled & connected
+  if (!authOtpConfig.whatsappOtpEnabled || waConfig.connectionStatus !== 'Connected') {
+    await writeOtpLog({
+      phone: normalizedPhone,
+      purpose: params.purpose,
+      channel: 'whatsapp',
+      status: 'failed',
+      challengeId,
+      ...(params.userId ? { userId: params.userId } : {}),
+      isDemoMode: false,
+      detail: 'WhatsApp OTP automation is disabled and Meta Cloud API is not connected.',
+    });
+
+    return {
+      ok: false,
+      statusCode: 400,
+      deliveryChannel: 'Disabled',
+      isDemoOtpEligible: false,
+      message:
+        'WhatsApp/SMS OTP delivery is currently disabled. Use Firebase Phone OTP, Email login, or an authorized Demo Verification phone in development.',
+    };
+  }
+
   const log = await dispatchWhatsAppTemplate({
     bookingId: challengeId,
     recipientId: params.userId || normalizedPhone,
@@ -152,25 +286,36 @@ export async function sendWhatsAppOtp(params: {
     messageCategory: 'authentication',
     templateName: 'elitedrive_auth_otp',
     templateParams: [code],
-    fallbackTitle: 'WhatsApp OTP Verification Notice',
-    fallbackBody:
-      'An OTP verification attempt was requested for your EliteDrive account. Complete verification via email/password or once Meta WhatsApp Cloud API is connected.',
+    fallbackTitle: 'OTP Verification Attempt',
+    fallbackBody: 'A verification code was requested via WhatsApp Cloud API.',
     idempotencyKey: `otp:${challengeId}`,
     bypassConsentCheck: true,
   });
 
   const sentViaWhatsApp = log.deliveryStatus === 'Sent' || log.deliveryStatus === 'Delivered';
 
+  await writeOtpLog({
+    phone: normalizedPhone,
+    purpose: params.purpose,
+    channel: 'whatsapp',
+    status: sentViaWhatsApp ? 'sent' : 'failed',
+    challengeId,
+    ...(params.userId ? { userId: params.userId } : {}),
+    isDemoMode: false,
+    detail: sentViaWhatsApp ? 'Dispatched via Meta WhatsApp Cloud API.' : log.errorDetails || log.deliveryStatus,
+  });
+
   return {
     ok: true,
     statusCode: 200,
     challengeId,
     expiresInSeconds: expirySeconds,
-    cooldownSeconds: config.otpCooldownSeconds || 60,
+    cooldownSeconds: waConfig.otpCooldownSeconds || 60,
     deliveryChannel: sentViaWhatsApp ? 'WhatsApp' : log.deliveryStatus,
+    isDemoOtpEligible: false,
     message: sentViaWhatsApp
       ? `6-digit verification code sent via WhatsApp to +${normalizedPhone}. Valid for 5 minutes.`
-      : `OTP challenge created (valid 5m). WhatsApp delivery status: ${log.deliveryStatus} — ${log.errorDetails}`,
+      : `WhatsApp OTP status: ${log.deliveryStatus}. ${log.errorDetails || ''}`.trim(),
   };
 }
 
@@ -184,6 +329,7 @@ export async function verifyWhatsAppOtp(params: {
   statusCode: number;
   userId?: string;
   phone: string;
+  isDemoMode?: boolean;
   message: string;
 }> {
   const normalizedPhone = normalizeIndianPhone(params.phone);
@@ -194,31 +340,67 @@ export async function verifyWhatsAppOtp(params: {
       ok: false,
       statusCode: 400,
       phone: normalizedPhone,
-      message: 'Valid challenge ID, phone number, and 6-digit OTP are required.',
+      message: 'Valid challenge ID, phone number, and 6-digit verification code are required.',
     };
   }
 
   const ref = db.collection('whatsapp_otp_challenges').doc(params.challengeId);
   const snap = await ref.get();
   if (!snap.exists) {
-    return { ok: false, statusCode: 404, phone: normalizedPhone, message: 'OTP challenge not found or expired.' };
+    return { ok: false, statusCode: 404, phone: normalizedPhone, message: 'Verification challenge not found or expired.' };
   }
 
   const challenge = snap.data() as OtpChallengeDoc;
 
   if (challenge.used) {
-    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'This OTP has already been used or superseded.' };
+    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'This verification code has already been used or superseded.' };
   }
   if (challenge.phone !== normalizedPhone || challenge.purpose !== params.purpose) {
-    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'OTP challenge does not match this phone or action.' };
+    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'Verification challenge does not match this phone or action.' };
   }
   if (Date.now() > new Date(challenge.expiresAt).getTime()) {
     await ref.update({ used: true });
-    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'OTP has expired (5-minute window elapsed).' };
+    await writeOtpLog({
+      phone: normalizedPhone,
+      purpose: params.purpose,
+      channel: challenge.isDemoMode ? 'demo_otp' : 'whatsapp',
+      status: 'expired',
+      challengeId: challenge.id,
+      userId: challenge.userId,
+      isDemoMode: Boolean(challenge.isDemoMode),
+      detail: 'OTP verification window expired.',
+    });
+    return { ok: false, statusCode: 400, phone: normalizedPhone, message: 'Verification code has expired. Please request a new one.' };
   }
   if (challenge.attempts >= challenge.maxAttempts) {
     await ref.update({ used: true });
-    return { ok: false, statusCode: 429, phone: normalizedPhone, message: 'Maximum failed OTP attempts (5) exceeded.' };
+    return { ok: false, statusCode: 429, phone: normalizedPhone, message: 'Maximum failed verification attempts exceeded.' };
+  }
+
+  // Re-verify all 4 Demo OTP conditions at verification time if challenge is demo mode
+  if (challenge.isDemoMode) {
+    const cfg = await getAuthOtpConfig();
+    const isNonProd = process.env.NODE_ENV !== 'production';
+    const isAuthorizedPhone = cfg.authorizedTestPhones.map(normalizeIndianPhone).includes(normalizedPhone);
+    if (!isNonProd || !cfg.demoOtpEnabled || !isAuthorizedPhone) {
+      await ref.update({ used: true });
+      await writeOtpLog({
+        phone: normalizedPhone,
+        purpose: params.purpose,
+        channel: 'demo_otp',
+        status: 'failed',
+        challengeId: challenge.id,
+        userId: challenge.userId,
+        isDemoMode: true,
+        detail: 'Demo OTP rejected: environment or test phone authorization changed.',
+      });
+      return {
+        ok: false,
+        statusCode: 403,
+        phone: normalizedPhone,
+        message: 'Demo verification is disabled for this phone or environment.',
+      };
+    }
   }
 
   const candidateHash = hashOtp(codeTrimmed, challenge.salt, normalizedPhone, params.purpose);
@@ -233,24 +415,49 @@ export async function verifyWhatsAppOtp(params: {
       ...(nextAttempts >= challenge.maxAttempts ? { used: true } : {}),
     });
     const remaining = Math.max(0, challenge.maxAttempts - nextAttempts);
+    await writeOtpLog({
+      phone: normalizedPhone,
+      purpose: params.purpose,
+      channel: challenge.isDemoMode ? 'demo_otp' : 'whatsapp',
+      status: 'failed',
+      challengeId: challenge.id,
+      userId: challenge.userId,
+      isDemoMode: Boolean(challenge.isDemoMode),
+      detail: `Incorrect verification code entered. ${remaining} attempt(s) left.`,
+    });
     return {
       ok: false,
       statusCode: remaining === 0 ? 429 : 400,
       phone: normalizedPhone,
       message:
         remaining === 0
-          ? 'Incorrect OTP. Maximum 5 attempts reached; request a new OTP.'
-          : `Incorrect OTP. ${remaining} attempt(s) remaining.`,
+          ? 'Incorrect verification code. Maximum attempts reached; request a new code.'
+          : `Incorrect verification code. ${remaining} attempt(s) remaining.`,
     };
   }
 
-  // Immediately invalidate OTP on successful single use
   await ref.update({ used: true });
+  await writeOtpLog({
+    phone: normalizedPhone,
+    purpose: params.purpose,
+    channel: challenge.isDemoMode ? 'demo_otp' : 'whatsapp',
+    status: 'verified',
+    challengeId: challenge.id,
+    userId: challenge.userId,
+    isDemoMode: Boolean(challenge.isDemoMode),
+    detail: challenge.isDemoMode
+      ? 'Verified via Demo Verification Mode (authorized test number).'
+      : 'Verified via server OTP challenge.',
+  });
+
   return {
     ok: true,
     statusCode: 200,
     userId: challenge.userId,
     phone: normalizedPhone,
-    message: 'WhatsApp OTP verified successfully.',
+    isDemoMode: Boolean(challenge.isDemoMode),
+    message: challenge.isDemoMode
+      ? 'Demo Verification Mode confirmed successfully.'
+      : 'Verification code confirmed successfully.',
   };
 }

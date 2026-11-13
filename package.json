@@ -15,7 +15,7 @@
     "@base-ui/react": "^1.4.0",
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@fontsource-variable/geist": "^5.2.8",
-    "@google/genai": "^1.29.0",
+    "@google/genai": "^3.3.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/qrcode": "^1.5.6",
     "@vis.gl/react-google-maps": "^1.10.2",

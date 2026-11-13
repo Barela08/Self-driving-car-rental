@@ -49,6 +49,7 @@ export type AdminTabKey =
   | 'audit_history'
   | 'website_settings'
   | 'coupons_offers'
+  | 'ai_auth'
   | 'whatsapp';
 
 export interface AdminWhatsAppSummary {
@@ -131,6 +132,9 @@ export function normalizeTargetTab(targetTab?: string): AdminTabKey {
       return 'notifications';
     case 'reports':
       return 'reports';
+    case 'ai_auth':
+    case 'ai_assistant':
+      return 'ai_auth';
     default:
       return 'overview';
   }

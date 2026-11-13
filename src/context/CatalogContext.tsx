@@ -8,19 +8,36 @@ import type {
   InsurancePackage,
   Offer,
   SubscriptionPlan,
+  SupportedLanguage,
   Vehicle,
   VehicleAvailabilitySummary,
 } from '../types';
 
+export interface PublicAuthOtpConfig {
+  demoOtpEnabled: boolean;
+  firebasePhoneAuthEnabled: boolean;
+  whatsappOtpEnabled: boolean;
+  environmentMode: 'development' | 'production';
+}
+
+export interface PublicAiConfig {
+  enabled: boolean;
+  bookingEnabled: boolean;
+  allowedLanguages: SupportedLanguage[];
+}
+
 interface CatalogContextValue {
   cities: City[];
   branches: Branch[];
+  activeBranches: Branch[];
   vehicles: Vehicle[];
   insurancePackages: InsurancePackage[];
   subscriptionPlans: SubscriptionPlan[];
   coupons: Coupon[];
   offers: Offer[];
   settings: CompanySettings | null;
+  authOtpConfig: PublicAuthOtpConfig;
+  aiPublicConfig: PublicAiConfig;
   isPreviewMode: boolean;
   loading: boolean;
   error: string | null;
@@ -51,6 +68,17 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [settings, setSettings] = useState<CompanySettings | null>(null);
+  const [authOtpConfig, setAuthOtpConfig] = useState<PublicAuthOtpConfig>({
+    demoOtpEnabled: false,
+    firebasePhoneAuthEnabled: true,
+    whatsappOtpEnabled: false,
+    environmentMode: 'development',
+  });
+  const [aiPublicConfig, setAiPublicConfig] = useState<PublicAiConfig>({
+    enabled: true,
+    bookingEnabled: true,
+    allowedLanguages: ['en', 'hi', 'mr'],
+  });
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(readPreviewParam);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +90,29 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.addEventListener('popstate', syncPreview);
     return () => window.removeEventListener('popstate', syncPreview);
   }, []);
+
+  // Propagate live brand theme tokens, document <title>, and favicon whenever settings load or change
+  useEffect(() => {
+    if (!settings) return;
+    const root = document.documentElement;
+    const primary = settings.primaryColor || '#C8A24D';
+    const secondary = settings.secondaryColor || '#0F1420';
+    root.style.setProperty('--brand-primary', primary);
+    root.style.setProperty('--brand-secondary', secondary);
+
+    if (settings.websiteTitle || settings.companyName) {
+      document.title = settings.websiteTitle || `${settings.companyName} — Luxury Self-Drive Mobility`;
+    }
+    if (settings.faviconUrl) {
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = settings.faviconUrl;
+    }
+  }, [settings]);
 
   const reloadCatalog = useCallback(async () => {
     setLoading(true);
@@ -76,6 +127,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         coupons: Coupon[];
         offers?: Offer[];
         settings: CompanySettings | null;
+        authOtpConfig?: PublicAuthOtpConfig;
+        aiPublicConfig?: PublicAiConfig;
       }>('/api/bootstrap');
       setCities(data.cities || []);
       setBranches(data.branches || []);
@@ -85,6 +138,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCoupons(data.coupons || []);
       setOffers(data.offers || []);
       setSettings(data.settings || null);
+      if (data.authOtpConfig) setAuthOtpConfig(data.authOtpConfig);
+      if (data.aiPublicConfig) setAiPublicConfig(data.aiPublicConfig);
     } catch (err: any) {
       setError(err.message || 'Unable to load catalog');
     } finally {
@@ -108,17 +163,22 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     void reloadCatalog();
   }, [reloadCatalog]);
 
+  const activeBranches = branches.filter((b) => b.active);
+
   return (
     <CatalogContext.Provider
       value={{
         cities,
         branches,
+        activeBranches,
         vehicles,
         insurancePackages,
         subscriptionPlans,
         coupons,
         offers,
         settings,
+        authOtpConfig,
+        aiPublicConfig,
         isPreviewMode,
         loading,
         error,

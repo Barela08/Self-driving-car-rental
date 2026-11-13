@@ -532,6 +532,67 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "bookingId", "vehicleId", "userId", "rating", "status", "createdAt"]
+    },
+    "PlatformTenant": {
+      "title": "PlatformTenant",
+      "description": "Master Admin tenant configuration and feature flags",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "businessName": { "type": "string", "maxLength": 120 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["active", "suspended"] }
+      },
+      "required": ["id", "businessName", "ownerUid", "status"]
+    },
+    "AuthOtpConfig": {
+      "title": "AuthOtpConfig",
+      "description": "Auth, Firebase Phone Auth, and non-production Demo OTP authorization controls",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "demoOtpEnabled": { "type": "boolean" },
+        "firebasePhoneAuthEnabled": { "type": "boolean" },
+        "whatsappOtpEnabled": { "type": "boolean" }
+      },
+      "required": ["id", "demoOtpEnabled", "firebasePhoneAuthEnabled", "whatsappOtpEnabled"]
+    },
+    "OtpVerificationLog": {
+      "title": "OtpVerificationLog",
+      "description": "Audit log of OTP and Firebase Phone verification events (never stores plaintext OTPs)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 24 },
+        "channel": { "type": "string", "enum": ["demo_otp", "firebase_phone", "whatsapp"] },
+        "status": { "type": "string", "enum": ["sent", "verified", "failed", "expired"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "phone", "channel", "status", "createdAt"]
+    },
+    "AiConfig": {
+      "title": "AiConfig",
+      "description": "Server-side Gemini Concierge Assistant configuration (no secrets stored)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "enabled": { "type": "boolean" },
+        "bookingEnabled": { "type": "boolean" },
+        "modelName": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["id", "enabled", "bookingEnabled", "modelName"]
+    },
+    "AiUsageLog": {
+      "title": "AiUsageLog",
+      "description": "Telemetry and fallback audit log for AI concierge queries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "language": { "type": "string", "enum": ["en", "hi", "mr"] },
+        "status": { "type": "string", "enum": ["success", "fallback", "error"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "language", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -666,6 +727,26 @@
     "/customer_reviews/{reviewId}": {
       "schema": { "$ref": "#/entities/CustomerReview" },
       "description": "Verified completed-trip customer reviews"
+    },
+    "/platform_tenants/{tenantId}": {
+      "schema": { "$ref": "#/entities/PlatformTenant" },
+      "description": "Master Admin tenant directory and feature flags"
+    },
+    "/auth_otp_config/{configId}": {
+      "schema": { "$ref": "#/entities/AuthOtpConfig" },
+      "description": "Authentication and Demo OTP policy controls"
+    },
+    "/otp_verification_logs/{logId}": {
+      "schema": { "$ref": "#/entities/OtpVerificationLog" },
+      "description": "OTP and Phone Auth audit logs"
+    },
+    "/ai_config/{configId}": {
+      "schema": { "$ref": "#/entities/AiConfig" },
+      "description": "Server-side AI Assistant configuration"
+    },
+    "/ai_usage_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AiUsageLog" },
+      "description": "AI Assistant interaction and latency telemetry"
     }
   }
 }

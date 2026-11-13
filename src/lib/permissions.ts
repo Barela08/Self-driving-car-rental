@@ -45,6 +45,8 @@ export const ALL_ADMIN_PERMISSIONS: AdminPermission[] = [
   'manage_maintenance',
   'view_vehicle_history',
   'export_inventory',
+  'manage_ai_config',
+  'manage_auth_config',
 ];
 
 export const ADMIN_PERMISSION_META: { key: AdminPermission; label: string; group: string }[] = [
@@ -92,6 +94,8 @@ export const ADMIN_PERMISSION_META: { key: AdminPermission; label: string; group
   { key: 'manage_whatsapp', label: 'Manage WhatsApp Cloud API & Staff Alerts', group: 'Platform & Security' },
   { key: 'view_audit_logs', label: 'Inspect Activity & Audit Trail', group: 'Platform & Security' },
   { key: 'manage_website_settings', label: 'Manage System, Tax & Website CMS Settings', group: 'Platform & Security' },
+  { key: 'manage_ai_config', label: 'Manage AI Booking Assistant Configuration & Logs', group: 'Platform & Security' },
+  { key: 'manage_auth_config', label: 'Manage Auth & Demo OTP Settings', group: 'Platform & Security' },
 ];
 
 export interface ModulePermissionMatrixRow {
@@ -195,12 +199,15 @@ export const MODULE_PERMISSION_MATRIX: ModulePermissionMatrixRow[] = [
       { action: 'WhatsApp API', key: 'manage_whatsapp' },
       { action: 'Audit Logs', key: 'view_audit_logs' },
       { action: 'System Settings', key: 'manage_website_settings' },
+      { action: 'AI Assistant Config', key: 'manage_ai_config' },
+      { action: 'Auth & OTP Config', key: 'manage_auth_config' },
     ],
   },
 ];
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<string, AdminPermission[]> = {
   customer: [],
+  master_admin: [...ALL_ADMIN_PERMISSIONS],
   super_admin: [...ALL_ADMIN_PERMISSIONS],
   branch_manager: [
     'view_analytics',
@@ -347,7 +354,7 @@ export function resolveUserPermissions(
 ): AdminPermission[] {
   if (!profile || !profile.role || profile.role === 'customer') return [];
   if (profile.active === false || profile.accountStatus === 'suspended') return [];
-  if (profile.role === 'super_admin') return [...ALL_ADMIN_PERMISSIONS];
+  if (profile.role === 'super_admin' || profile.role === 'master_admin') return [...ALL_ADMIN_PERMISSIONS];
 
   if (Array.isArray(rolesList) && rolesList.length > 0) {
     const matchedRole = rolesList.find(
@@ -380,11 +387,16 @@ export function hasAdminPermission(
   return resolveUserPermissions(profile, rolesList).includes(permission);
 }
 
+export function canAccessMasterConsole(profile?: Partial<UserProfile> | null): boolean {
+  if (!profile || profile.active === false || profile.accountStatus === 'suspended') return false;
+  return profile.role === 'master_admin';
+}
+
 export function canAccessAdminConsole(
   profile?: Partial<UserProfile> | null,
   rolesList?: CustomRole[]
 ): boolean {
-  if (!profile || profile.role === 'customer') return false;
+  if (!profile || profile.role === 'customer' || profile.role === 'master_admin') return false;
   if (profile.active === false || profile.accountStatus === 'suspended') return false;
   if (profile.role === 'super_admin') return true;
   return resolveUserPermissions(profile, rolesList).length > 0;

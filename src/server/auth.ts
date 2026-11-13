@@ -15,6 +15,7 @@ import type {
 export interface AuthUserContext {
   uid: string;
   email?: string;
+  phoneNumber?: string;
   profile: UserProfile;
   permissions: AdminPermission[];
   branchScope: 'all' | 'assigned';
@@ -128,6 +129,7 @@ async function verifyFirebaseGoogleIdToken(token: string): Promise<{
   uid: string;
   email?: string;
   email_verified?: boolean;
+  phone_number?: string;
   name?: string;
 } | null> {
   const parts = token.split('.');
@@ -161,6 +163,7 @@ async function verifyFirebaseGoogleIdToken(token: string): Promise<{
       uid: String(payload.sub),
       email: payload.email,
       email_verified: Boolean(payload.email_verified),
+      phone_number: payload.phone_number ? String(payload.phone_number) : undefined,
       name: payload.name,
     };
   } catch {
@@ -272,6 +275,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   try {
     let uid: string;
     let email: string | undefined;
+    let phoneNumber: string | undefined;
     let emailVerified = false;
     let name: string | undefined;
 
@@ -291,7 +295,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       }
       uid = firebaseDecoded.uid;
       email = firebaseDecoded.email;
-      emailVerified = Boolean(firebaseDecoded.email_verified);
+      phoneNumber = firebaseDecoded.phone_number;
+      emailVerified = Boolean(firebaseDecoded.email_verified || firebaseDecoded.phone_number);
       name = firebaseDecoded.name;
     }
 
@@ -343,7 +348,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       await db.collection('users').doc(uid).collection('private').doc('info').set({
         uid,
         email: email || '',
-        phone: '',
+        phone: phoneNumber || '',
         savedAddresses: [],
         favouriteVehicleIds: [],
         marketingConsent: false,
@@ -374,7 +379,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
 
     if (profile.accountStatus === 'suspended' || (profile.role !== 'customer' && profile.active === false)) {
       return res.status(403).json({
-        error: 'Your account is suspended or deactivated. Please contact the Owner.',
+        error: 'Your account is suspended or deactivated. Please contact the administrator.',
       });
     }
 
@@ -386,7 +391,13 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
           r.id === profile.role
       ) || null;
 
-    if (profile.role !== 'customer' && profile.role !== 'super_admin' && roleDoc && !roleDoc.active) {
+    if (
+      profile.role !== 'customer' &&
+      profile.role !== 'super_admin' &&
+      profile.role !== 'master_admin' &&
+      roleDoc &&
+      !roleDoc.active
+    ) {
       return res.status(403).json({
         error: `Assigned role '${roleDoc.name}' is currently deactivated. Contact Super Admin.`,
       });
@@ -401,6 +412,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     req.authUser = {
       uid,
       email,
+      ...(phoneNumber ? { phoneNumber } : {}),
       profile,
       permissions,
       branchScope,
@@ -426,11 +438,34 @@ export function requireStaffRole(allowedRoles: Role[]) {
   };
 }
 
+export function requireMasterAdmin(req: AuthRequest, res: Response, next: NextFunction) {
+  const profile = req.authUser?.profile;
+  if (!profile || profile.role !== 'master_admin') {
+    if (profile) {
+      void writeAuditLog({
+        actorUid: profile.uid,
+        actorName: profile.displayName,
+        actorRole: profile.role,
+        module: 'Platform Security',
+        outcome: 'denied',
+        action: 'MASTER_ADMIN_ACCESS_DENIED',
+        targetType: 'route',
+        targetId: req.originalUrl || req.path,
+        details: `Non-master account (${profile.role}) attempted access to Master Admin endpoint.`,
+      });
+    }
+    return res.status(403).json({
+      error: 'Forbidden: Master Admin platform privileges required.',
+    });
+  }
+  next();
+}
+
 export function requirePermission(permission: AdminPermission | AdminPermission[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     const profile = req.authUser?.profile;
-    if (!profile || profile.role === 'customer') {
-      return res.status(403).json({ error: 'Forbidden: Staff or Owner credentials required.' });
+    if (!profile || profile.role === 'customer' || profile.role === 'master_admin') {
+      return res.status(403).json({ error: 'Forbidden: Business Staff or Owner credentials required.' });
     }
     const list = Array.isArray(permission) ? permission : [permission];
     const granted = req.authUser?.permissions || [];

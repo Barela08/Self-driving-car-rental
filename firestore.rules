@@ -35,6 +35,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function isMasterAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/master_admins/$(request.auth.uid));
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         ((request.auth.token.email == 'barelanilesh483@gmail.com' ||
@@ -430,6 +434,42 @@ service cloud.firestore {
     match /customer_reviews/{reviewId} {
       allow get: if isValidId(reviewId) && (existing().status == 'Approved' || isOwner(existing().userId) || isAdmin());
       allow list: if resource.data.status == 'Approved' || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Master Admin Platform & AI / Auth-OTP collections (server-Admin-SDK enforced)
+    match /master_admins/{masterUid} {
+      allow get: if isValidId(masterUid) && (isOwner(masterUid) || isMasterAdmin());
+      allow list, write: if false;
+    }
+
+    match /platform_tenants/{tenantId} {
+      allow get: if isValidId(tenantId) && isMasterAdmin();
+      allow list: if isMasterAdmin();
+      allow write: if false;
+    }
+
+    match /auth_otp_config/{configId} {
+      allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
+      allow list: if isMasterAdmin() || isAdmin();
+      allow write: if false;
+    }
+
+    match /otp_verification_logs/{logId} {
+      allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
+      allow list: if isMasterAdmin() || isAdmin();
+      allow write: if false;
+    }
+
+    match /ai_config/{configId} {
+      allow get: if isValidId(configId) && (isMasterAdmin() || isAdmin());
+      allow list: if isMasterAdmin() || isAdmin();
+      allow write: if false;
+    }
+
+    match /ai_usage_logs/{logId} {
+      allow get: if isValidId(logId) && (isMasterAdmin() || isAdmin());
+      allow list: if isMasterAdmin() || isAdmin();
       allow write: if false;
     }
   }

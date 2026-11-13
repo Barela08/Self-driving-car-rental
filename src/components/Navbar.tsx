@@ -1,21 +1,37 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Menu, X } from 'lucide-react';
+import { Globe, Menu, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCatalog } from '../context/CatalogContext';
+import { useLanguage } from '../context/LanguageContext';
+import { SUPPORTED_LANGUAGES } from '../lib/i18n';
+import { PolicyMenuDrawer } from './PolicyMenuDrawer';
 
 export const Navbar: React.FC = () => {
   const { profile, logout } = useAuth();
   const { settings, isPreviewMode } = useCatalog();
+  const { language, setLanguage, t } = useLanguage();
   const location = useLocation();
   const navigate = useNavigate();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const brandName = settings?.companyName || 'EliteDrive';
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  const isHome = location.pathname === '/';
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 28);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [location.pathname]);
+
+  const brandName = settings?.brandName || settings?.companyName || 'EliteDrive';
 
   const getDashboardPath = () => {
     if (!profile) return '/login';
-    if (['super_admin', 'fleet_manager', 'finance_staff'].includes(profile.role)) {
+    if (profile.role === 'master_admin') return '/dashboard/master-admin';
+    if (['super_admin', 'branch_manager', 'booking_manager', 'fleet_manager', 'finance_staff', 'kyc_executive'].includes(profile.role)) {
       return '/dashboard/admin';
     }
     if (['operations_staff', 'support_staff'].includes(profile.role)) {
@@ -25,10 +41,12 @@ export const Navbar: React.FC = () => {
   };
 
   const navItems = [
-    { label: 'Fleet', to: '/vehicles' },
-    { label: 'Offers', to: '/#offers' },
-    { label: 'Subscriptions', to: '/#subscriptions' },
-    { label: 'Contact', to: '/#contact' },
+    { label: t('nav.home'), to: isPreviewMode ? '/?preview=1' : '/' },
+    { label: t('nav.fleet'), to: '/vehicles' },
+    { label: t('nav.offers'), to: '/#offers' },
+    { label: t('nav.howItWorks'), to: '/how-it-works' },
+    { label: t('nav.about'), to: '/about' },
+    { label: t('nav.contact'), to: '/#contact' },
   ];
 
   const handlePrimaryAction = () => {
@@ -37,136 +55,124 @@ export const Navbar: React.FC = () => {
     } else {
       navigate('/login');
     }
-    setMobileOpen(false);
   };
 
+  const headerSurfaceClass =
+    isHome && !scrolled
+      ? 'bg-gradient-to-b from-obsidian/90 via-obsidian/55 to-transparent border-b border-white/5'
+      : 'bg-obsidian/95 backdrop-blur-md border-b border-white/10 shadow-xl';
+
   return (
-    <header className="sticky top-0 z-40 bg-obsidian/95 backdrop-blur-md border-b border-white/10 text-white">
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Single-line Brand Wordmark / Logo */}
-        <Link
-          to={isPreviewMode ? '/?preview=1' : '/'}
-          className="flex items-center gap-2.5 font-display text-xl font-semibold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-gold transition-colors"
-        >
-          {settings?.logoUrl && (
-            <img
-              src={settings.logoUrl}
-              alt={`${brandName} logo`}
-              className="h-7 w-7 object-contain rounded"
-            />
-          )}
-          <span>{brandName}</span>
-        </Link>
+    <>
+      <header
+        className={`fixed top-0 left-0 right-0 z-40 transition-colors duration-200 text-ivory ${headerSurfaceClass}`}
+      >
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-6">
+          {/* Zone 1: Configurable Brand Logo + Name */}
+          <Link
+            to={isPreviewMode ? '/?preview=1' : '/'}
+            className="flex items-center gap-2.5 font-display text-lg sm:text-xl font-semibold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-gold transition-colors"
+          >
+            {settings?.logoUrl && (
+              <img
+                src={settings.logoUrl}
+                alt={`${brandName} logo`}
+                referrerPolicy="no-referrer"
+                className="h-8 w-8 object-contain rounded bg-navy-deep p-0.5 border border-white/10"
+              />
+            )}
+            <span>{brandName}</span>
+          </Link>
 
-        {/* Zone 2: 4 concise single-line nav links */}
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-white/75">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.to;
-            return (
-              <Link
-                key={item.label}
-                to={item.to}
-                className={`whitespace-nowrap shrink-0 transition-colors hover:text-gold ${
-                  isActive ? 'text-gold' : ''
-                }`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-          {profile && !isPreviewMode && (
-            <Link
-              to={getDashboardPath()}
-              className="whitespace-nowrap shrink-0 transition-colors hover:text-gold text-white/90"
-            >
-              Console
-            </Link>
-          )}
-        </nav>
-
-        {/* Zone 3: 1 Primary CTA */}
-        <div className="hidden md:flex items-center gap-4 shrink-0">
-          {isPreviewMode ? (
-            <span className="px-3.5 py-1.5 text-xs font-semibold border border-gold/40 text-gold rounded-md whitespace-nowrap shrink-0">
-              Preview Mode
-            </span>
-          ) : profile ? (
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handlePrimaryAction}
-                className="px-4 py-2 text-xs font-semibold tracking-wide bg-gold text-obsidian rounded-md hover:bg-gold-bright transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                {profile.displayName.split(' ')[0]} · Dashboard
-              </button>
-              <button
-                onClick={() => void logout()}
-                className="text-xs font-medium text-white/60 hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                Sign out
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={handlePrimaryAction}
-              className="px-4 py-2 text-xs font-semibold tracking-wide bg-gold text-obsidian rounded-md hover:bg-gold-bright transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Sign in / Book
-            </button>
-          )}
-        </div>
-
-        {/* Mobile menu trigger */}
-        <button
-          onClick={() => setMobileOpen((prev) => !prev)}
-          aria-label="Toggle Menu"
-          className="md:hidden p-2 text-white hover:text-gold transition-colors"
-        >
-          {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
-      {/* Mobile Drawer */}
-      {mobileOpen && (
-        <div className="md:hidden bg-charcoal border-t border-white/10 px-4 py-4 space-y-3">
-          {navItems.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to}
-              onClick={() => setMobileOpen(false)}
-              className="block py-2 text-sm font-medium text-white/85 hover:text-gold"
-            >
-              {item.label}
-            </Link>
-          ))}
-          {isPreviewMode ? (
-            <div className="pt-2 border-t border-white/10">
-              <span className="block text-center py-2 text-xs font-semibold text-gold border border-gold/30 rounded-md">
-                Owner Preview Mode (Read-Only)
-              </span>
-            </div>
-          ) : (
-            <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
-              <button
-                onClick={handlePrimaryAction}
-                className="flex-1 py-2.5 px-4 text-xs font-semibold bg-gold text-obsidian rounded-md"
-              >
-                {profile ? 'Open Dashboard' : 'Sign in / Register'}
-              </button>
-              {profile && (
-                <button
-                  onClick={() => {
-                    setMobileOpen(false);
-                    void logout();
-                  }}
-                  className="py-2.5 px-3 text-xs text-white/70 border border-white/15 rounded-md"
+          {/* Zone 2: Concise Single-Line Navigation */}
+          <nav className="hidden lg:flex items-center gap-6 text-[13px] font-medium text-ivory/80" aria-label="Main navigation">
+            {navItems.map((item) => {
+              const isActive =
+                item.to === '/'
+                  ? location.pathname === '/'
+                  : !item.to.includes('#') && location.pathname.startsWith(item.to);
+              return (
+                <Link
+                  key={item.label}
+                  to={item.to}
+                  className={`whitespace-nowrap shrink-0 transition-colors hover:text-gold ${
+                    isActive ? 'text-gold font-semibold' : ''
+                  }`}
                 >
-                  Sign out
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* Zone 3: Language Switcher, Auth / Profile & Policy Hamburger Drawer */}
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            {/* Compact Language Switcher */}
+            <div className="hidden sm:flex items-center gap-0.5 p-0.5 rounded-lg bg-navy-deep/90 border border-white/15">
+              <Globe className="w-3.5 h-3.5 text-gold ml-1.5 mr-1 shrink-0" aria-hidden="true" />
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <button
+                  key={lang.code}
+                  type="button"
+                  onClick={() => setLanguage(lang.code)}
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    language === lang.code
+                      ? 'bg-gold text-obsidian'
+                      : 'text-ivory/70 hover:text-white'
+                  }`}
+                >
+                  {lang.nativeLabel}
                 </button>
-              )}
+              ))}
             </div>
-          )}
+
+            {isPreviewMode ? (
+              <span className="px-3 py-1.5 text-xs font-semibold border border-gold/40 text-gold rounded-lg whitespace-nowrap shrink-0">
+                Preview Mode
+              </span>
+            ) : profile ? (
+              <div className="hidden md:flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={handlePrimaryAction}
+                  className="px-3.5 py-2 text-xs font-semibold bg-gold hover:bg-gold-bright text-obsidian rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  <span>{profile.displayName.split(' ')[0]}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="text-xs font-medium text-ivory/65 hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer px-1.5"
+                >
+                  {t('nav.signOut')}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePrimaryAction}
+                className="hidden md:inline-flex px-4 py-2 text-xs font-semibold tracking-wide bg-gold hover:bg-gold-bright text-obsidian rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {t('nav.loginRegister')}
+              </button>
+            )}
+
+            {/* Hamburger Trigger for Policies & Secondary Links Drawer */}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              aria-label={t('nav.menuTitle')}
+              className="p-2 rounded-lg bg-navy-deep/80 border border-white/15 text-ivory hover:text-gold hover:border-gold/50 transition-colors cursor-pointer shrink-0"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-      )}
-    </header>
+      </header>
+
+      <PolicyMenuDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+    </>
   );
 };
+

@@ -7,7 +7,6 @@ import {
   CreditCard,
   Eye,
   FileCheck2,
-  MessageCircle,
   Minus,
   Plus,
   Shield,
@@ -38,18 +37,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onClose,
 }) => {
   const { profile, firebaseUser } = useAuth();
-  const { branches, insurancePackages, settings, isPreviewMode } = useCatalog();
+  const { branches, activeBranches, insurancePackages, settings, isPreviewMode } = useCatalog();
   const navigate = useNavigate();
 
   const hub =
-    branches.find((b) => b.id === vehicle.branchId) ||
-    branches.find((b) => b.id === 'branch-central-hub') ||
-    branches[0];
-  const isCentralHub = !hub || hub.id === 'branch-central-hub';
-  const hubLat = Number((isCentralHub ? settings?.hubLat : undefined) ?? hub?.lat ?? 19.076);
-  const hubLng = Number((isCentralHub ? settings?.hubLng : undefined) ?? hub?.lng ?? 72.8777);
-  const hubAddress = (isCentralHub ? settings?.businessAddress : undefined) || hub?.address || vehicle.branchName;
-  const operatingCity = hub?.cityName || vehicle.cityName || settings?.operatingCityName || 'Mumbai';
+    (activeBranches.length > 0
+      ? activeBranches.find((b) => b.id === vehicle.branchId) || activeBranches[0]
+      : null) || null;
+  const hubLat = Number(hub?.lat ?? settings?.hubLat ?? 19.076);
+  const hubLng = Number(hub?.lng ?? settings?.hubLng ?? 72.8777);
+  const hubAddress =
+    hub?.address || settings?.businessAddress || `${settings?.operatingCityName || 'Mumbai'} Fleet Lounge`;
+  const operatingCity =
+    hub?.cityName || settings?.operatingCityName || vehicle.cityName || 'Mumbai';
 
   const [startDate, setStartDate] = useState(initialStartDate);
   const [endDate, setEndDate] = useState(initialEndDate);
@@ -58,8 +58,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [quantity, setQuantity] = useState<number>(1);
   const [location, setLocation] = useState<LocationSelection>({
     pickupMode: 'branch',
-    pickupBranchId: hub?.id || vehicle.branchId || 'branch-central-hub',
-    returnBranchId: hub?.id || vehicle.branchId || 'branch-central-hub',
+    pickupBranchId: hub?.id || 'branch-central-hub',
+    returnBranchId: hub?.id || 'branch-central-hub',
     isOneWay: false,
     pickupAddress: hubAddress,
     pickupLat: hubLat,
@@ -118,7 +118,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         if (free > 0) setConflictMessage(null);
       }
     } catch {
-      // Keep prior availability state
+      // Retain previous summary
     }
   }, [vehicle.id, startDate, endDate]);
 
@@ -308,38 +308,35 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   };
 
   const availableMethodOptions: { key: 'UPI' | 'Cash'; label: string }[] = [
-    ...(enabledMethods.upi !== false ? [{ key: 'UPI' as const, label: 'Manual UPI QR + UTR Proof' }] : []),
-    ...(enabledMethods.cashAtPickup ? [{ key: 'Cash' as const, label: 'Cash at Pickup Hub' }] : []),
+    ...(enabledMethods.upi !== false ? [{ key: 'UPI' as const, label: 'Manual UPI QR + UTR' }] : []),
+    ...(enabledMethods.cashAtPickup ? [{ key: 'Cash' as const, label: 'Cash at Pickup Lounge' }] : []),
   ];
   const resolvedMethods =
     availableMethodOptions.length > 0
       ? availableMethodOptions
-      : [{ key: 'UPI' as const, label: 'Manual UPI QR + UTR Proof' }];
+      : [{ key: 'UPI' as const, label: 'Manual UPI QR + UTR' }];
 
   const advancePct = settings?.advancePaymentPercent ?? 30;
   const holdMins = settings?.holdDurationMinutes ?? 20;
-  const whatsappText = encodeURIComponent(
-    `Hello ${settings?.companyName || 'EliteDrive'}, I want to confirm self-drive booking for ${quantity}x ${vehicle.name} (${operatingCity}) from ${startDate} to ${endDate}. Pickup: ${location.pickupAddress}`
-  );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white text-ink w-full max-w-6xl rounded-2xl border border-black/15 shadow-2xl overflow-hidden my-auto max-h-[94vh] flex flex-col">
-        {/* Header */}
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-navy-deep text-ivory w-full max-w-6xl rounded-2xl border border-white/15 shadow-2xl overflow-hidden my-auto max-h-[94vh] flex flex-col">
+        {/* Modal Header */}
         <div className="px-6 py-4 bg-obsidian text-white flex items-center justify-between border-b border-white/10 shrink-0">
           <div>
             <p className="text-xs text-gold font-medium">
-              {operatingCity} Self-Drive Fleet |{' '}
-              {vehicle.instantBooking ? 'Instant Booking Eligible' : 'Operations Approval Booking'} |{' '}
+              {operatingCity} Self-Drive Fleet ·{' '}
+              {vehicle.instantBooking ? 'Instant Confirm Eligible' : 'Concierge Approval'} ·{' '}
               {liveAvailableUnits} Unit(s) Available
             </p>
-            <h2 className="font-display text-xl font-semibold mt-0.5">{vehicle.name}</h2>
+            <h2 className="font-display text-xl sm:text-2xl font-semibold mt-0.5">{vehicle.name}</h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close booking dialog"
-            className="p-2 text-white/70 hover:text-white rounded-lg hover:bg-white/10 cursor-pointer"
+            className="p-2 text-ivory/70 hover:text-white rounded-lg hover:bg-white/10 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -350,74 +347,74 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           {/* Left Configuration Column */}
           <div className="lg:col-span-7 space-y-6">
             {isPreviewMode && (
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-center gap-2">
-                <Eye className="w-4 h-4 shrink-0" />
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/35 text-amber-200 text-xs flex items-center gap-2">
+                <Eye className="w-4 h-4 shrink-0 text-amber-400" />
                 <span>
-                  Owner Preview Mode active: fare calculator and map work live, while final booking submission is blocked.
+                  Owner Preview Mode active: fare calculator and map work live, while final booking submission is disabled.
                 </span>
               </div>
             )}
 
             {(conflictMessage || liveAvailableUnits <= 0) && (
-              <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs space-y-1">
+              <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-500/35 text-red-200 text-xs space-y-1">
                 <p className="font-semibold flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
                   {conflictMessage || 'No units remain available for the selected dates.'}
                 </p>
                 {nextAvailableDate && (
-                  <p className="font-mono text-[11px]">
+                  <p className="font-mono text-[11px] text-red-200/80">
                     Next Available From: {new Date(nextAvailableDate).toLocaleString('en-IN')}
                   </p>
                 )}
               </div>
             )}
 
-            {/* Dates & Unit Quantity */}
+            {/* Dates & Quantity */}
             <div className="grid sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-muted mb-1">
+                <label className="block text-xs font-semibold text-ivory/70 mb-1">
                   Pickup Date & Time
                 </label>
                 <input
                   type="datetime-local"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full px-3 py-2 text-xs sm:text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-obsidian border border-white/15 rounded-lg text-white focus:outline-none focus:border-gold"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-muted mb-1">
+                <label className="block text-xs font-semibold text-ivory/70 mb-1">
                   Return Date & Time
                 </label>
                 <input
                   type="datetime-local"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full px-3 py-2 text-xs sm:text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                  className="w-full px-3 py-2 text-xs sm:text-sm bg-obsidian border border-white/15 rounded-lg text-white focus:outline-none focus:border-gold"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-muted mb-1">
+                <label className="block text-xs font-semibold text-ivory/70 mb-1">
                   Vehicles Needed ({liveAvailableUnits} free)
                 </label>
-                <div className="flex items-center justify-between border border-black/15 rounded-lg px-2 py-1.5 bg-alabaster">
+                <div className="flex items-center justify-between border border-white/15 rounded-lg px-2 py-1.5 bg-obsidian">
                   <button
                     type="button"
                     disabled={quantity <= 1}
                     onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                    className="p-1.5 rounded bg-white border border-black/10 hover:border-gold disabled:opacity-40 cursor-pointer"
+                    className="p-1.5 rounded bg-navy-deep border border-white/15 text-white hover:border-gold disabled:opacity-40 cursor-pointer"
                     aria-label="Decrease quantity"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
-                  <span className="font-mono tabular-nums text-sm font-bold text-ink">
+                  <span className="font-mono tabular-nums text-sm font-bold text-gold">
                     {quantity} unit{quantity > 1 ? 's' : ''}
                   </span>
                   <button
                     type="button"
                     disabled={quantity >= Math.max(1, liveAvailableUnits)}
                     onClick={() => setQuantity((q) => Math.min(Math.max(1, liveAvailableUnits), q + 1))}
-                    className="p-1.5 rounded bg-white border border-black/10 hover:border-gold disabled:opacity-40 cursor-pointer"
+                    className="p-1.5 rounded bg-navy-deep border border-white/15 text-white hover:border-gold disabled:opacity-40 cursor-pointer"
                     aria-label="Increase quantity"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -428,7 +425,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             {/* Map & Location Verification */}
             <div>
-              <h3 className="text-sm font-semibold text-ink mb-2">
+              <h3 className="text-sm font-semibold text-white mb-2">
                 1. Pickup, Delivery & Return Location ({operatingCity})
               </h3>
               <LocationMapPicker
@@ -441,7 +438,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             {/* Protection & Optional Services */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-ink">2. Protection & Optional Add-ons</h3>
+              <h3 className="text-sm font-semibold text-white">2. Protection & Optional Add-ons</h3>
               <div className="space-y-2">
                 {insurancePackages.map((pkg) => {
                   const selected = insuranceId === pkg.id;
@@ -451,22 +448,24 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       type="button"
                       onClick={() => setInsuranceId(selected ? '' : pkg.id)}
                       className={`w-full text-left p-3.5 rounded-xl border transition-colors cursor-pointer ${
-                        selected ? 'border-gold bg-alabaster' : 'border-black/10 hover:border-black/25'
+                        selected
+                          ? 'border-gold bg-obsidian'
+                          : 'border-white/10 bg-obsidian/50 hover:border-white/25'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="flex items-center gap-2">
-                            <Shield className="w-4 h-4 text-gold-hover shrink-0" />
-                            <span className="text-sm font-semibold">{pkg.name}</span>
+                            <Shield className="w-4 h-4 text-gold shrink-0" />
+                            <span className="text-sm font-semibold text-white">{pkg.name}</span>
                           </div>
-                          <p className="text-[11px] text-slate-muted mt-0.5">
-                            {pkg.providerType} | {pkg.providerName} | Limit{' '}
-                            {formatINR(pkg.coverageLimitInr)} | Deductible {formatINR(pkg.deductibleInr)}
+                          <p className="text-[11px] text-ivory/60 mt-0.5">
+                            {pkg.providerType} · {pkg.providerName} · Limit{' '}
+                            {formatINR(pkg.coverageLimitInr)} · Deductible {formatINR(pkg.deductibleInr)}
                           </p>
-                          <p className="text-xs text-ink/80 mt-1">{pkg.description}</p>
+                          <p className="text-xs text-ivory/80 mt-1">{pkg.description}</p>
                         </div>
-                        <span className="font-mono tabular-nums text-xs font-semibold whitespace-nowrap">
+                        <span className="font-mono tabular-nums text-xs font-semibold text-gold whitespace-nowrap">
                           +{formatINR(pkg.pricePerDay)}/day
                         </span>
                       </div>
@@ -480,19 +479,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   type="button"
                   onClick={() => setRoadsideRequested((p) => !p)}
                   className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
-                    roadsideRequested ? 'border-gold bg-alabaster' : 'border-black/10 hover:border-black/25'
+                    roadsideRequested
+                      ? 'border-gold bg-obsidian'
+                      : 'border-white/10 bg-obsidian/50 hover:border-white/25'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold flex items-center gap-1.5">
-                      <Wrench className="w-3.5 h-3.5 text-gold-hover" />
+                    <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                      <Wrench className="w-3.5 h-3.5 text-gold" />
                       24/7 Roadside Assistance
                     </span>
-                    <span className="font-mono text-xs tabular-nums">
+                    <span className="font-mono text-xs tabular-nums text-gold">
                       +{formatINR(settings?.roadsideAddonPerDay || 199)}/day
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-muted mt-1">
+                  <p className="text-[11px] text-ivory/60 mt-1">
                     Priority flat-tyre, jump-start & towing dispatch.
                   </p>
                 </button>
@@ -501,26 +502,28 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   type="button"
                   onClick={() => setDriverRequested((p) => !p)}
                   className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
-                    driverRequested ? 'border-gold bg-alabaster' : 'border-black/10 hover:border-black/25'
+                    driverRequested
+                      ? 'border-gold bg-obsidian'
+                      : 'border-white/10 bg-obsidian/50 hover:border-white/25'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold flex items-center gap-1.5">
-                      <UserCheck className="w-3.5 h-3.5 text-gold-hover" />
+                    <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-gold" />
                       Optional Chauffeur
                     </span>
-                    <span className="font-mono text-xs tabular-nums">
+                    <span className="font-mono text-xs tabular-nums text-gold">
                       +{formatINR(settings?.driverAddonPerDay || 950)}/day
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-muted mt-1">
+                  <p className="text-[11px] text-ivory/60 mt-1">
                     Verified company chauffeur assigned by operations.
                   </p>
                 </button>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-muted mb-1">
+                <label className="block text-xs font-semibold text-ivory/70 mb-1">
                   Optional Company GSTIN (for B2B Tax Invoice)
                 </label>
                 <input
@@ -528,7 +531,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   value={gstNumber}
                   onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
                   placeholder="27AAACE1234F1Z5"
-                  className="w-full px-3 py-2 text-xs border border-black/15 rounded-lg font-mono uppercase focus:outline-none focus:border-gold"
+                  className="w-full px-3 py-2 text-xs bg-obsidian border border-white/15 rounded-lg text-white font-mono uppercase focus:outline-none focus:border-gold placeholder:text-ivory/35"
                 />
               </div>
             </div>
@@ -536,26 +539,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
           {/* Right Itemized Price & Payment Column */}
           <div className="lg:col-span-5">
-            <div className="p-5 rounded-xl border border-black/15 bg-alabaster space-y-4 sticky top-0">
-              <h3 className="font-display text-lg font-semibold text-ink">Itemized Fare Breakdown</h3>
+            <div className="p-5 rounded-xl border border-white/15 bg-obsidian space-y-4 sticky top-0">
+              <h3 className="font-display text-lg font-semibold text-white">Itemized Fare Breakdown</h3>
 
               {/* Coupon */}
               <div className="space-y-1.5">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <Tag className="w-3.5 h-3.5 text-slate-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Tag className="w-3.5 h-3.5 text-ivory/50 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={couponInput}
                       onChange={(e) => setCouponInput(e.target.value)}
                       placeholder="Coupon code (e.g. ELITE10)"
-                      className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-black/15 rounded-lg uppercase focus:outline-none focus:border-gold"
+                      className="w-full pl-8 pr-3 py-2 text-xs bg-navy-deep border border-white/15 rounded-lg text-white uppercase focus:outline-none focus:border-gold placeholder:text-ivory/40"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleApplyCoupon()}
-                    className="px-3 py-2 text-xs font-semibold bg-obsidian text-white rounded-lg hover:bg-graphite cursor-pointer whitespace-nowrap shrink-0"
+                    className="px-3.5 py-2 text-xs font-semibold bg-gold text-obsidian rounded-lg hover:bg-gold-bright cursor-pointer whitespace-nowrap shrink-0"
                   >
                     Apply
                   </button>
@@ -563,7 +566,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 {couponMessage && (
                   <p
                     className={`text-[11px] font-medium ${
-                      couponMessage.ok ? 'text-emerald-700' : 'text-red-700'
+                      couponMessage.ok ? 'text-emerald-400' : 'text-red-400'
                     }`}
                   >
                     {couponMessage.text}
@@ -572,62 +575,62 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
 
               {quoteLoading || !pricing ? (
-                <div className="py-8 text-center text-xs text-slate-muted">
+                <div className="py-8 text-center text-xs text-ivory/60">
                   Calculating itemized fare...
                 </div>
               ) : (
-                <div className="space-y-2 text-xs border-t border-black/10 pt-3">
+                <div className="space-y-2 text-xs border-t border-white/10 pt-3">
                   <div className="flex justify-between">
-                    <span className="text-slate-muted">
-                      Base Rental ({pricing.quantity || quantity}x unit{quantity > 1 ? 's' : ''} | {pricing.durationDays}d |{' '}
+                    <span className="text-ivory/65">
+                      Base Rental ({pricing.quantity || quantity}x unit{quantity > 1 ? 's' : ''} · {pricing.durationDays}d ·{' '}
                       {pricing.includedKmAllowance} km incl.)
                     </span>
-                    <span className="font-mono tabular-nums font-medium">
+                    <span className="font-mono tabular-nums font-medium text-white">
                       {formatINR(pricing.baseRentalAmount)}
                     </span>
                   </div>
                   {pricing.weekendSurcharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-slate-muted">Weekend Demand Adjustment</span>
-                      <span className="font-mono tabular-nums">
+                      <span className="text-ivory/65">Weekend Demand Adjustment</span>
+                      <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.weekendSurcharge)}
                       </span>
                     </div>
                   )}
                   {pricing.deliveryCharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-slate-muted">Doorstep Delivery Fee</span>
-                      <span className="font-mono tabular-nums">
+                      <span className="text-ivory/65">Doorstep Delivery Fee</span>
+                      <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.deliveryCharge)}
                       </span>
                     </div>
                   )}
                   {pricing.insuranceCharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-slate-muted">Protection Plan ({pricing.quantity || quantity}x)</span>
-                      <span className="font-mono tabular-nums">
+                      <span className="text-ivory/65">Protection Plan ({pricing.quantity || quantity}x)</span>
+                      <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.insuranceCharge)}
                       </span>
                     </div>
                   )}
                   {pricing.roadsideCharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-slate-muted">Roadside Assistance</span>
-                      <span className="font-mono tabular-nums">
+                      <span className="text-ivory/65">Roadside Assistance</span>
+                      <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.roadsideCharge)}
                       </span>
                     </div>
                   )}
                   {pricing.driverCharge > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-slate-muted">Optional Chauffeur</span>
-                      <span className="font-mono tabular-nums">
+                      <span className="text-ivory/65">Optional Chauffeur</span>
+                      <span className="font-mono tabular-nums text-white">
                         {formatINR(pricing.driverCharge)}
                       </span>
                     </div>
                   )}
                   {pricing.couponDiscount > 0 && (
-                    <div className="flex justify-between text-emerald-700 font-medium">
+                    <div className="flex justify-between text-emerald-400 font-medium">
                       <span>Coupon ({pricing.couponCode})</span>
                       <span className="font-mono tabular-nums">
                         -{formatINR(pricing.couponDiscount)}
@@ -635,31 +638,31 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <span className="text-slate-muted">GST ({pricing.taxRatePercent}%)</span>
-                    <span className="font-mono tabular-nums">{formatINR(pricing.taxAmount)}</span>
+                    <span className="text-ivory/65">GST ({pricing.taxRatePercent}%)</span>
+                    <span className="font-mono tabular-nums text-white">{formatINR(pricing.taxAmount)}</span>
                   </div>
-                  <div className="flex justify-between pt-2 border-t border-black/10">
-                    <span className="text-slate-muted">
+                  <div className="flex justify-between pt-2 border-t border-white/10">
+                    <span className="text-ivory/65">
                       Refundable Security Deposit ({pricing.quantity || quantity}x)
                     </span>
-                    <span className="font-mono tabular-nums font-semibold">
+                    <span className="font-mono tabular-nums font-semibold text-white">
                       {formatINR(pricing.securityDeposit)}
                     </span>
                   </div>
-                  <div className="flex justify-between pt-2 border-t border-black/15 text-sm font-bold text-ink">
+                  <div className="flex justify-between pt-2 border-t border-white/15 text-sm font-bold text-white">
                     <span>Total Payable</span>
-                    <span className="font-mono tabular-nums">{formatINR(pricing.totalPayable)}</span>
+                    <span className="font-mono tabular-nums text-gold">{formatINR(pricing.totalPayable)}</span>
                   </div>
-                  <p className="text-[11px] text-slate-muted">
+                  <p className="text-[11px] text-ivory/55">
                     Extra km beyond {pricing.includedKmAllowance} km billed at{' '}
                     {formatINR(pricing.extraKmRate)}/km upon return.
                   </p>
                 </div>
               )}
 
-              {/* Payment Schedule & Manual UPI Options */}
-              <div className="space-y-2.5 pt-2 border-t border-black/10">
-                <p className="text-xs font-semibold text-ink">
+              {/* Payment Schedule & Manual UPI */}
+              <div className="space-y-2.5 pt-2 border-t border-white/10">
+                <p className="text-xs font-semibold text-white">
                   Payment Schedule ({advancePct}% Advance{settings?.minimumAdvanceAmount ? `, min ${formatINR(settings.minimumAdvanceAmount)}` : ''})
                 </p>
                 <div className={`grid ${fullPaymentEnabled ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
@@ -669,12 +672,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       onClick={() => setPaymentMode('full')}
                       className={`p-2.5 rounded-lg border text-left text-xs cursor-pointer ${
                         paymentMode === 'full'
-                          ? 'border-obsidian bg-obsidian text-white'
-                          : 'border-black/15 bg-white'
+                          ? 'border-gold bg-gold text-obsidian'
+                          : 'border-white/15 bg-navy-deep text-ivory'
                       }`}
                     >
                       <p className="font-semibold">Full Payment</p>
-                      <p className="font-mono text-[11px] opacity-80 mt-0.5">
+                      <p className="font-mono text-[11px] opacity-85 mt-0.5">
                         {pricing ? formatINR(pricing.totalPayable) : '—'}
                       </p>
                     </button>
@@ -684,12 +687,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     onClick={() => setPaymentMode('advance_balance')}
                     className={`p-2.5 rounded-lg border text-left text-xs cursor-pointer ${
                       paymentMode === 'advance_balance'
-                        ? 'border-obsidian bg-obsidian text-white'
-                        : 'border-black/15 bg-white'
+                        ? 'border-gold bg-gold text-obsidian'
+                        : 'border-white/15 bg-navy-deep text-ivory'
                     }`}
                   >
                     <p className="font-semibold">{advancePct}% Advance + Balance</p>
-                    <p className="font-mono text-[11px] opacity-80 mt-0.5">
+                    <p className="font-mono text-[11px] opacity-85 mt-0.5">
                       {pricing ? formatINR(pricing.amountDueNow) : 'Pay balance at pickup'}
                     </p>
                   </button>
@@ -703,8 +706,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       onClick={() => setPaymentMethod(m.key)}
                       className={`py-2 px-2 rounded-lg border text-xs font-semibold cursor-pointer ${
                         paymentMethod === m.key
-                          ? 'border-gold bg-white text-ink'
-                          : 'border-black/10 text-slate-muted'
+                          ? 'border-gold bg-navy-deep text-gold'
+                          : 'border-white/10 text-ivory/60'
                       }`}
                     >
                       {m.label}
@@ -712,30 +715,30 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   ))}
                 </div>
                 {paymentMethod === 'UPI' && (
-                  <p className="text-[11px] text-slate-muted">
-                    Creating a reservation places a temporary <strong>{holdMins}-minute inventory hold</strong> while you transfer via UPI and upload payment proof.
+                  <p className="text-[11px] text-ivory/65">
+                    Reservation places a temporary <strong className="text-gold">{holdMins}-minute inventory hold</strong> while you settle via UPI and upload UTR proof.
                   </p>
                 )}
               </div>
 
-              {/* Rental Agreement v2025.1 Summary & Acceptance */}
-              <div className="p-3 rounded-lg bg-white border border-black/10 space-y-2 text-[11px]">
-                <div className="flex items-center justify-between font-semibold text-ink">
+              {/* Rental Agreement Summary */}
+              <div className="p-3 rounded-lg bg-navy-deep border border-white/10 space-y-2 text-[11px]">
+                <div className="flex items-center justify-between font-semibold text-white">
                   <span className="inline-flex items-center gap-1.5">
-                    <FileCheck2 className="w-3.5 h-3.5 text-gold-hover" />
+                    <FileCheck2 className="w-3.5 h-3.5 text-gold" />
                     Self-Drive Rental Agreement (v2025.1)
                   </span>
                 </div>
-                <p className="text-slate-muted leading-relaxed">
+                <p className="text-ivory/65 leading-relaxed">
                   {settings?.rentalRulesSummary ||
-                    'Valid original Driving Licence & KYC clearance mandatory before key handover. Full-to-full fuel policy applies. Security deposit refunds in 3–5 business days post clean return inspection.'}
+                    'Valid original Driving Licence & KYC clearance mandatory before key handover. Full-to-full fuel policy applies. Security deposit refunds post clean return inspection.'}
                 </p>
-                <label className="flex items-start gap-2 text-xs text-ink cursor-pointer pt-1">
+                <label className="flex items-start gap-2 text-xs text-white cursor-pointer pt-1">
                   <input
                     type="checkbox"
                     checked={termsAccepted}
                     onChange={(e) => setTermsAccepted(e.target.checked)}
-                    className="mt-0.5 accent-obsidian"
+                    className="mt-0.5 accent-gold"
                   />
                   <span>
                     I accept the Self-Drive Rental Agreement v2025.1, Cancellation Policy, and Privacy Notice.
@@ -747,9 +750,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 type="button"
                 disabled={submitting || !location.serviceable || !pricing || isPreviewMode || liveAvailableUnits < quantity}
                 onClick={() => void handleConfirmAndPay()}
-                className="w-full py-3 px-4 bg-obsidian text-white text-sm font-semibold rounded-xl hover:bg-graphite transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                className="w-full py-3 px-4 bg-gold text-obsidian text-sm font-semibold rounded-xl hover:bg-gold-bright transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
               >
-                <CreditCard className="w-4 h-4 text-gold" />
+                <CreditCard className="w-4 h-4" />
                 {isPreviewMode
                   ? 'Booking Disabled in Preview Mode'
                   : liveAvailableUnits < quantity
@@ -764,23 +767,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </button>
 
               {profile && profile.kycStatus !== 'Verified' && (
-                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-start gap-1.5">
-                  <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-500/30 rounded-lg p-2.5 flex items-start gap-1.5">
+                  <Check className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
                   <span>
                     Current KYC status: <strong>{profile.kycStatus}</strong>. Complete online or hub KYC in your dashboard before vehicle handover.
                   </span>
                 </p>
               )}
-
-              <a
-                href={`https://wa.me/${settings?.whatsappNumber || '919820011223'}?text=${whatsappText}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-2.5 px-4 border border-black/15 bg-white text-ink text-xs font-semibold rounded-xl hover:border-gold transition-colors flex items-center justify-center gap-2"
-              >
-                <MessageCircle className="w-4 h-4 text-emerald-700" />
-                Quick Assistance via WhatsApp
-              </a>
             </div>
           </div>
         </div>
@@ -788,4 +781,3 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     </div>
   );
 };
-

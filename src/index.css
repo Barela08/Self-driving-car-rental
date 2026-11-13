@@ -1,15 +1,23 @@
 @import "tailwindcss";
 
+:root {
+  --brand-primary: #C8A24D;
+  --brand-secondary: #0F1420;
+}
+
 @theme {
   --font-display: "Playfair Display", Georgia, serif;
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   --color-obsidian: #0B0B0D;
+  --color-navy-deep: var(--brand-secondary, #0F1420);
+  --color-navy-card: #131B2E;
   --color-charcoal: #141418;
   --color-graphite: #1E1E24;
   --color-alabaster: #F8F7F4;
-  --color-gold: #C8A24D;
+  --color-ivory: #F8F7F4;
+  --color-gold: var(--brand-primary, #C8A24D);
   --color-gold-bright: #D4AF37;
   --color-gold-hover: #B58E38;
   --color-ink: #111115;
@@ -26,11 +34,42 @@
 
   h1, h2, .font-display {
     font-family: var(--font-display);
+    text-wrap: balance;
   }
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+.obsidian-glass {
+  background: rgba(11, 11, 13, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.navy-surface {
+  background-color: var(--brand-secondary, #0F1420);
+}
+
+.gold-accent-bg {
+  background-color: var(--brand-primary, #C8A24D);
+}
+
+.gold-accent-text {
+  color: var(--brand-primary, #C8A24D);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Custom scrollbar for refined obsidian/gold panels */

@@ -19,6 +19,7 @@ import { AdminNotificationsPanel } from '../components/admin/AdminNotificationsP
 import { AdminReportsPanel } from '../components/admin/AdminReportsPanel';
 import { AdminIntegrationsPanel } from '../components/admin/AdminIntegrationsPanel';
 import { AdminAuditHistoryPanel } from '../components/admin/AdminAuditHistoryPanel';
+import { AdminAiAuthPanel } from '../components/admin/AdminAiAuthPanel';
 import { UserPreviewModal } from '../components/admin/UserPreviewModal';
 import { PaymentSettingsAdminPanel } from '../components/PaymentSettingsAdminPanel';
 import type { AdminOverviewPayload, AdminTabKey } from '../components/admin/adminTypes';
@@ -149,6 +150,11 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
     hasPerm('view_audit_logs') || hasPerm('manage_staff') || hasPerm('view_analytics');
   const canWebsiteSettings =
     hasPerm('manage_website_settings') || hasPerm('manage_coupons') || hasPerm('publish_offers');
+  const canAiAuth =
+    hasPerm('manage_ai_config') ||
+    hasPerm('manage_auth_config') ||
+    hasPerm('manage_integrations') ||
+    hasPerm('manage_website_settings');
 
   const isTabAuthorized = (() => {
     switch (tab) {
@@ -177,6 +183,8 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
       case 'integrations':
       case 'whatsapp':
         return canIntegrations;
+      case 'ai_auth':
+        return canAiAuth;
       case 'audit_history':
         return canAudit;
       case 'website_settings':
@@ -365,6 +373,10 @@ export const AdminDashboard: React.FC<{ initialTab?: AdminTabKey }> = ({
                 initialView={tab === 'whatsapp' ? 'whatsapp' : 'health'}
                 onReload={handleFullReload}
               />
+            )}
+
+            {tab === 'ai_auth' && canAiAuth && (
+              <AdminAiAuthPanel mode="admin" onReload={handleFullReload} />
             )}
 
             {tab === 'audit_history' && canAudit && (

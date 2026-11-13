@@ -1,5 +1,8 @@
+export type SupportedLanguage = 'en' | 'hi' | 'mr';
+
 export type Role =
   | 'customer'
+  | 'master_admin'
   | 'super_admin'
   | 'branch_manager'
   | 'booking_manager'
@@ -54,7 +57,9 @@ export type AdminPermission =
   | 'manage_availability'
   | 'manage_maintenance'
   | 'view_vehicle_history'
-  | 'export_inventory';
+  | 'export_inventory'
+  | 'manage_ai_config'
+  | 'manage_auth_config';
 
 export type VehicleCategory =
   | 'Hatchback'
@@ -797,6 +802,29 @@ export interface EnabledPaymentMethods {
   netBanking: boolean;
 }
 
+export type SocialPlatformKey =
+  | 'instagram'
+  | 'facebook'
+  | 'youtube'
+  | 'whatsapp'
+  | 'linkedin'
+  | 'twitter'
+  | 'telegram'
+  | 'pinterest'
+  | 'threads'
+  | 'snapchat'
+  | 'website'
+  | 'custom';
+
+export interface SocialProfileItem {
+  id: string;
+  platform: SocialPlatformKey;
+  displayName: string;
+  url: string;
+  enabled: boolean;
+  order: number;
+}
+
 export interface SocialLinks {
   instagram?: string;
   facebook?: string;
@@ -806,11 +834,34 @@ export interface SocialLinks {
   other?: string;
 }
 
+export interface LocalizedSiteCopy {
+  tagline?: string;
+  heroBannerHeadline?: string;
+  heroBannerSubcopy?: string;
+  fleetSectionHeading?: string;
+  offersSectionHeading?: string;
+  footerTagline?: string;
+  aboutSummary?: string;
+  howItWorksSummary?: string;
+  termsSummary?: string;
+  privacySummary?: string;
+  cancellationSummary?: string;
+  refundSummary?: string;
+  rentalRulesSummary?: string;
+  paymentInfoSummary?: string;
+  faqs?: { question: string; answer: string }[];
+}
+
 export interface CompanySettings {
   id: string;
   companyName: string;
+  brandName?: string;
   websiteTitle?: string;
   tagline: string;
+  shortDescription?: string;
+  fullDescription?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
   logoUrl?: string;
   faviconUrl?: string;
   registrationInfo?: string;
@@ -833,6 +884,7 @@ export interface CompanySettings {
   perKmDeliveryFee?: number;
   googleMapsUrl?: string;
   socialLinks?: SocialLinks;
+  socialProfiles?: SocialProfileItem[];
   upiEnabled?: boolean;
   upiId?: string;
   upiMerchantName?: string;
@@ -856,14 +908,91 @@ export interface CompanySettings {
   offersSectionHeading?: string;
   footerTagline?: string;
   aboutSummary: string;
+  howItWorksSummary?: string;
+  howItWorksSteps?: { title: string; description: string }[];
   termsSummary: string;
   privacySummary: string;
   cancellationSummary: string;
   refundSummary?: string;
   rentalRulesSummary?: string;
+  paymentInfoSummary?: string;
   faqs: { question: string; answer: string }[];
   testimonials: { name: string; role: string; city: string; quote: string }[];
+  localizedContent?: Partial<Record<SupportedLanguage, LocalizedSiteCopy>>;
+  defaultLanguage?: SupportedLanguage;
   updatedAt?: string;
+}
+
+export interface AuthOtpConfig {
+  id: string;
+  demoOtpEnabled: boolean;
+  demoOtpCodeMasked: string;
+  firebasePhoneAuthEnabled: boolean;
+  whatsappOtpEnabled: boolean;
+  authorizedTestPhones: string[];
+  environmentMode: 'development' | 'production';
+  updatedByUid?: string;
+  updatedByName?: string;
+  updatedAt: string;
+}
+
+export interface OtpVerificationLog {
+  id: string;
+  phone: string;
+  purpose: OtpPurpose;
+  channel: 'demo_test_otp' | 'firebase_phone_auth' | 'whatsapp_disabled';
+  outcome: 'sent' | 'verified' | 'rejected' | 'error';
+  details: string;
+  timestamp: string;
+}
+
+export interface AiAssistantConfig {
+  id: string;
+  enabled: boolean;
+  bookingEnabled: boolean;
+  provider: 'google_gemini';
+  modelName: string;
+  endpointUrl: string;
+  systemInstructions: string;
+  maxOutputTokens: number;
+  hasServerSecretKey?: boolean;
+  allowedLanguages: SupportedLanguage[];
+  updatedByUid?: string;
+  updatedByName?: string;
+  updatedAt: string;
+}
+
+export interface AiUsageLog {
+  id: string;
+  sessionId: string;
+  userId?: string;
+  language: SupportedLanguage;
+  modelName: string;
+  promptSummary: string;
+  toolsCalled: string[];
+  status: 'success' | 'error' | 'blocked';
+  errorMessage?: string;
+  latencyMs: number;
+  timestamp: string;
+}
+
+export interface PlatformTenantConfig {
+  id: string;
+  name: string;
+  slug: string;
+  city: string;
+  ownerUid?: string;
+  ownerEmail: string;
+  ownerName: string;
+  status: 'active' | 'suspended';
+  features: {
+    whatsappEnabled: boolean;
+    aiAssistantEnabled: boolean;
+    demoOtpEnabled: boolean;
+    firebasePhoneAuthEnabled: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type NotificationEventKey =

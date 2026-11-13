@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Calendar, Check, MapPin, Shield, Star } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
+import { useLanguage } from '../context/LanguageContext';
 import { apiFetch, formatINR } from '../lib/api';
 import { resolveVehicleImage } from '../lib/mediaAssets';
 import { BookingModal } from '../components/BookingModal';
@@ -10,7 +11,8 @@ import type { CustomerReview, VehicleAvailabilitySummary } from '../types';
 export const VehicleDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
-  const { vehicles, insurancePackages, settings, isPreviewMode, loading } = useCatalog();
+  const { vehicles, activeBranches, insurancePackages, settings, isPreviewMode, loading } = useCatalog();
+  const { t } = useLanguage();
   const vehicle = vehicles.find((v) => v.id === id && !v.archived);
 
   const [activeImageIdx, setActiveImageIdx] = useState(0);
@@ -27,8 +29,11 @@ export const VehicleDetailPage: React.FC = () => {
   );
   const [bookingOpen, setBookingOpen] = useState(false);
 
+  const hasBranches = activeBranches.length > 0;
   const operatingCity = vehicle?.cityName || settings?.operatingCityName || 'Mumbai';
-  const hubName = vehicle?.branchName || settings?.officeName || `${operatingCity} Central Hub`;
+  const hubName = hasBranches
+    ? vehicle?.branchName || settings?.officeName || `${operatingCity} Lounge`
+    : settings?.officeName || `${operatingCity} Flagship Hub`;
 
   useEffect(() => {
     if (!id) return;
@@ -62,17 +67,19 @@ export const VehicleDetailPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-12">
-        <div className="h-[460px] rounded-2xl bg-alabaster animate-pulse" />
+      <div className="min-h-screen bg-obsidian pt-24">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-12">
+          <div className="h-[460px] rounded-2xl bg-navy-deep animate-pulse" />
+        </div>
       </div>
     );
   }
 
   if (!vehicle) {
     return (
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-16 text-center space-y-3">
-        <h1 className="font-display text-2xl font-semibold">Vehicle Not Found</h1>
-        <Link to="/vehicles" className="text-sm font-semibold underline text-ink">
+      <div className="min-h-screen bg-obsidian text-ivory pt-28 px-4 text-center space-y-3">
+        <h1 className="font-display text-2xl font-semibold text-white">Vehicle Not Found</h1>
+        <Link to="/vehicles" className="text-sm font-semibold underline text-gold">
           Return to Fleet Catalog
         </Link>
       </div>
@@ -83,7 +90,7 @@ export const VehicleDetailPage: React.FC = () => {
   const specEntries = Object.entries(vehicle.specifications || {});
   const availableUnits = availabilitySummary ? availabilitySummary.availableUnits : vehicle.status === 'Available' ? 1 : 0;
   const totalUnits = availabilitySummary ? availabilitySummary.totalUnits : 1;
-  const availabilityStatus = availabilitySummary?.availabilityStatus || (availableUnits > 0 ? 'Available' : 'Sold Out');
+  const availabilityStatus = availabilitySummary?.availabilityStatus || (availableUnits > 0 ? t('fleet.available') : t('fleet.soldOut'));
   const nextAvailFormatted = availabilitySummary?.nextAvailableDate
     ? new Date(availabilitySummary.nextAvailableDate).toLocaleString('en-IN', {
         day: '2-digit',
@@ -96,20 +103,20 @@ export const VehicleDetailPage: React.FC = () => {
   const canBookWindow = availableUnits > 0 && new Date(endDate).getTime() > new Date(startDate).getTime();
 
   return (
-    <div className="min-h-screen bg-white text-ink pb-20 lg:pb-12">
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-8 space-y-8">
+    <div className="min-h-screen bg-obsidian text-ivory pt-24 pb-24 lg:pb-16">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 space-y-8">
         <Link
           to="/vehicles"
-          className="inline-flex items-center gap-2 text-xs font-semibold text-slate-muted hover:text-ink"
+          className="inline-flex items-center gap-2 text-xs font-semibold text-ivory/70 hover:text-gold"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Fleet Discovery
         </Link>
 
         <div className="grid lg:grid-cols-12 gap-8 items-start">
-          {/* Left Sticky Gallery & Specs */}
+          {/* Left Gallery & Specs */}
           <div className="lg:col-span-7 space-y-6">
-            <div className="aspect-[16/10] w-full rounded-2xl overflow-hidden border border-black/10 bg-alabaster">
+            <div className="aspect-[16/10] w-full rounded-2xl overflow-hidden border border-white/10 bg-navy-deep">
               <img
                 src={resolveVehicleImage(galleryImages[activeImageIdx])}
                 alt={vehicle.name}
@@ -124,10 +131,10 @@ export const VehicleDetailPage: React.FC = () => {
                     key={idx}
                     type="button"
                     onClick={() => setActiveImageIdx(idx)}
-                    className={`w-24 aspect-[4/3] rounded-lg overflow-hidden border-2 cursor-pointer ${
+                    className={`w-24 aspect-[4/3] rounded-xl overflow-hidden border-2 cursor-pointer ${
                       activeImageIdx === idx
                         ? 'border-gold'
-                        : 'border-transparent opacity-70 hover:opacity-100'
+                        : 'border-white/10 opacity-70 hover:opacity-100'
                     }`}
                   >
                     <img
@@ -142,57 +149,57 @@ export const VehicleDetailPage: React.FC = () => {
             )}
 
             {vehicle.description && (
-              <div className="p-6 rounded-xl border border-black/10 bg-white space-y-2">
-                <h2 className="font-display text-xl font-semibold text-ink">Vehicle Overview</h2>
-                <p className="text-sm text-slate-muted leading-relaxed">{vehicle.description}</p>
+              <div className="p-6 rounded-2xl border border-white/10 bg-navy-deep space-y-2">
+                <h2 className="font-display text-xl font-semibold text-white">Vehicle Overview</h2>
+                <p className="text-sm text-ivory/75 leading-relaxed">{vehicle.description}</p>
               </div>
             )}
 
             {/* Specifications */}
-            <div className="p-6 rounded-xl border border-black/10 bg-alabaster space-y-4">
-              <h2 className="font-display text-xl font-semibold text-ink">
+            <div className="p-6 rounded-2xl border border-white/10 bg-navy-deep space-y-4">
+              <h2 className="font-display text-xl font-semibold text-white">
                 Technical & Rental Specifications
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                 <div>
-                  <p className="text-slate-muted">Model Year</p>
-                  <p className="font-semibold font-mono tabular-nums mt-0.5">{vehicle.year}</p>
+                  <p className="text-ivory/55">Model Year</p>
+                  <p className="font-semibold font-mono tabular-nums text-white mt-0.5">{vehicle.year}</p>
                 </div>
                 <div>
-                  <p className="text-slate-muted">Transmission</p>
-                  <p className="font-semibold mt-0.5">{vehicle.transmission}</p>
+                  <p className="text-ivory/55">Transmission</p>
+                  <p className="font-semibold text-white mt-0.5">{vehicle.transmission}</p>
                 </div>
                 <div>
-                  <p className="text-slate-muted">Fuel Source</p>
-                  <p className="font-semibold mt-0.5">{vehicle.fuelType}</p>
+                  <p className="text-ivory/55">Fuel Source</p>
+                  <p className="font-semibold text-white mt-0.5">{vehicle.fuelType}</p>
                 </div>
                 <div>
-                  <p className="text-slate-muted">Capacity & AC</p>
-                  <p className="font-semibold mt-0.5">
-                    {vehicle.seats} Seats /{' '}
-                    {vehicle.luggageCapacity ? `${vehicle.luggageCapacity} Bags / ` : ''}
+                  <p className="text-ivory/55">Capacity & AC</p>
+                  <p className="font-semibold text-white mt-0.5">
+                    {vehicle.seats} Seats ·{' '}
+                    {vehicle.luggageCapacity ? `${vehicle.luggageCapacity} Bags · ` : ''}
                     {vehicle.ac ? 'Climate AC' : 'Non-AC'}
                   </p>
                 </div>
               </div>
 
               {specEntries.length > 0 && (
-                <div className="grid sm:grid-cols-2 gap-3 pt-3 border-t border-black/10 text-xs">
+                <div className="grid sm:grid-cols-2 gap-3 pt-3 border-t border-white/10 text-xs">
                   {specEntries.map(([k, v]) => (
-                    <div key={k} className="flex justify-between gap-2 bg-white px-3 py-2 rounded-lg border border-black/5">
-                      <span className="text-slate-muted">{k}</span>
-                      <span className="font-semibold text-ink">{v}</span>
+                    <div key={k} className="flex justify-between gap-2 bg-obsidian px-3 py-2 rounded-lg border border-white/10">
+                      <span className="text-ivory/60">{k}</span>
+                      <span className="font-semibold text-white">{v}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="pt-3 border-t border-black/10">
-                <p className="text-xs font-semibold text-slate-muted mb-2">Included Features</p>
+              <div className="pt-3 border-t border-white/10">
+                <p className="text-xs font-semibold text-ivory/60 mb-2">Included Features</p>
                 <div className="grid sm:grid-cols-2 gap-2 text-xs">
                   {vehicle.features.map((f, i) => (
-                    <div key={i} className="flex items-center gap-2 text-ink">
-                      <Check className="w-3.5 h-3.5 text-gold-hover shrink-0" />
+                    <div key={i} className="flex items-center gap-2 text-ivory">
+                      <Check className="w-3.5 h-3.5 text-gold shrink-0" />
                       <span>{f}</span>
                     </div>
                   ))}
@@ -201,50 +208,50 @@ export const VehicleDetailPage: React.FC = () => {
             </div>
 
             {/* Policies & Protection Preview */}
-            <div className="p-6 rounded-xl border border-black/10 space-y-4">
-              <h2 className="font-display text-xl font-semibold text-ink">
+            <div className="p-6 rounded-2xl border border-white/10 bg-navy-deep space-y-4">
+              <h2 className="font-display text-xl font-semibold text-white">
                 Policies & Protection Packages
               </h2>
               <div className="grid sm:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <p className="font-semibold text-ink">Fuel Policy</p>
-                  <p className="text-slate-muted mt-0.5">{vehicle.fuelPolicy}</p>
+                  <p className="font-semibold text-white">Fuel Policy</p>
+                  <p className="text-ivory/65 mt-0.5">{vehicle.fuelPolicy}</p>
                 </div>
                 <div>
-                  <p className="font-semibold text-ink">Cancellation Policy</p>
-                  <p className="text-slate-muted mt-0.5">{vehicle.cancellationPolicy}</p>
+                  <p className="font-semibold text-white">Cancellation Policy</p>
+                  <p className="text-ivory/65 mt-0.5">{vehicle.cancellationPolicy}</p>
                 </div>
                 <div>
-                  <p className="font-semibold text-ink">Pickup & Delivery Eligibility</p>
-                  <p className="text-slate-muted mt-0.5">
-                    Hub pickup at {hubName} ({operatingCity}) |{' '}
+                  <p className="font-semibold text-white">Pickup & Delivery Eligibility</p>
+                  <p className="text-ivory/65 mt-0.5">
+                    {hubName} ({operatingCity}) ·{' '}
                     {vehicle.deliveryEligible
-                      ? `Doorstep delivery within ${settings?.serviceRadiusKm || 25} km zone`
-                      : 'Hub self-pickup only'}
+                      ? `Doorstep delivery within ${settings?.serviceRadiusKm || 35} km zone`
+                      : 'Lounge self-pickup only'}
                   </p>
                 </div>
                 <div>
-                  <p className="font-semibold text-ink">Registration & RC Access</p>
-                  <p className="text-slate-muted mt-0.5">
-                    Physical registration number, insurance & RC details are assigned automatically upon checkout and verified by operations staff.
+                  <p className="font-semibold text-white">Registration & RC Access</p>
+                  <p className="text-ivory/65 mt-0.5">
+                    Physical registration unit, insurance & RC details are assigned automatically upon checkout.
                   </p>
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-black/10 space-y-2">
-                <p className="text-xs font-semibold text-ink flex items-center gap-1.5">
-                  <Shield className="w-4 h-4 text-gold-hover" />
+              <div className="pt-3 border-t border-white/10 space-y-2">
+                <p className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-gold" />
                   Available Protection Add-ons
                 </p>
                 <div className="grid sm:grid-cols-3 gap-3">
                   {insurancePackages.map((pkg) => (
                     <div
                       key={pkg.id}
-                      className="p-3 rounded-lg bg-alabaster border border-black/10 text-xs"
+                      className="p-3 rounded-xl bg-obsidian border border-white/10 text-xs"
                     >
-                      <p className="font-semibold text-ink">{pkg.name}</p>
-                      <p className="text-[11px] text-slate-muted mt-0.5">{pkg.providerType}</p>
-                      <p className="font-mono tabular-nums font-semibold mt-1.5">
+                      <p className="font-semibold text-white">{pkg.name}</p>
+                      <p className="text-[11px] text-ivory/55 mt-0.5">{pkg.providerType}</p>
+                      <p className="font-mono tabular-nums font-semibold text-gold mt-1.5">
                         {formatINR(pkg.pricePerDay)}/day
                       </p>
                     </div>
@@ -253,14 +260,14 @@ export const VehicleDetailPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Availability Calendar */}
-            <div className="p-6 rounded-xl border border-black/10 space-y-3">
-              <h2 className="font-display text-xl font-semibold text-ink flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-gold-hover" />
+            {/* Availability Windows */}
+            <div className="p-6 rounded-2xl border border-white/10 bg-navy-deep space-y-3">
+              <h2 className="font-display text-xl font-semibold text-white flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-gold" />
                 Live Availability Windows
               </h2>
               {blockedWindows.length === 0 ? (
-                <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                <p className="text-xs text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 rounded-xl p-3">
                   No overlapping reservations currently scheduled across {totalUnits} physical unit(s) in {hubName}.
                 </p>
               ) : (
@@ -268,13 +275,13 @@ export const VehicleDetailPage: React.FC = () => {
                   {blockedWindows.map((w, i) => (
                     <div
                       key={i}
-                      className="p-3 rounded-lg bg-alabaster border border-black/10 text-xs flex items-center justify-between"
+                      className="p-3 rounded-xl bg-obsidian border border-white/10 text-xs flex items-center justify-between"
                     >
-                      <span className="font-mono tabular-nums">
+                      <span className="font-mono tabular-nums text-ivory">
                         {new Date(w.startDate).toLocaleString('en-IN')} →{' '}
                         {new Date(w.endDate).toLocaleString('en-IN')}
                       </span>
-                      <span className="font-semibold text-amber-800">{w.status}</span>
+                      <span className="font-semibold text-amber-300">{w.status}</span>
                     </div>
                   ))}
                 </div>
@@ -282,32 +289,32 @@ export const VehicleDetailPage: React.FC = () => {
             </div>
 
             {/* Verified Customer Reviews */}
-            <div className="p-6 rounded-xl border border-black/10 space-y-4">
+            <div className="p-6 rounded-2xl border border-white/10 bg-navy-deep space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="font-display text-xl font-semibold text-ink">
+                <h2 className="font-display text-xl font-semibold text-white">
                   Verified Customer Reviews
                 </h2>
-                <span className="text-xs font-mono tabular-nums text-slate-muted">
+                <span className="text-xs font-mono tabular-nums text-ivory/55">
                   {reviews.length} approved review(s)
                 </span>
               </div>
               {reviews.length === 0 ? (
-                <p className="text-xs text-slate-muted">
+                <p className="text-xs text-ivory/60">
                   Reviews from verified completed trips on this vehicle model will appear here once approved.
                 </p>
               ) : (
                 <div className="space-y-3">
                   {reviews.map((rev) => (
-                    <div key={rev.id} className="p-4 rounded-xl bg-alabaster border border-black/10 space-y-1.5">
+                    <div key={rev.id} className="p-4 rounded-xl bg-obsidian border border-white/10 space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold text-ink">{rev.customerName}</p>
-                        <span className="inline-flex items-center gap-1 text-xs font-mono font-bold text-ink">
+                        <p className="text-xs font-semibold text-white">{rev.customerName}</p>
+                        <span className="inline-flex items-center gap-1 text-xs font-mono font-bold text-gold">
                           <Star className="w-3.5 h-3.5 fill-gold text-gold" />
                           {rev.rating.toFixed(1)}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-muted leading-relaxed">{rev.comment}</p>
-                      <p className="text-[11px] font-mono text-slate-muted">
+                      <p className="text-xs text-ivory/75 leading-relaxed">{rev.comment}</p>
+                      <p className="text-[11px] font-mono text-ivory/45">
                         Verified Trip on {new Date(rev.createdAt).toLocaleDateString('en-IN')}
                       </p>
                     </div>
@@ -319,82 +326,84 @@ export const VehicleDetailPage: React.FC = () => {
 
           {/* Right Contiguous Booking Module */}
           <div className="lg:col-span-5 lg:sticky lg:top-24">
-            <div className="p-6 rounded-2xl border border-black/15 bg-white shadow-sm space-y-5">
+            <div className="p-6 rounded-2xl border border-white/15 bg-navy-deep shadow-2xl space-y-5">
               <div>
-                <div className="flex items-center justify-between gap-2 text-xs text-slate-muted">
-                  <span>{vehicle.category} / {operatingCity} / {vehicle.instantBooking ? 'Instant Confirm' : 'Admin Approval'}</span>
+                <div className="flex items-center justify-between gap-2 text-xs text-ivory/65">
+                  <span>
+                    {vehicle.category} · {operatingCity} · {vehicle.instantBooking ? t('fleet.instantBook') : t('fleet.approvalBook')}
+                  </span>
                   <span
-                    className={`px-2 py-0.5 rounded font-semibold text-[11px] border ${
+                    className={`font-semibold text-xs ${
                       availableUnits > 2
-                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        ? 'text-emerald-400'
                         : availableUnits > 0
-                          ? 'bg-amber-50 text-amber-900 border-amber-200'
-                          : 'bg-red-50 text-red-800 border-red-200'
+                          ? 'text-amber-300'
+                          : 'text-red-400'
                     }`}
                   >
                     {availabilityStatus}
                   </span>
                 </div>
-                <h1 className="font-display text-2xl sm:text-3xl font-semibold text-ink mt-1">
+                <h1 className="font-display text-2xl sm:text-3xl font-semibold text-white mt-1.5">
                   {vehicle.name}
                 </h1>
-                <div className="flex items-center gap-3 text-xs text-slate-muted mt-1.5">
-                  <span className="inline-flex items-center gap-1 text-ink font-semibold tabular-nums">
+                <div className="flex items-center gap-3 text-xs text-ivory/65 mt-1.5">
+                  <span className="inline-flex items-center gap-1 text-white font-semibold tabular-nums">
                     <Star className="w-3.5 h-3.5 fill-gold text-gold" />
                     {vehicle.rating} ({vehicle.reviewCount} verified trips)
                   </span>
-                  <span>|</span>
+                  <span aria-hidden="true">·</span>
                   <span className="inline-flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-gold-hover" />
+                    <MapPin className="w-3.5 h-3.5 text-gold" />
                     {hubName}
                   </span>
                 </div>
               </div>
 
               {/* Rate Tier Grid */}
-              <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-alabaster border border-black/10 text-center">
+              <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-obsidian border border-white/10 text-center">
                 <div>
-                  <p className="text-[11px] text-slate-muted">Daily</p>
-                  <p className="font-mono tabular-nums text-sm font-bold">
+                  <p className="text-[11px] text-ivory/55">Daily</p>
+                  <p className="font-mono tabular-nums text-sm font-bold text-gold">
                     {formatINR(vehicle.pricePerDay)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[11px] text-slate-muted">Weekly</p>
-                  <p className="font-mono tabular-nums text-sm font-bold">
+                  <p className="text-[11px] text-ivory/55">Weekly</p>
+                  <p className="font-mono tabular-nums text-sm font-bold text-white">
                     {formatINR(vehicle.pricePerWeek)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[11px] text-slate-muted">Monthly</p>
-                  <p className="font-mono tabular-nums text-sm font-bold">
+                  <p className="text-[11px] text-ivory/55">Monthly</p>
+                  <p className="font-mono tabular-nums text-sm font-bold text-white">
                     {formatINR(vehicle.pricePerMonth)}
                   </p>
                 </div>
               </div>
 
-              <div className="space-y-2 text-xs border-y border-black/10 py-3">
+              <div className="space-y-2 text-xs border-y border-white/10 py-3">
                 <div className="flex justify-between">
-                  <span className="text-slate-muted">Branch Fleet Inventory</span>
-                  <span className="font-mono tabular-nums font-semibold">
-                    {availableUnits} of {totalUnits} physical unit(s) available
+                  <span className="text-ivory/60">Available Fleet Inventory</span>
+                  <span className="font-mono tabular-nums font-semibold text-white">
+                    {availableUnits} of {totalUnits} unit(s)
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-muted">Included Allowance</span>
-                  <span className="font-mono tabular-nums font-semibold">
+                  <span className="text-ivory/60">Included Allowance</span>
+                  <span className="font-mono tabular-nums font-semibold text-white">
                     {vehicle.includedKmPerDay} km / day
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-muted">Extra Kilometre Rate</span>
-                  <span className="font-mono tabular-nums font-semibold">
+                  <span className="text-ivory/60">Extra Kilometre Rate</span>
+                  <span className="font-mono tabular-nums font-semibold text-white">
                     {formatINR(vehicle.extraKmRate)} / km
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-muted">Refundable Security Deposit</span>
-                  <span className="font-mono tabular-nums font-semibold">
+                  <span className="text-ivory/60">Refundable Security Deposit</span>
+                  <span className="font-mono tabular-nums font-semibold text-gold">
                     {formatINR(vehicle.securityDeposit)}
                   </span>
                 </div>
@@ -402,31 +411,31 @@ export const VehicleDetailPage: React.FC = () => {
 
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-muted mb-1">
-                    Pickup Date & Time
+                  <label className="block text-xs font-semibold text-ivory/70 mb-1">
+                    {t('hero.pickupDate')}
                   </label>
                   <input
                     type="datetime-local"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                    className="w-full px-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-muted mb-1">
-                    Return Date & Time
+                  <label className="block text-xs font-semibold text-ivory/70 mb-1">
+                    {t('hero.returnDate')}
                   </label>
                   <input
                     type="datetime-local"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-black/15 rounded-lg focus:outline-none focus:border-gold"
+                    className="w-full px-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold"
                   />
                 </div>
               </div>
 
               {availableUnits <= 0 && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 space-y-1">
+                <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/30 text-xs text-red-300 space-y-1">
                   <p className="font-semibold">
                     {availabilityStatus === 'Temporarily Unavailable'
                       ? 'Currently Unavailable — Contact Support'
@@ -434,15 +443,15 @@ export const VehicleDetailPage: React.FC = () => {
                   </p>
                   {nextAvailFormatted && (
                     <p className="font-mono text-[11px]">
-                      Next Available From: {nextAvailFormatted}
+                      {t('fleet.nextAvailable')}: {nextAvailFormatted}
                     </p>
                   )}
                 </div>
               )}
 
               {isPreviewMode && (
-                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
-                  Owner Preview Mode active: you can inspect the location picker and quote calculator, while live booking creation is safely disabled.
+                <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-500/30 text-[11px] text-amber-200">
+                  Owner Preview Mode active: you can inspect the location picker and quote calculator, while live booking creation is disabled.
                 </div>
               )}
 
@@ -450,7 +459,7 @@ export const VehicleDetailPage: React.FC = () => {
                 type="button"
                 disabled={!canBookWindow}
                 onClick={() => setBookingOpen(true)}
-                className="w-full py-3.5 px-5 bg-obsidian text-white text-sm font-semibold rounded-xl hover:bg-graphite transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+                className="w-full py-3.5 px-5 bg-gold hover:bg-gold-bright text-obsidian text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
               >
                 {canBookWindow
                   ? 'Select Location & Proceed to Checkout'
@@ -466,14 +475,14 @@ export const VehicleDetailPage: React.FC = () => {
       </div>
 
       {/* Mobile Compact Bottom Bar */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-obsidian text-white border-t border-white/15 px-4 py-2.5 flex items-center justify-between gap-3">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-obsidian/95 backdrop-blur-md text-white border-t border-white/15 px-4 py-2.5 flex items-center justify-between gap-3">
         <div>
-          <p className="font-mono tabular-nums text-sm font-bold">
+          <p className="font-mono tabular-nums text-sm font-bold text-gold">
             {formatINR(vehicle.pricePerDay)}{' '}
-            <span className="text-xs font-normal text-white/60">/ day</span>
+            <span className="text-xs font-normal text-ivory/60">{t('fleet.perDay')}</span>
           </p>
-          <p className="text-[11px] text-white/60">
-            {availableUnits > 0 ? `${availableUnits} unit(s) free` : 'Sold Out'}
+          <p className="text-[11px] text-ivory/60">
+            {availableUnits > 0 ? `${availableUnits} unit(s) free` : t('fleet.soldOut')}
           </p>
         </div>
         <button
@@ -498,4 +507,5 @@ export const VehicleDetailPage: React.FC = () => {
     </div>
   );
 };
+
 

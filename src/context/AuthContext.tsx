@@ -10,11 +10,13 @@ import { auth, googleAuthProvider, testFirestoreConnection } from '../lib/fireba
 import { apiFetch, getSessionToken, setSessionToken } from '../lib/api';
 import type { UserProfile } from '../types';
 
+export type LoginPortalType = 'customer' | 'admin' | 'staff' | 'master';
+
 interface AuthContextValue {
   firebaseUser: FirebaseUser | { uid: string; email?: string } | null;
   profile: UserProfile | null;
   loading: boolean;
-  loginWithEmail: (email: string, password: string, portal?: 'customer' | 'admin' | 'staff') => Promise<UserProfile | null>;
+  loginWithEmail: (email: string, password: string, portal?: LoginPortalType) => Promise<UserProfile | null>;
   registerWithEmail: (params: {
     name: string;
     email: string;
@@ -24,6 +26,8 @@ interface AuthContextValue {
     marketingConsent: boolean;
   }) => Promise<boolean>;
   loginWithGoogle: () => Promise<UserProfile | null>;
+  loginWithFirebasePhone: (idToken: string, displayName?: string, phone?: string) => Promise<UserProfile | null>;
+  setAuthenticatedSession: (token: string, nextProfile: UserProfile) => void;
   logout: () => Promise<void>;
   logoutAllDevices: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -75,10 +79,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [restoreSessionFromServer]);
 
+  const setAuthenticatedSession = (token: string, nextProfile: UserProfile) => {
+    setSessionToken(token);
+    setProfile(nextProfile);
+    setFirebaseUser({ uid: nextProfile.uid, email: nextProfile.email });
+  };
+
   const loginWithEmail = async (
     email: string,
     password: string,
-    portal: 'customer' | 'admin' | 'staff' = 'customer'
+    portal: LoginPortalType = 'customer'
   ): Promise<UserProfile | null> => {
     try {
       const data = await apiFetch<{ token: string; profile: UserProfile }>('/api/auth/login', {
@@ -88,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSessionToken(data.token);
       setProfile(data.profile);
       setFirebaseUser({ uid: data.profile.uid, email });
-      toast.success(`Login Successful — Welcome, ${data.profile.displayName}`);
+      toast.success(`Welcome, ${data.profile.displayName}`);
       return data.profile;
     } catch (err: any) {
       toast.error(err.message || 'Login failed');
@@ -130,10 +140,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data.token) setSessionToken(data.token);
       setFirebaseUser(cred.user);
       setProfile(data.profile);
-      toast.success(`Login Successful — Welcome, ${data.profile.displayName}`);
+      toast.success(`Welcome, ${data.profile.displayName}`);
       return data.profile;
     } catch (err: any) {
       toast.error(err.message || 'Google sign-in cancelled or failed');
+      return null;
+    }
+  };
+
+  const loginWithFirebasePhone = async (
+    idToken: string,
+    displayName?: string,
+    phone?: string
+  ): Promise<UserProfile | null> => {
+    try {
+      const data = await apiFetch<{ profile: UserProfile; token?: string }>('/api/auth/sync-phone', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ displayName, phone }),
+      });
+      if (data.token) setSessionToken(data.token);
+      setFirebaseUser(auth.currentUser || { uid: data.profile.uid });
+      setProfile(data.profile);
+      toast.success(`Verified — Welcome, ${data.profile.displayName}`);
+      return data.profile;
+    } catch (err: any) {
+      toast.error(err.message || 'Phone sign-in synchronization failed');
       return null;
     }
   };
@@ -180,6 +214,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
+        loginWithFirebasePhone,
+        setAuthenticatedSession,
         logout,
         logoutAllDevices,
         refreshProfile,

@@ -133,7 +133,17 @@ async function ensureAuthAccount(params: {
     );
   }
 
-  if (params.role !== 'customer') {
+  if (params.role === 'master_admin') {
+    const masterRef = db.collection('master_admins').doc(uid);
+    if (!(await masterRef.get()).exists) {
+      await masterRef.set({
+        uid,
+        role: 'master_admin',
+        active: true,
+        updatedAt: now,
+      });
+    }
+  } else if (params.role !== 'customer') {
     const adminRef = db.collection('admins').doc(uid);
     const adminSnap = await adminRef.get();
     if (!adminSnap.exists) {
@@ -156,8 +166,14 @@ async function runSeed(): Promise<void> {
   const defaultSettingsPayload = {
     id: 'default',
     companyName: 'EliteDrive',
+    brandName: 'EliteDrive Luxury Mobility',
     websiteTitle: 'EliteDrive — Luxury & Self-Drive Car Rentals in Mumbai',
-    tagline: 'Single-City Executive Self-Drive Mobility',
+    tagline: 'Precision Executive Self-Drive Mobility',
+    shortDescription: 'Private flagship self-drive fleet in Mumbai with doorstep delivery, transparent GST tariffs, and instant digital KYC.',
+    fullDescription: 'EliteDrive operates a company-owned fleet of executive sedans, rugged 4x4 SUVs, flagship hybrids, and zero-emission EVs with concierge-grade inspection before every handover.',
+    primaryColor: '#C8A24D',
+    secondaryColor: '#0F1420',
+    defaultLanguage: 'en',
     logoUrl: '',
     faviconUrl: '',
     registrationInfo: 'EliteDrive Mobility Pvt. Ltd. · CIN U71100MH2024PTC408122 · GSTIN 27AABCE9042K1Z5',
@@ -187,6 +203,13 @@ async function runSeed(): Promise<void> {
       linkedin: 'https://linkedin.com/company/elitedrive-mobility',
       other: '',
     },
+    socialProfiles: [
+      { id: 'soc-instagram', platform: 'instagram', displayName: 'Instagram', url: 'https://instagram.com/elitedrive.mumbai', enabled: true, order: 1 },
+      { id: 'soc-facebook', platform: 'facebook', displayName: 'Facebook', url: 'https://facebook.com/elitedrivemumbai', enabled: true, order: 2 },
+      { id: 'soc-youtube', platform: 'youtube', displayName: 'YouTube', url: 'https://youtube.com/@elitedrivemobility', enabled: true, order: 3 },
+      { id: 'soc-twitter', platform: 'twitter', displayName: 'X / Twitter', url: 'https://x.com/elitedrive_in', enabled: true, order: 4 },
+      { id: 'soc-linkedin', platform: 'linkedin', displayName: 'LinkedIn', url: 'https://linkedin.com/company/elitedrive-mobility', enabled: true, order: 5 },
+    ],
     upiEnabled: true,
     upiId: process.env.COMPANY_UPI_ID || 'elitedrive@icici',
     upiMerchantName: process.env.COMPANY_UPI_NAME || 'EliteDrive Mobility Pvt Ltd',
@@ -218,6 +241,16 @@ async function runSeed(): Promise<void> {
     footerTagline: 'Obsidian-grade self-drive mobility operating across Mumbai.',
     aboutSummary:
       'EliteDrive operates a single-company maintained self-drive fleet from our Bandra West flagship hub, engineered for executive city travel, airport transfers, and coastal highway getaways.',
+    howItWorksSummary:
+      'Reserve your preferred flagship vehicle in under three minutes with verified KYC, transparent GST pricing, and flexible doorstep or hub handover.',
+    howItWorksSteps: [
+      { title: 'Select Vehicle & Schedule', description: 'Choose your exact model, pickup/return window, and hub or doorstep delivery coordinates.' },
+      { title: 'Complete Digital KYC', description: 'Submit Driving Licence & Govt ID once for fast compliance verification.' },
+      { title: 'Manual UPI Settlement', description: 'Pay via dynamic UPI QR and submit your 12-digit UTR reference for Finance verification.' },
+      { title: 'OTP Handover & Drive', description: 'Verify pickup checklist with your 6-digit handover OTP and drive with 24×7 roadside support.' },
+    ],
+    paymentInfoSummary:
+      'EliteDrive supports Manual UPI QR settlement with UTR verification and authorized Cash at Pickup options. All tariffs include itemized GST and refundable security deposit disclosure.',
     termsSummary:
       'Vehicles must be operated by the verified primary driver (21+ years, valid Indian DL). Security deposits are refunded within 48 hours of clean return inspection.',
     privacySummary:
@@ -228,6 +261,38 @@ async function runSeed(): Promise<void> {
       'Approved security deposit and cancellation refunds settle within 3–5 business days back to your verified UPI or source bank account.',
     rentalRulesSummary:
       'Minimum driver age 21 years with original Aadhaar/Passport and valid LMV Driving Licence. Speed cap 120 km/h; strictly non-smoking cabins.',
+    localizedContent: {
+      en: {
+        heroHeadline: 'Precision Self-Drive Mobility Across Mumbai.',
+        heroSubcopy: 'Company-owned flagship fleet serving Greater Mumbai with interactive doorstep delivery, instant digital KYC, and transparent GST billing.',
+        fleetHeading: 'Curated Fleet in Mumbai',
+        offersHeading: 'Exclusive City Offers & Seasonal Privileges',
+        footerTagline: 'Obsidian-grade self-drive mobility operating across Mumbai.',
+        aboutSummary: 'EliteDrive operates a company-maintained self-drive fleet engineered for executive city travel, airport transfers, and coastal highway getaways.',
+        howItWorksSummary: 'Reserve your preferred flagship vehicle in under three minutes with verified KYC and transparent GST pricing.',
+        paymentInfoSummary: 'Manual UPI QR settlement with 12-digit UTR verification and authorized Cash at Pickup options.',
+      },
+      hi: {
+        heroHeadline: 'मुंबई में प्रीमियम सेल्फ-ड्राइव कार रेंटल अनुभव।',
+        heroSubcopy: 'डोरस्टेप डिलीवरी, तेज़ डिजिटल केवाईसी और पारदर्शी जीएसटी बिलिंग के साथ कंपनी-संचालित फ्लैगशिप फ्लीट।',
+        fleetHeading: 'मुंबई में हमारा चुनिंदा फ्लीट',
+        offersHeading: 'विशेष ऑफ़र और मौसमी लाभ',
+        footerTagline: 'मुंबई भर में विश्वसनीय और लग्ज़री सेल्फ-ड्राइव मोबिलिटी।',
+        aboutSummary: 'EliteDrive कार्यकारी शहरी यात्रा, एयरपोर्ट ट्रांसफर और हाईवे ट्रिप्स के लिए पूरी तरह कंपनी-मेंटेन्ड सेल्फ-ड्राइव फ्लीट संचालित करता है।',
+        howItWorksSummary: 'वेरिफाइड केवाईसी और पारदर्शी किराए के साथ तीन मिनट से भी कम समय में अपनी कार बुक करें।',
+        paymentInfoSummary: '12-अंकीय UTR सत्यापन के साथ मैन्युअल UPI QR भुगतान और पिकअप पर नकद विकल्प उपलब्ध हैं।',
+      },
+      mr: {
+        heroHeadline: 'मुंबईमध्ये प्रीमियम सेल्फ-ड्राइव्ह कार रेंटल सेवा.',
+        heroSubcopy: 'डोअरस्टेप डिलिव्हरी, झटपट डिजिटल केवायसी आणि पारदर्शक जीएसटी बिलिंगसह कंपनी-मालकीचा फ्लॅगशिप फ्लीट.',
+        fleetHeading: 'मुंबईमधील निवडक वाहन संग्रह',
+        offersHeading: 'विशेष ऑफर्स आणि हंगामी सवलती',
+        footerTagline: 'मुंबईत विश्वासार्ह आणि लक्झरी सेल्फ-ड्राइव्ह प्रवास.',
+        aboutSummary: 'EliteDrive कॉर्पोरेट प्रवास, एअरपोर्ट ट्रान्सफर आणि वीकेंड ट्रिप्ससाठी कंपनीने स्वतः मेंटेन केलेली सेल्फ-ड्राइव्ह वाहने देते.',
+        howItWorksSummary: 'सत्यापित केवायसी आणि पारदर्शक दरांसह काही मिनिटांत तुमचे आवडते वाहन आरक्षित करा.',
+        paymentInfoSummary: '12-अंकी UTR पडताळणीसह मॅन्युअल UPI QR पेमेंट आणि पिकअप वेळी रोख पेमेंट पर्याय उपलब्ध आहेत.',
+      },
+    },
     faqs: [
       {
         question: 'Where does EliteDrive operate and deliver vehicles?',
@@ -1345,6 +1410,21 @@ async function runSeed(): Promise<void> {
     }
   }
 
+  // Master Admin account (isolated platform control plane)
+  await ensureAuthAccount({
+    uid: 'master-admin-01',
+    email: 'master@elitedrive.in',
+    password: 'Master123',
+    displayName: 'Platform Master Admin',
+    role: 'master_admin',
+    roleId: 'role-master-admin',
+    roleName: 'Master Admin (Platform)',
+    branchScope: 'all',
+    employeeId: 'ED-MST-001',
+    designation: 'Platform Control Administrator',
+    phone: '+91 98200 11000',
+  });
+
   // Always verify staff/admin bootstrap credentials exist (without overwriting password edits)
   await ensureAuthAccount({
     uid: 'staff-super-admin',
@@ -1412,7 +1492,7 @@ async function runSeed(): Promise<void> {
     phone: '+91 98200 11005',
   });
 
-  // WhatsApp Business Config
+  // WhatsApp Business Config (automation remains disabled until Meta Cloud API is explicitly connected)
   const waSnap = await db.collection('whatsapp_config').doc('default').get();
   if (!waSnap.exists) {
     await db.collection('whatsapp_config').doc('default').set({
@@ -1519,6 +1599,60 @@ async function runSeed(): Promise<void> {
     for (const emp of employees) {
       await db.collection('employee_notification_settings').doc(emp.id).set(emp);
     }
+  }
+
+  // Auth & Demo OTP Configuration (Demo OTP active ONLY in non-production for authorized test phones)
+  const authOtpRef = db.collection('auth_otp_config').doc('default');
+  if (!(await authOtpRef.get()).exists) {
+    await authOtpRef.set({
+      id: 'default',
+      demoOtpEnabled: process.env.NODE_ENV !== 'production',
+      authorizedTestPhones: ['919820011223'],
+      firebasePhoneAuthEnabled: true,
+      whatsappOtpEnabled: false,
+      otpExpirySeconds: 300,
+      otpMaxAttempts: 5,
+      updatedAt: now,
+    });
+  }
+
+  // AI Assistant Configuration (Server-side @google/genai, no API keys stored in DB)
+  const aiConfigRef = db.collection('ai_config').doc('default');
+  if (!(await aiConfigRef.get()).exists) {
+    await aiConfigRef.set({
+      id: 'default',
+      enabled: true,
+      bookingEnabled: true,
+      provider: 'google_gemini',
+      modelName: 'gemini-4-hydrogen',
+      endpointUrl: '',
+      systemInstructions:
+        'You are the EliteDrive Self-Drive Concierge Assistant. Always check real fleet inventory, dates, and pricing using your backend tools before answering. Never invent vehicle availability, prices, or booking confirmations. Guide customers clearly through Manual UPI settlement and digital KYC requirements.',
+      maxOutputTokens: 1024,
+      allowedLanguages: ['en', 'hi', 'mr'],
+      updatedAt: now,
+    });
+  }
+
+  // Platform Tenant Registry (Master Admin control plane)
+  const tenantRef = db.collection('platform_tenants').doc('tenant-elitedrive-default');
+  if (!(await tenantRef.get()).exists) {
+    await tenantRef.set({
+      id: 'tenant-elitedrive-default',
+      businessName: 'EliteDrive Mobility Pvt. Ltd.',
+      slug: 'elitedrive-mumbai',
+      ownerUid: 'staff-super-admin',
+      ownerName: 'Vikram Mehta (Owner)',
+      ownerEmail: 'admin@gmail.com',
+      primaryCity: activeCityName,
+      status: 'active',
+      aiAssistantEnabled: true,
+      demoOtpEnabled: process.env.NODE_ENV !== 'production',
+      whatsappAutomationEnabled: false,
+      firebasePhoneAuthEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   // Admin Notification Center initial alert

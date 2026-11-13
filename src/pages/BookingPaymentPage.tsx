@@ -63,7 +63,7 @@ function getLocalDatetimeDefault(): string {
 export const BookingPaymentPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { firebaseUser, loading: authLoading } = useAuth();
-  const { settings } = useCatalog();
+  const { settings, activeBranches } = useCatalog();
 
   const [data, setData] = useState<PaymentSessionResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -134,7 +134,6 @@ export const BookingPaymentPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [data?.session?.expiresAt, data?.booking?.holdExpiresAt]);
 
-  // Dynamic QR generation
   useEffect(() => {
     const uri = data?.session?.upiUri;
     if (!uri) {
@@ -270,10 +269,10 @@ export const BookingPaymentPage: React.FC = () => {
 
   if (loading && !data) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] bg-alabaster px-4 sm:px-8 py-10">
+      <div className="min-h-screen bg-obsidian pt-24 px-4 sm:px-8 py-10">
         <div className="max-w-6xl mx-auto grid lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 h-96 bg-white rounded-xl border border-black/10 animate-pulse" />
-          <div className="lg:col-span-6 h-96 bg-white rounded-xl border border-black/10 animate-pulse" />
+          <div className="lg:col-span-6 h-96 bg-navy-deep rounded-2xl border border-white/10 animate-pulse" />
+          <div className="lg:col-span-6 h-96 bg-navy-deep rounded-2xl border border-white/10 animate-pulse" />
         </div>
       </div>
     );
@@ -281,14 +280,14 @@ export const BookingPaymentPage: React.FC = () => {
 
   if (error || !data) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] bg-alabaster px-4 py-16">
-        <div className="max-w-lg mx-auto bg-white border border-black/10 rounded-xl p-8 text-center space-y-4">
-          <AlertTriangle className="w-8 h-8 text-red-700 mx-auto" />
-          <h1 className="font-display text-2xl font-semibold text-ink">Payment Session Unavailable</h1>
-          <p className="text-sm text-slate-muted">{error || 'Booking record could not be loaded.'}</p>
+      <div className="min-h-screen bg-obsidian pt-28 px-4 py-16 text-ivory">
+        <div className="max-w-lg mx-auto bg-navy-deep border border-white/15 rounded-2xl p-8 text-center space-y-4">
+          <AlertTriangle className="w-8 h-8 text-red-400 mx-auto" />
+          <h1 className="font-display text-2xl font-semibold text-white">Payment Session Unavailable</h1>
+          <p className="text-sm text-ivory/70">{error || 'Booking record could not be loaded.'}</p>
           <Link
             to="/dashboard"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
@@ -327,29 +326,37 @@ export const BookingPaymentPage: React.FC = () => {
     .map((l) => l.trim())
     .filter(Boolean);
 
+  const pickupHeaderLabel =
+    booking.pickupMode === 'delivery'
+      ? 'Doorstep Delivery'
+      : activeBranches.length > 0 && booking.branchName
+        ? `Branch Pickup · ${booking.branchName}`
+        : `Lounge Pickup · ${settings?.officeName || settings?.operatingCityName || 'Central Hub'}`;
+
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-alabaster text-ink pb-14">
-      <div className="bg-obsidian text-white border-b border-white/10">
+    <div className="min-h-screen bg-obsidian text-ivory pt-20 pb-16">
+      {/* Header Band */}
+      <div className="bg-navy-deep border-b border-white/10">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-8 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <Link
               to="/dashboard"
-              className="inline-flex items-center gap-1.5 text-xs text-white/70 hover:text-gold"
+              className="inline-flex items-center gap-1.5 text-xs text-ivory/70 hover:text-gold"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               Back to My Bookings
             </Link>
-            <h1 className="font-display text-2xl sm:text-3xl font-semibold">
-              Manual UPI Checkout | {booking.bookingReference}
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold text-white">
+              Manual UPI Checkout · {booking.bookingReference}
             </h1>
-            <p className="text-xs text-white/65">
-              Booking Status: <span className="text-gold font-semibold">{booking.status}</span> | Payment Status:{' '}
-              <span className="text-gold font-semibold">{booking.paymentStatus}</span> | Units:{' '}
+            <p className="text-xs text-ivory/65">
+              Booking: <span className="text-gold font-semibold">{booking.status}</span> · Payment:{' '}
+              <span className="text-gold font-semibold">{booking.paymentStatus}</span> · Units:{' '}
               <span className="text-gold font-semibold">{booking.quantity || 1}</span>
             </p>
           </div>
           <div className="sm:text-right">
-            <p className="text-[11px] uppercase tracking-wider text-white/60">
+            <p className="text-[11px] uppercase tracking-wider text-ivory/60">
               {pricing.paymentMode === 'advance_balance' ? 'Advance Payable Now' : 'Total Payable Now'}
             </p>
             <p className="font-mono tabular-nums text-3xl font-semibold text-gold">
@@ -360,8 +367,9 @@ export const BookingPaymentPage: React.FC = () => {
       </div>
 
       <div className="max-w-[1280px] mx-auto px-4 sm:px-8 pt-8 grid lg:grid-cols-12 gap-7">
+        {/* Left Summary Column */}
         <div className="lg:col-span-5 space-y-5">
-          <div className="bg-white border border-black/10 rounded-xl overflow-hidden">
+          <div className="bg-navy-deep border border-white/10 rounded-2xl overflow-hidden">
             <div className="aspect-[16/9] bg-obsidian overflow-hidden relative">
               <img
                 src={resolveVehicleImage(booking.vehicleImage)}
@@ -369,41 +377,39 @@ export const BookingPaymentPage: React.FC = () => {
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-4 text-white">
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent p-4 text-white">
                 <p className="text-[11px] font-mono text-gold uppercase">
-                  {booking.vehicleCategory} | {booking.cityName} | {booking.quantity || 1} Unit(s)
+                  {booking.vehicleCategory} · {booking.cityName} · {booking.quantity || 1} Unit(s)
                 </p>
                 <h2 className="font-display text-xl font-semibold">{booking.vehicleName}</h2>
               </div>
             </div>
 
-            <div className="p-5 space-y-2.5 text-xs">
-              <div className="flex items-start gap-2 text-slate-muted">
-                <Calendar className="w-4 h-4 text-gold-hover shrink-0 mt-0.5" />
+            <div className="p-5 space-y-3 text-xs">
+              <div className="flex items-start gap-2.5 text-ivory/75">
+                <Calendar className="w-4 h-4 text-gold shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-ink">
+                  <p className="font-semibold text-white">
                     Duration: {pricing.durationDays} Day{pricing.durationDays > 1 ? 's' : ''} ({pricing.includedKmAllowance} km included)
                   </p>
-                  <p>
+                  <p className="font-mono text-[11px] text-ivory/65 mt-0.5">
                     {new Date(booking.startDate).toLocaleString('en-IN')} →{' '}
                     {new Date(booking.endDate).toLocaleString('en-IN')}
                   </p>
                 </div>
               </div>
-              <div className="flex items-start gap-2 text-slate-muted">
-                <MapPin className="w-4 h-4 text-gold-hover shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 text-ivory/75">
+                <MapPin className="w-4 h-4 text-gold shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-ink">
-                    {booking.pickupMode === 'delivery' ? 'Doorstep Delivery' : 'Branch Pickup'} | {booking.branchName}
-                  </p>
-                  <p>{booking.pickupAddress}</p>
+                  <p className="font-semibold text-white">{pickupHeaderLabel}</p>
+                  <p className="text-ivory/65 mt-0.5">{booking.pickupAddress}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-slate-muted pt-1">
-                <Car className="w-4 h-4 text-gold-hover shrink-0" />
+              <div className="flex items-center gap-2.5 text-ivory/75 pt-0.5">
+                <Car className="w-4 h-4 text-gold shrink-0" />
                 <span>
                   Assigned Reg(s):{' '}
-                  <strong className="font-mono text-ink">
+                  <strong className="font-mono text-white">
                     {booking.assignedVehicleRegs?.length
                       ? booking.assignedVehicleRegs.join(', ')
                       : booking.vehicleId}
@@ -414,88 +420,82 @@ export const BookingPaymentPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => downloadRentalAgreementPdf(booking, settings)}
-                  className="px-3.5 py-2 border border-black/15 rounded-lg text-xs font-semibold text-ink hover:border-gold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2 border border-white/15 bg-obsidian text-white text-xs font-semibold rounded-lg hover:border-gold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-gold-hover" />
+                  <Download className="w-3.5 h-3.5 text-gold" />
                   Download Rental Agreement (PDF)
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Itemized Server-Calculated Payable Summary */}
-          <div className="bg-white border border-black/10 rounded-xl p-5 space-y-3 text-xs">
-            <div className="flex items-center justify-between border-b border-black/10 pb-2.5">
-              <h3 className="font-display text-lg font-semibold text-ink">
+          {/* Itemized Fare Summary */}
+          <div className="bg-navy-deep border border-white/10 rounded-2xl p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+              <h3 className="font-display text-lg font-semibold text-white">
                 Server-Verified Fare Breakdown
               </h3>
-              <span className="font-mono text-[11px] text-slate-muted">Locked Backend Total</span>
+              <span className="font-mono text-[11px] text-gold">Locked Total</span>
             </div>
 
-            <div className="space-y-2 font-mono tabular-nums text-slate-muted">
+            <div className="space-y-2 font-mono tabular-nums text-ivory/70">
               <div className="flex justify-between">
                 <span>Rental Charges ({pricing.durationDays}d)</span>
-                <span className="text-ink">{formatINR(pricing.baseRentalAmount)}</span>
+                <span className="text-white">{formatINR(pricing.baseRentalAmount)}</span>
               </div>
               {pricing.weekendSurcharge > 0 && (
                 <div className="flex justify-between">
                   <span>Weekend Surcharge</span>
-                  <span className="text-ink">{formatINR(pricing.weekendSurcharge)}</span>
+                  <span className="text-white">{formatINR(pricing.weekendSurcharge)}</span>
                 </div>
               )}
               {pricing.insuranceCharge > 0 && (
                 <div className="flex justify-between">
                   <span>Insurance ({booking.insurancePackageName || 'Protection'})</span>
-                  <span className="text-ink">{formatINR(pricing.insuranceCharge)}</span>
+                  <span className="text-white">{formatINR(pricing.insuranceCharge)}</span>
                 </div>
               )}
               {pricing.deliveryCharge > 0 && (
                 <div className="flex justify-between">
                   <span>Doorstep Delivery Charges</span>
-                  <span className="text-ink">{formatINR(pricing.deliveryCharge)}</span>
-                </div>
-              )}
-              {pricing.oneWayCharge > 0 && (
-                <div className="flex justify-between">
-                  <span>One-Way Inter-Branch Charge</span>
-                  <span className="text-ink">{formatINR(pricing.oneWayCharge)}</span>
+                  <span className="text-white">{formatINR(pricing.deliveryCharge)}</span>
                 </div>
               )}
               {pricing.roadsideCharge > 0 && (
                 <div className="flex justify-between">
                   <span>24/7 Roadside Assistance</span>
-                  <span className="text-ink">{formatINR(pricing.roadsideCharge)}</span>
+                  <span className="text-white">{formatINR(pricing.roadsideCharge)}</span>
                 </div>
               )}
               {pricing.driverCharge > 0 && (
                 <div className="flex justify-between">
                   <span>Optional Chauffeur Charges</span>
-                  <span className="text-ink">{formatINR(pricing.driverCharge)}</span>
+                  <span className="text-white">{formatINR(pricing.driverCharge)}</span>
                 </div>
               )}
               {pricing.couponDiscount > 0 && (
-                <div className="flex justify-between text-emerald-700 font-semibold">
+                <div className="flex justify-between text-emerald-400 font-semibold">
                   <span>Discount ({pricing.couponCode})</span>
                   <span>-{formatINR(pricing.couponDiscount)}</span>
                 </div>
               )}
               <div className="flex justify-between">
                 <span>Taxes (GST {pricing.taxRatePercent}%)</span>
-                <span className="text-ink">{formatINR(pricing.taxAmount)}</span>
+                <span className="text-white">{formatINR(pricing.taxAmount)}</span>
               </div>
-              <div className="flex justify-between pt-2 border-t border-black/10">
+              <div className="flex justify-between pt-2 border-t border-white/10">
                 <span>Refundable Security Deposit</span>
-                <span className="text-ink font-semibold">{formatINR(pricing.securityDeposit)}</span>
+                <span className="text-white font-semibold">{formatINR(pricing.securityDeposit)}</span>
               </div>
-              <div className="flex justify-between pt-2 border-t border-black/10 text-ink font-bold text-sm">
+              <div className="flex justify-between pt-2 border-t border-white/10 text-white font-bold text-sm">
                 <span>Total Booking Payable</span>
-                <span>{formatINR(pricing.totalPayable)}</span>
+                <span className="text-gold">{formatINR(pricing.totalPayable)}</span>
               </div>
             </div>
 
             {canPayOrRetry && (
-              <div className="pt-3 border-t border-black/10 space-y-2">
-                <p className="font-semibold text-ink">Payment Option</p>
+              <div className="pt-3 border-t border-white/10 space-y-2">
+                <p className="font-semibold text-white">Payment Schedule</p>
                 <div className={`grid ${paymentSettings.fullPaymentEnabled !== false ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
                   {paymentSettings.fullPaymentEnabled !== false && (
                     <button
@@ -504,12 +504,12 @@ export const BookingPaymentPage: React.FC = () => {
                       onClick={() => void handleSwitchMode('full')}
                       className={`p-2.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
                         pricing.paymentMode === 'full'
-                          ? 'border-obsidian bg-obsidian text-white'
-                          : 'border-black/15 bg-alabaster text-ink hover:border-gold'
+                          ? 'border-gold bg-gold text-obsidian'
+                          : 'border-white/15 bg-obsidian text-ivory hover:border-gold'
                       }`}
                     >
                       <p className="font-semibold">Full Payment</p>
-                      <p className="font-mono text-[11px] opacity-80">{formatINR(pricing.totalPayable)}</p>
+                      <p className="font-mono text-[11px] opacity-85">{formatINR(pricing.totalPayable)}</p>
                     </button>
                   )}
                   <button
@@ -518,47 +518,46 @@ export const BookingPaymentPage: React.FC = () => {
                     onClick={() => void handleSwitchMode('advance_balance')}
                     className={`p-2.5 rounded-lg border text-left cursor-pointer disabled:opacity-50 ${
                       pricing.paymentMode === 'advance_balance'
-                        ? 'border-obsidian bg-obsidian text-white'
-                        : 'border-black/15 bg-alabaster text-ink hover:border-gold'
+                        ? 'border-gold bg-gold text-obsidian'
+                        : 'border-white/15 bg-obsidian text-ivory hover:border-gold'
                     }`}
                   >
                     <p className="font-semibold">{paymentSettings.advancePaymentPercent}% Advance</p>
-                    <p className="font-mono text-[11px] opacity-80">Balance at pickup</p>
+                    <p className="font-mono text-[11px] opacity-85">Balance at pickup</p>
                   </button>
                 </div>
               </div>
             )}
 
-            <div className="p-3 rounded-lg bg-alabaster border border-black/10 flex items-center justify-between font-mono">
-              <span className="font-semibold text-ink">Amount Due Now</span>
-              <span className="text-base font-bold text-ink">{formatINR(pricing.amountDueNow)}</span>
+            <div className="p-3 rounded-lg bg-obsidian border border-gold/25 flex items-center justify-between font-mono">
+              <span className="font-semibold text-white">Amount Due Now</span>
+              <span className="text-base font-bold text-gold">{formatINR(pricing.amountDueNow)}</span>
             </div>
             {pricing.balanceDueAtPickup > 0 && (
-              <p className="text-[11px] text-slate-muted font-mono">
+              <p className="text-[11px] text-ivory/65 font-mono">
                 Remaining Balance Due at Vehicle Pickup: {formatINR(pricing.balanceDueAtPickup)}
               </p>
             )}
             {paymentSettings.securityDepositRule && (
-              <p className="text-[11px] text-slate-muted">{paymentSettings.securityDepositRule}</p>
+              <p className="text-[11px] text-ivory/55">{paymentSettings.securityDepositRule}</p>
             )}
           </div>
 
-          {/* Payment Audit Trail for this Booking */}
           {paymentAuditTrail.length > 0 && (
-            <div className="bg-white border border-black/10 rounded-xl p-5 space-y-3 text-xs">
-              <p className="font-semibold uppercase tracking-wider text-[11px] text-slate-muted">
+            <div className="bg-navy-deep border border-white/10 rounded-2xl p-5 space-y-3 text-xs">
+              <p className="font-semibold uppercase tracking-wider text-[11px] text-ivory/60">
                 Payment Verification Timeline
               </p>
               <div className="space-y-2 max-h-52 overflow-y-auto">
                 {paymentAuditTrail.map((log) => (
-                  <div key={log.id} className="p-2.5 rounded-lg bg-alabaster border border-black/10 space-y-0.5">
+                  <div key={log.id} className="p-2.5 rounded-lg bg-obsidian border border-white/10 space-y-0.5">
                     <div className="flex justify-between font-mono text-[11px]">
-                      <span className="font-semibold text-ink">{log.action}</span>
-                      <span className="text-slate-muted">
+                      <span className="font-semibold text-gold">{log.action}</span>
+                      <span className="text-ivory/50">
                         {new Date(log.timestamp).toLocaleTimeString('en-IN')}
                       </span>
                     </div>
-                    <p className="text-slate-muted">{log.details}</p>
+                    <p className="text-ivory/75">{log.details}</p>
                   </div>
                 ))}
               </div>
@@ -566,78 +565,78 @@ export const BookingPaymentPage: React.FC = () => {
           )}
         </div>
 
-        {/* RIGHT COLUMN: Dynamic UPI QR, Deep Link & Manual UTR Verification */}
+        {/* Right UPI QR & UTR Column */}
         <div className="lg:col-span-7 space-y-5">
           {isPaid ? (
-            <div className="bg-white border border-emerald-200 rounded-xl p-8 space-y-4">
+            <div className="bg-navy-deep border border-emerald-500/35 rounded-2xl p-8 space-y-4">
               <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-8 h-8 text-emerald-700 shrink-0" />
+                <CheckCircle2 className="w-8 h-8 text-emerald-400 shrink-0" />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
                     Finance Verified
                   </p>
-                  <h2 className="font-display text-2xl font-semibold text-ink">
+                  <h2 className="font-display text-2xl font-semibold text-white">
                     Payment Status: {booking.paymentStatus}
                   </h2>
                 </div>
               </div>
-              <p className="text-sm text-slate-muted leading-relaxed">
-                Your UPI payment of <strong className="font-mono text-ink">{formatINR(pricing.amountDueNow)}</strong>{' '}
-                for booking <strong className="font-mono text-ink">{booking.bookingReference}</strong> has been verified by our Finance team.
+              <p className="text-sm text-ivory/75 leading-relaxed">
+                Your UPI payment of <strong className="font-mono text-white">{formatINR(pricing.amountDueNow)}</strong>{' '}
+                for booking <strong className="font-mono text-white">{booking.bookingReference}</strong> has been verified by Finance.
                 {approvedProof && (
                   <>
-                    {' '}Verified UTR: <strong className="font-mono text-ink">{approvedProof.utrReference}</strong>.
+                    {' '}Verified UTR: <strong className="font-mono text-gold">{approvedProof.utrReference}</strong>.
                   </>
                 )}
               </p>
               {pricing.balanceDueAtPickup > 0 && (
-                <div className="p-3.5 rounded-lg bg-alabaster border border-black/10 text-xs font-mono">
-                  Remaining balance of <strong>{formatINR(pricing.balanceDueAtPickup)}</strong> is payable upon vehicle handover.
+                <div className="p-3.5 rounded-lg bg-obsidian border border-white/10 text-xs font-mono text-ivory/80">
+                  Remaining balance of <strong className="text-gold">{formatINR(pricing.balanceDueAtPickup)}</strong> is payable upon vehicle handover.
                 </div>
               )}
               <div className="flex flex-wrap gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => downloadRentalAgreementPdf(booking, settings)}
-                  className="px-5 py-2.5 border border-black/15 bg-white text-ink text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 hover:border-gold cursor-pointer"
+                  className="px-5 py-2.5 border border-white/20 bg-obsidian text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 hover:border-gold cursor-pointer"
                 >
-                  <Download className="w-4 h-4 text-gold-hover" />
+                  <Download className="w-4 h-4 text-gold" />
                   Download Rental Agreement (PDF)
                 </button>
                 <Link
                   to="/dashboard"
-                  className="px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+                  className="px-5 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright"
                 >
-                  View Booking & Tax Invoice in Dashboard
+                  View Booking & Tax Invoice
                 </Link>
               </div>
             </div>
           ) : isPendingVerification ? (
-            <div className="bg-white border border-black/15 rounded-xl p-6 sm:p-8 space-y-5">
+            <div className="bg-navy-deep border border-white/15 rounded-2xl p-6 sm:p-8 space-y-5">
               <div className="flex items-start gap-3">
-                <Clock className="w-7 h-7 text-gold-hover shrink-0 mt-0.5" />
+                <Clock className="w-7 h-7 text-gold shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gold-hover">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gold">
                     Awaiting Manual Finance Review
                   </p>
-                  <h2 className="font-display text-2xl font-semibold text-ink">
+                  <h2 className="font-display text-2xl font-semibold text-white">
                     Payment Proof Submitted — Pending Verification
                   </h2>
-                  <p className="text-xs text-slate-muted mt-1 leading-relaxed">
+                  <p className="text-xs text-ivory/70 mt-1 leading-relaxed">
                     Your booking hold remains protected while our Finance team reconciles your UTR against company bank settlement.
                   </p>
                 </div>
               </div>
 
               {pendingProof && (
-                <div className="p-4 rounded-xl bg-alabaster border border-black/10 grid sm:grid-cols-12 gap-4 items-center text-xs">
+                <div className="p-4 rounded-xl bg-obsidian border border-white/10 grid sm:grid-cols-12 gap-4 items-center text-xs">
                   {(pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl) && (
                     <div className="sm:col-span-4">
                       <img
                         src={pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl}
                         alt={`Payment proof ${pendingProof.utrReference}`}
                         referrerPolicy="no-referrer"
-                        className="w-full max-h-40 object-contain rounded-lg border border-black/10 bg-white"
+                        className="w-full max-h-40 object-contain rounded-lg border border-white/10 bg-white"
                       />
                     </div>
                   )}
@@ -646,17 +645,17 @@ export const BookingPaymentPage: React.FC = () => {
                       pendingProof.screenshotProxyUrl || pendingProof.screenshotDataUrl
                         ? 'sm:col-span-8'
                         : 'sm:col-span-12'
-                    } space-y-1.5 font-mono`}
+                    } space-y-1.5 font-mono text-ivory/80`}
                   >
-                    <p>Submitted UTR: <strong className="text-ink">{pendingProof.utrReference}</strong></p>
-                    <p>Transaction Ref: <strong className="text-ink">{pendingProof.transactionRef || session.transactionRef}</strong></p>
-                    <p>Paid Amount: <strong className="text-ink">{formatINR(pendingProof.paidAmount ?? pendingProof.amountSubmitted)}</strong></p>
+                    <p>Submitted UTR: <strong className="text-gold">{pendingProof.utrReference}</strong></p>
+                    <p>Transaction Ref: <strong className="text-white">{pendingProof.transactionRef || session.transactionRef}</strong></p>
+                    <p>Paid Amount: <strong className="text-white">{formatINR(pendingProof.paidAmount ?? pendingProof.amountSubmitted)}</strong></p>
                     {pendingProof.payerUpiId && (
-                      <p>Payer UPI ID: <strong className="text-ink">{pendingProof.payerUpiId}</strong></p>
+                      <p>Payer UPI ID: <strong className="text-white">{pendingProof.payerUpiId}</strong></p>
                     )}
                     <p>
                       Paid At:{' '}
-                      <span className="text-slate-muted">
+                      <span className="text-ivory/60">
                         {new Date(pendingProof.paidAt || pendingProof.createdAt).toLocaleString('en-IN')}
                       </span>
                     </p>
@@ -668,58 +667,58 @@ export const BookingPaymentPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => void loadSession()}
-                  className="px-4 py-2.5 border border-black/15 rounded-lg text-xs font-semibold hover:border-gold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2.5 border border-white/20 bg-obsidian text-white rounded-xl text-xs font-semibold hover:border-gold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <RefreshCw className="w-3.5 h-3.5 text-gold" />
                   Check Verification Status
                 </button>
                 <Link
                   to="/dashboard"
-                  className="px-4 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+                  className="px-4 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright"
                 >
                   Go to My Dashboard
                 </Link>
               </div>
             </div>
           ) : isBookingExpired ? (
-            <div className="bg-white border border-red-200 rounded-xl p-8 space-y-4">
-              <AlertTriangle className="w-7 h-7 text-red-700" />
-              <h2 className="font-display text-2xl font-semibold text-ink">
+            <div className="bg-navy-deep border border-red-500/35 rounded-2xl p-8 space-y-4">
+              <AlertTriangle className="w-7 h-7 text-red-400" />
+              <h2 className="font-display text-2xl font-semibold text-white">
                 Inventory Hold & Booking Expired
               </h2>
-              <p className="text-sm text-slate-muted leading-relaxed">
+              <p className="text-sm text-ivory/75 leading-relaxed">
                 The temporary hold window for this booking expired before payment proof was submitted. Any remaining fleet units have been released.
               </p>
               <Link
                 to={`/vehicles/${booking.vehicleId}`}
-                className="inline-block px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+                className="inline-block px-5 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl"
               >
                 Check Live Availability & Rebook
               </Link>
             </div>
           ) : !paymentSettings.upiEnabled ? (
-            <div className="bg-white border border-black/15 rounded-xl p-8 space-y-4">
-              <AlertTriangle className="w-7 h-7 text-amber-700" />
-              <h2 className="font-display text-2xl font-semibold text-ink">
-                Online UPI Payments Temporarily Disabled
+            <div className="bg-navy-deep border border-white/15 rounded-2xl p-8 space-y-4">
+              <AlertTriangle className="w-7 h-7 text-amber-400" />
+              <h2 className="font-display text-2xl font-semibold text-white">
+                Online UPI Payments Temporarily Paused
               </h2>
-              <p className="text-sm text-slate-muted leading-relaxed">
+              <p className="text-sm text-ivory/75 leading-relaxed">
                 Company administration has temporarily paused UPI QR submissions. Please contact support at{' '}
-                <strong className="font-mono text-ink">{settings?.supportPhone || '+91 22 4890 9900'}</strong> or pay at the central pickup hub.
+                <strong className="font-mono text-gold">{settings?.supportPhone || '+91 22 4890 9900'}</strong> or pay at the pickup lounge.
               </p>
               <Link
                 to="/dashboard"
-                className="inline-block px-5 py-2.5 bg-obsidian text-white text-xs font-semibold rounded-lg"
+                className="inline-block px-5 py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl"
               >
                 Return to Dashboard
               </Link>
             </div>
           ) : (
-            <div className="bg-white border border-black/10 rounded-xl p-6 space-y-6">
+            <div className="bg-navy-deep border border-white/15 rounded-2xl p-6 space-y-6">
               {resubmissionProof && (
-                <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1">
+                <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/35 text-xs text-amber-200 space-y-1">
                   <p className="font-semibold flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
                     Finance Requested New Payment Proof (Previous UTR: {resubmissionProof.utrReference})
                   </p>
                   <p>{resubmissionProof.reviewNotes || 'Please upload a clearer receipt screenshot showing UTR, timestamp, and exact paid amount.'}</p>
@@ -727,21 +726,21 @@ export const BookingPaymentPage: React.FC = () => {
               )}
 
               {isRejected && latestRejectedProof && (
-                <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-1">
+                <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/35 text-xs text-red-200 space-y-1">
                   <p className="font-semibold flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
                     Previous Payment Proof Rejected (UTR: {latestRejectedProof.utrReference})
                   </p>
                   <p>{latestRejectedProof.reviewNotes || 'UTR or amount could not be matched. Please pay the exact amount below and submit a valid UTR.'}</p>
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-black/10 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-gold-hover">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-gold">
                     Manual UPI Transfer & Proof Upload
                   </p>
-                  <h2 className="font-display text-2xl font-semibold text-ink">
+                  <h2 className="font-display text-2xl font-semibold text-white">
                     Pay Exact Amount: {formatINR(session.exactAmount)}
                   </h2>
                 </div>
@@ -750,8 +749,8 @@ export const BookingPaymentPage: React.FC = () => {
                     <div
                       className={`px-3 py-1.5 rounded-lg border font-mono text-xs font-semibold ${
                         holdSecondsLeft <= 0
-                          ? 'border-red-300 bg-red-50 text-red-800'
-                          : 'border-amber-200 bg-amber-50 text-amber-900'
+                          ? 'border-red-500/40 bg-red-950/40 text-red-300'
+                          : 'border-amber-500/35 bg-amber-950/35 text-amber-300'
                       }`}
                     >
                       {holdSecondsLeft <= 0 ? 'Hold Elapsed' : `Unit Hold ${holdText}`}
@@ -760,8 +759,8 @@ export const BookingPaymentPage: React.FC = () => {
                   <div
                     className={`px-3 py-1.5 rounded-lg border font-mono text-xs font-semibold ${
                       isExpired
-                        ? 'border-red-300 bg-red-50 text-red-800'
-                        : 'border-black/15 bg-alabaster text-ink'
+                        ? 'border-red-500/40 bg-red-950/40 text-red-300'
+                        : 'border-white/15 bg-obsidian text-white'
                     }`}
                   >
                     {isExpired ? 'QR Session Expired' : `QR Valid ${countdownText}`}
@@ -771,23 +770,23 @@ export const BookingPaymentPage: React.FC = () => {
                     disabled={refreshingSession}
                     onClick={() => void handleRefreshSession()}
                     title="Generate a fresh transaction reference"
-                    className="p-2 border border-black/15 rounded-lg hover:border-gold cursor-pointer disabled:opacity-50"
+                    className="p-2 border border-white/15 bg-obsidian rounded-lg hover:border-gold cursor-pointer disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-4 h-4 ${refreshingSession ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 text-gold ${refreshingSession ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
               </div>
 
               {/* QR Display + Direct UPI Controls */}
               <div className="grid sm:grid-cols-12 gap-6 items-start">
-                <div className="sm:col-span-5 flex flex-col items-center bg-alabaster border border-black/10 rounded-xl p-4 space-y-3">
+                <div className="sm:col-span-5 flex flex-col items-center bg-obsidian border border-white/10 rounded-xl p-4 space-y-3">
                   {paymentSettings.upiStaticQrImage && (
-                    <div className="grid grid-cols-2 w-full p-0.5 bg-white border border-black/10 rounded-lg text-[11px] font-semibold">
+                    <div className="grid grid-cols-2 w-full p-0.5 bg-navy-deep border border-white/10 rounded-lg text-[11px] font-semibold">
                       <button
                         type="button"
                         onClick={() => setQrMode('dynamic')}
                         className={`py-1.5 rounded-md cursor-pointer ${
-                          qrMode === 'dynamic' ? 'bg-obsidian text-white' : 'text-slate-muted'
+                          qrMode === 'dynamic' ? 'bg-gold text-obsidian' : 'text-ivory/65'
                         }`}
                       >
                         Dynamic QR
@@ -796,19 +795,20 @@ export const BookingPaymentPage: React.FC = () => {
                         type="button"
                         onClick={() => setQrMode('static')}
                         className={`py-1.5 rounded-md cursor-pointer ${
-                          qrMode === 'static' ? 'bg-obsidian text-white' : 'text-slate-muted'
+                          qrMode === 'static' ? 'bg-gold text-obsidian' : 'text-ivory/65'
                         }`}
                       >
-                        Company Static QR
+                        Company QR
                       </button>
                     </div>
                   )}
 
-                  <div className="relative bg-white p-2.5 rounded-xl border border-black/10">
+                  {/* High-contrast white QR backing guarantees reliable camera scanning */}
+                  <div className="relative bg-white p-2.5 rounded-xl border border-gold/40 shadow-lg">
                     {qrMode === 'static' && paymentSettings.upiStaticQrImage ? (
                       <img
                         src={paymentSettings.upiStaticQrImage}
-                        alt="Official EliteDrive Static UPI QR"
+                        alt="Official Static UPI QR"
                         className={`w-48 h-48 object-contain ${isExpired ? 'opacity-25 blur-[1px]' : ''}`}
                       />
                     ) : dynamicQrDataUrl ? (
@@ -837,16 +837,15 @@ export const BookingPaymentPage: React.FC = () => {
                     )}
                   </div>
 
-                  <p className="text-[11px] text-center text-slate-muted leading-snug">
+                  <p className="text-[11px] text-center text-ivory/65 leading-snug">
                     {qrMode === 'dynamic'
                       ? `Scan with GPay, PhonePe, Paytm, or BHIM — ${formatINR(session.exactAmount)} & ref ${session.transactionRef} pre-fill automatically.`
                       : `Static backup QR — manually enter exact amount ${formatINR(session.exactAmount)} and note ${booking.bookingReference}.`}
                   </p>
                 </div>
 
-                {/* Right side of card: Deep Link, Copy Buttons, Instructions */}
+                {/* Deep Link & Copy Controls */}
                 <div className="sm:col-span-7 space-y-4 text-xs">
-                  {/* Open UPI App (Mobile / Desktop deep link) */}
                   <div className="space-y-2">
                     <a
                       href={isExpired ? undefined : session.upiUri}
@@ -864,63 +863,61 @@ export const BookingPaymentPage: React.FC = () => {
                       Open UPI App (Auto-Fill {formatINR(session.exactAmount)})
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
-                    <p className="text-[11px] text-slate-muted">
-                      Works on Android/iOS with GPay, PhonePe, Paytm, or BHIM. On desktop/laptop, scan the QR on the left with your phone.
+                    <p className="text-[11px] text-ivory/60">
+                      Works on Android/iOS with GPay, PhonePe, Paytm, or BHIM. On desktop, scan the QR on the left with your phone.
                     </p>
                   </div>
 
-                  {/* Copyable Merchant & Reference Details */}
-                  <div className="space-y-2 bg-alabaster border border-black/10 rounded-xl p-3.5">
+                  <div className="space-y-2 bg-obsidian border border-white/10 rounded-xl p-3.5">
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <p className="text-[10px] uppercase text-slate-muted">Official UPI ID (VPA)</p>
-                        <p className="font-mono font-semibold text-ink select-all">{paymentSettings.upiId}</p>
+                        <p className="text-[10px] uppercase text-ivory/50">Official UPI ID (VPA)</p>
+                        <p className="font-mono font-semibold text-white select-all">{paymentSettings.upiId}</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => void handleCopy(paymentSettings.upiId, 'UPI ID')}
-                        className="px-2.5 py-1.5 bg-white border border-black/15 rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1.5 bg-navy-deep border border-white/15 text-ivory rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
                       >
-                        <Copy className="w-3 h-3" />
+                        <Copy className="w-3 h-3 text-gold" />
                         Copy UPI ID
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 border-t border-black/10 pt-2">
+                    <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
                       <div>
-                        <p className="text-[10px] uppercase text-slate-muted">Payment Reference (`tr`)</p>
-                        <p className="font-mono font-semibold text-ink select-all">{session.transactionRef}</p>
+                        <p className="text-[10px] uppercase text-ivory/50">Payment Reference (tr)</p>
+                        <p className="font-mono font-semibold text-white select-all">{session.transactionRef}</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => void handleCopy(session.transactionRef, 'Transaction Reference')}
-                        className="px-2.5 py-1.5 bg-white border border-black/15 rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1.5 bg-navy-deep border border-white/15 text-ivory rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
                       >
-                        <Copy className="w-3 h-3" />
+                        <Copy className="w-3 h-3 text-gold" />
                         Copy Ref
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 border-t border-black/10 pt-2">
+                    <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
                       <div>
-                        <p className="text-[10px] uppercase text-slate-muted">Payee Business Name</p>
-                        <p className="font-semibold text-ink">{paymentSettings.upiMerchantName}</p>
+                        <p className="text-[10px] uppercase text-ivory/50">Payee Business Name</p>
+                        <p className="font-semibold text-white">{paymentSettings.upiMerchantName}</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => void handleCopy(session.exactAmount.toFixed(2), 'Exact Amount')}
-                        className="px-2.5 py-1.5 bg-white border border-black/15 rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1.5 bg-navy-deep border border-white/15 text-ivory rounded-lg font-semibold hover:border-gold inline-flex items-center gap-1 cursor-pointer"
                       >
-                        <Copy className="w-3 h-3" />
+                        <Copy className="w-3 h-3 text-gold" />
                         Copy ₹{session.exactAmount}
                       </button>
                     </div>
                   </div>
 
-                  {/* Admin Instructions */}
-                  <div className="p-3.5 rounded-xl border border-black/10 bg-white space-y-1.5">
-                    <p className="font-semibold text-ink">Payment Instructions</p>
-                    <ol className="space-y-1 text-slate-muted list-none">
+                  <div className="p-3.5 rounded-xl border border-white/10 bg-obsidian/70 space-y-1.5">
+                    <p className="font-semibold text-white">Payment Instructions</p>
+                    <ol className="space-y-1 text-ivory/70 list-none">
                       {instructionLines.map((line, idx) => (
                         <li key={idx}>{line}</li>
                       ))}
@@ -929,29 +926,29 @@ export const BookingPaymentPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Manual UTR & Screenshot Verification Form */}
+              {/* Step 2 UTR Submission Form */}
               <form
                 onSubmit={(e) => void handleSubmitProof(e)}
-                className="border-t border-black/10 pt-5 space-y-4 text-xs"
+                className="border-t border-white/10 pt-5 space-y-4 text-xs"
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <h3 className="font-display text-xl font-semibold text-ink">
+                    <h3 className="font-display text-xl font-semibold text-white">
                       Step 2: Submit UTR & Receipt for Finance Verification
                     </h3>
-                    <p className="text-slate-muted">
-                      Payment is only marked <strong className="text-ink">Paid</strong> once an authorized Finance Admin verifies your UTR.
+                    <p className="text-ivory/65">
+                      Payment is only marked <strong className="text-gold">Paid</strong> once an authorized Finance Admin verifies your UTR.
                     </p>
                   </div>
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink">
-                    <ShieldCheck className="w-4 h-4 text-gold-hover" />
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-ivory">
+                    <ShieldCheck className="w-4 h-4 text-gold" />
                     Duplicate UTRs Blocked
                   </span>
                 </div>
 
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block font-semibold text-slate-muted mb-1">
+                    <label className="block font-semibold text-ivory/70 mb-1">
                       UPI UTR / Bank Transaction Reference *
                     </label>
                     <input
@@ -962,12 +959,12 @@ export const BookingPaymentPage: React.FC = () => {
                       value={utr}
                       onChange={(e) => setUtr(e.target.value)}
                       placeholder="e.g. 431209876543"
-                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm uppercase focus:outline-none focus:border-gold"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-lg text-white font-mono text-sm uppercase focus:outline-none focus:border-gold"
                     />
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-muted mb-1">
+                    <label className="block font-semibold text-ivory/70 mb-1">
                       Exact Paid Amount (INR) *
                     </label>
                     <input
@@ -977,12 +974,12 @@ export const BookingPaymentPage: React.FC = () => {
                       step="0.01"
                       value={paidAmount}
                       onChange={(e) => setPaidAmount(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-gold"
                     />
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-muted mb-1">
+                    <label className="block font-semibold text-ivory/70 mb-1">
                       Payment Date & Time *
                     </label>
                     <input
@@ -990,12 +987,12 @@ export const BookingPaymentPage: React.FC = () => {
                       required
                       value={paidAt}
                       onChange={(e) => setPaidAt(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-gold"
                     />
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-muted mb-1">
+                    <label className="block font-semibold text-ivory/70 mb-1">
                       Your UPI ID (Optional)
                     </label>
                     <input
@@ -1003,17 +1000,17 @@ export const BookingPaymentPage: React.FC = () => {
                       value={payerUpiId}
                       onChange={(e) => setPayerUpiId(e.target.value)}
                       placeholder="customer@okaxis"
-                      className="w-full px-3 py-2.5 border border-black/15 rounded-lg font-mono text-sm focus:outline-none focus:border-gold"
+                      className="w-full px-3 py-2.5 bg-obsidian border border-white/15 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-gold"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block font-semibold text-slate-muted mb-1">
+                    <label className="block font-semibold text-ivory/70 mb-1">
                       Payment Screenshot (PNG / JPG, Max 2 MB) *
                     </label>
-                    <label className="flex items-center gap-2 px-3 py-2.5 bg-alabaster border border-black/15 rounded-lg cursor-pointer hover:border-gold">
-                      <Upload className="w-4 h-4 text-gold-hover shrink-0" />
-                      <span className="truncate text-ink">
+                    <label className="flex items-center gap-2 px-3 py-2.5 bg-obsidian border border-white/15 rounded-lg cursor-pointer hover:border-gold">
+                      <Upload className="w-4 h-4 text-gold shrink-0" />
+                      <span className="truncate text-white">
                         {fileName || 'Select payment receipt screenshot...'}
                       </span>
                       <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
@@ -1022,29 +1019,29 @@ export const BookingPaymentPage: React.FC = () => {
                 </div>
 
                 {screenshotDataUrl && (
-                  <div className="p-3 rounded-lg bg-alabaster border border-black/10 flex items-center gap-3">
+                  <div className="p-3 rounded-lg bg-obsidian border border-white/15 flex items-center gap-3">
                     <img
                       src={screenshotDataUrl}
                       alt="Receipt preview"
-                      className="w-16 h-16 object-cover rounded border border-black/15 bg-white"
+                      className="w-16 h-16 object-cover rounded border border-white/15 bg-white"
                     />
-                    <div className="text-[11px] text-slate-muted">
-                      <p className="font-semibold text-ink">{fileName}</p>
+                    <div className="text-[11px] text-ivory/65">
+                      <p className="font-semibold text-white">{fileName}</p>
                       <p>Stored privately for Finance verification only.</p>
                     </div>
                   </div>
                 )}
 
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                  <p className="text-[11px] text-slate-muted">
-                    Expected Backend Amount: <strong className="font-mono text-ink">{formatINR(session.exactAmount)}</strong>
+                  <p className="text-[11px] text-ivory/65">
+                    Expected Backend Amount: <strong className="font-mono text-gold">{formatINR(session.exactAmount)}</strong>
                   </p>
                   <button
                     type="submit"
                     disabled={submitting || isExpired}
-                    className="px-6 py-3 bg-obsidian text-white font-semibold rounded-xl hover:bg-graphite inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+                    className="px-6 py-3 bg-gold text-obsidian font-semibold rounded-xl hover:bg-gold-bright inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
                   >
-                    <CheckCircle2 className="w-4 h-4 text-gold" />
+                    <CheckCircle2 className="w-4 h-4" />
                     {submitting ? 'Submitting Proof...' : 'Submit UTR Proof for Verification'}
                   </button>
                 </div>
