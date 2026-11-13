@@ -175,7 +175,7 @@ const EN: TranslationDict = {
   'ai.step7Title': 'Step 7: Booking Summary & Consents',
   'ai.step8Title': 'Step 8: Reservation & Manual UPI Payment',
   'ai.phoneLabel': 'Mobile Number (+91 or Country Code)',
-  'ai.sendOtp': 'Send OTP',
+  'ai.sendOtp': 'Request OTP',
   'ai.resendOtp': 'Resend OTP',
   'ai.verifyOtp': 'Verify & Continue',
   'ai.fullNameLabel': 'Full Legal Name (as on Driving Licence) *',

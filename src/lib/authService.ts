@@ -12,12 +12,14 @@ export function normalizeE164Phone(raw: string): string {
   const cleaned = String(raw || '').replace(/[^\d+]/g, '');
   if (!cleaned) return '';
   if (cleaned.startsWith('+')) {
-    const digits = cleaned.slice(1).replace(/\D/g, '');
+    let digits = cleaned.slice(1).replace(/\D/g, '');
+    if (digits.startsWith('00')) digits = digits.slice(2);
     if (digits.length === 10) return `+91${digits}`;
     if (digits.startsWith('910') && digits.length === 13) return `+91${digits.slice(3)}`;
     return `+${digits}`;
   }
-  const digits = cleaned.replace(/\D/g, '');
+  let digits = cleaned.replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
   if (digits.length === 10) return `+91${digits}`;
   if (digits.startsWith('0') && digits.length === 11) return `+91${digits.slice(1)}`;
   if (digits.startsWith('910') && digits.length === 13) return `+91${digits.slice(3)}`;
@@ -84,6 +86,23 @@ export function clearRecaptchaInstance(
   if (containerEl) {
     containerEl.innerHTML = '';
   }
+  if (typeof document !== 'undefined') {
+    try {
+      document.querySelectorAll('body > div').forEach((el) => {
+        if (el.id === 'root' || el.hasAttribute('data-sonner-toaster')) return;
+        if (containerEl && el.contains(containerEl)) return;
+        if (
+          el.querySelector(
+            'iframe[src*="google.com/recaptcha"], iframe[src*="recaptcha.net/recaptcha"], iframe[title*="recaptcha challenge"], .g-recaptcha-bubble-arrow'
+          )
+        ) {
+          el.remove();
+        }
+      });
+    } catch {
+      // ignore DOM cleanup error
+    }
+  }
 }
 
 export interface SendMobileOtpResult {
@@ -105,12 +124,12 @@ export async function requestUnifiedMobileOtp(params: {
   allowServerFallback?: boolean;
   defaultCooldownSeconds?: number;
 }): Promise<SendMobileOtpResult> {
-  const digits = String(params.phone || '').replace(/\D/g, '');
-  if (digits.length < 10) {
-    throw new Error('Please enter a valid 10-digit mobile number with country code.');
-  }
-
   const formattedPhone = normalizeE164Phone(params.phone);
+  const e164Digits = formattedPhone.replace(/\D/g, '');
+  const invalidIndian = e164Digits.startsWith('91') && e164Digits.length !== 12;
+  if (!e164Digits || e164Digits.length < 10 || e164Digits.length > 15 || invalidIndian) {
+    throw new Error('Please enter a valid 10-digit mobile number with country code (e.g. +91 98200 11223).');
+  }
   const configuredCooldown = Math.max(15, Number(params.defaultCooldownSeconds || 60));
 
   // Step 1: Attempt real Firebase Phone Authentication first for login/registration/ai_booking/verification
@@ -118,10 +137,12 @@ export async function requestUnifiedMobileOtp(params: {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
       clearRecaptchaInstance(params.verifierRef, params.containerEl);
-      const verifier = new RecaptchaVerifier(auth, params.containerEl, { size: 'invisible' });
+      const widgetHost = document.createElement('div');
+      params.containerEl.appendChild(widgetHost);
+      const verifier = new RecaptchaVerifier(auth, widgetHost, { size: 'invisible' });
       params.verifierRef.current = verifier;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error('firebase-phone-timeout')), 8000);
+        timeoutHandle = setTimeout(() => reject(new Error('firebase-phone-timeout')), 5000);
       });
       const confirmation = await Promise.race([
         signInWithPhoneNumber(auth, formattedPhone, verifier),
@@ -250,4 +271,23 @@ export async function verifyUnifiedMobileOtp(params: {
     phoneVerificationToken: res.phoneVerificationToken,
     message: res.message,
   };
+}
+
+export async function verifyFirebaseRegistrationPhone(idToken: string): Promise<{
+  verified: boolean;
+  phone: string;
+  phoneVerificationToken: string;
+  message: string;
+}> {
+  return apiFetch<{
+    verified: boolean;
+    phone: string;
+    phoneVerificationToken: string;
+    message: string;
+  }>('/api/auth/otp/verify-firebase-phone', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+    },
+  });
 }

@@ -273,11 +273,15 @@ export async function readStoreSnapshot(): Promise<StoreState> {
 }
 
 export class DocSnapshot {
-  constructor(
-    public readonly id: string,
-    public readonly ref: DocRef,
-    private readonly payload: DocData | null
-  ) {}
+  public readonly id: string;
+  public readonly ref: DocRef;
+  private readonly payload: DocData | null;
+
+  constructor(id: string, ref: DocRef, payload: DocData | null) {
+    this.id = id;
+    this.ref = ref;
+    this.payload = payload;
+  }
 
   get exists(): boolean {
     return this.payload !== null;
@@ -289,7 +293,11 @@ export class DocSnapshot {
 }
 
 export class QuerySnapshot {
-  constructor(public readonly docs: DocSnapshot[]) {}
+  public readonly docs: DocSnapshot[];
+
+  constructor(docs: DocSnapshot[]) {
+    this.docs = docs;
+  }
 
   get empty(): boolean {
     return this.docs.length === 0;
@@ -301,10 +309,13 @@ export class QuerySnapshot {
 }
 
 export class DocRef {
-  constructor(
-    private readonly colPath: string,
-    public readonly id: string
-  ) {}
+  private readonly colPath: string;
+  public readonly id: string;
+
+  constructor(colPath: string, id: string) {
+    this.colPath = colPath;
+    this.id = id;
+  }
 
   collection(subName: string): CollectionQuery {
     return new CollectionQuery(`${this.colPath}/${this.id}/${subName}`);
@@ -382,7 +393,11 @@ export class CollectionQuery {
   private orderDir: 'asc' | 'desc' = 'asc';
   private limitCount: number | null = null;
 
-  constructor(private readonly colPath: string) {}
+  private readonly colPath: string;
+
+  constructor(colPath: string) {
+    this.colPath = colPath;
+  }
 
   doc(id: string): DocRef {
     return new DocRef(this.colPath, id);
@@ -472,7 +487,11 @@ export class CollectionQuery {
 }
 
 class TransactionContext {
-  constructor(private readonly nativeTx: any = null) {}
+  private readonly nativeTx: any;
+
+  constructor(nativeTx: any = null) {
+    this.nativeTx = nativeTx;
+  }
 
   async get(target: DocRef | CollectionQuery): Promise<any> {
     if (this.nativeTx) {

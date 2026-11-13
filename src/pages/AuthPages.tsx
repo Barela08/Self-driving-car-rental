@@ -20,6 +20,7 @@ import { apiFetch } from '../lib/api';
 import {
   clearRecaptchaInstance,
   requestUnifiedMobileOtp,
+  verifyFirebaseRegistrationPhone,
   verifyUnifiedMobileOtp,
 } from '../lib/authService';
 import { canAccessAdminConsole, canAccessMasterConsole } from '../lib/permissions';
@@ -46,7 +47,17 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
 
   const brandName = settings?.brandName || settings?.companyName || 'EliteDrive';
 
-  const [mode, setMode] = useState<'login' | 'register' | 'reset' | 'otp_login'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'reset' | 'otp_login'>(() =>
+    portal === 'customer' && location.pathname === '/register' ? 'register' : 'login'
+  );
+
+  useEffect(() => {
+    if (portal === 'customer' && location.pathname === '/register') {
+      setMode('register');
+    } else if (portal === 'customer' && location.pathname === '/login') {
+      setMode('login');
+    }
+  }, [location.pathname, portal]);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('+91 ');
@@ -156,6 +167,7 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
         setFirebaseConfirmation(null);
         setOtpChallengeId(result.challengeId || '');
       }
+      setOtpCode('');
       setOtpCooldown(result.cooldownSeconds);
       setOtpNotice(result.message);
       toast.success(result.message);
@@ -231,11 +243,12 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
       });
 
       if (verified.channel === 'firebase' && verified.idToken) {
-        const logged = await loginWithFirebasePhone(verified.idToken, name.trim() || undefined, phone.trim());
-        if (logged) {
-          setRegOtpVerified(true);
-          toast.success('Mobile number verified successfully.');
+        const fbRes = await verifyFirebaseRegistrationPhone(verified.idToken);
+        setRegOtpVerified(true);
+        if (fbRes.phoneVerificationToken) {
+          setPhoneVerificationToken(fbRes.phoneVerificationToken);
         }
+        toast.success(fbRes.message || 'Mobile number verified successfully.');
       } else {
         setRegOtpVerified(true);
         if (verified.phoneVerificationToken) {
@@ -293,6 +306,10 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
     }
     if (!serviceConsent) {
       toast.error('Please accept the Terms & Privacy Policy to create an account.');
+      return;
+    }
+    if (otpSentReady && !regOtpVerified) {
+      toast.error('Please enter the 6-digit verification code and click Verify & Continue.');
       return;
     }
     setBusy(true);
@@ -562,7 +579,17 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
 
           {/* Customer Mobile OTP Sign-In */}
           {mode === 'otp_login' && portal === 'customer' && (
-            <form onSubmit={(e) => void handleUnifiedVerifyOtpLogin(e)} className="space-y-4 text-xs">
+            <form
+              onSubmit={(e) => {
+                if (!otpSentReady) {
+                  e.preventDefault();
+                  void handleRequestUnifiedOtp('login');
+                } else {
+                  void handleUnifiedVerifyOtpLogin(e);
+                }
+              }}
+              className="space-y-4 text-xs"
+            >
               {!otpSentReady ? (
                 <>
                   <div>
@@ -714,14 +741,25 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-ivory/70 mb-1">Mobile Number (+91)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-ivory/70">Mobile Number (+91)</label>
+                  {otpSentReady && !regOtpVerified && (
+                    <button
+                      type="button"
+                      onClick={resetOtpUi}
+                      className="text-[11px] font-semibold text-gold hover:text-gold-bright underline cursor-pointer"
+                    >
+                      Change Mobile Number
+                    </button>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Phone className="w-4 h-4 text-ivory/45 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="tel"
                       required
-                      disabled={regOtpVerified}
+                      disabled={otpSentReady || regOtpVerified}
                       value={phone}
                       onChange={(e) => {
                         setPhone(e.target.value);
@@ -733,49 +771,71 @@ export const AuthPortalPage: React.FC<AuthPortalProps> = ({ portal }) => {
                       className="w-full pl-9 pr-3 py-2 text-sm bg-obsidian border border-white/15 rounded-xl text-white focus:outline-none focus:border-gold disabled:opacity-75"
                     />
                   </div>
-                  {showOtpFeatures && (
+                  {showOtpFeatures && !otpSentReady && !regOtpVerified && (
                     <button
                       type="button"
-                      disabled={busy || otpCooldown > 0 || regOtpVerified}
+                      disabled={busy || otpCooldown > 0 || !phone.trim()}
                       onClick={() => void handleRequestUnifiedOtp('registration')}
                       className="px-3 py-2 border border-white/15 bg-obsidian text-ivory rounded-xl text-xs font-semibold hover:border-gold disabled:opacity-50 cursor-pointer whitespace-nowrap"
                     >
-                      {regOtpVerified ? 'Verified' : otpCooldown > 0 ? `Resend ${otpCooldown}s` : otpSentReady ? 'Resend OTP' : 'Request OTP'}
+                      {busy ? 'Requesting...' : 'Request OTP'}
                     </button>
                   )}
                 </div>
                 {otpSentReady && !regOtpVerified && (
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={otpCode}
-                      onChange={(e) => {
-                        setOtpCode(e.target.value.replace(/\D/g, ''));
-                        if (otpError) setOtpError('');
-                      }}
-                      placeholder="Enter OTP"
-                      className="flex-1 px-3 py-1.5 bg-obsidian border border-white/15 rounded-lg text-xs text-white font-mono tracking-widest"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || otpCode.length !== 6}
-                      onClick={() => void handleVerifyRegistrationOtp()}
-                      className="px-3 py-1.5 bg-gold text-obsidian text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50"
-                    >
-                      Verify & Continue
-                    </button>
+                  <div className="mt-2.5 p-3 rounded-xl bg-obsidian border border-white/10 space-y-2.5">
+                    {otpNotice && (
+                      <p className="text-[11px] rounded-lg p-2 border bg-emerald-500/10 border-emerald-400/25 text-emerald-200">
+                        {otpNotice}
+                      </p>
+                    )}
+                    {otpError && (
+                      <p className="text-[11px] rounded-lg p-2 border bg-red-500/10 border-red-400/30 text-red-200">
+                        {otpError}
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={otpCode}
+                        onChange={(e) => {
+                          setOtpCode(e.target.value.replace(/\D/g, ''));
+                          if (otpError) setOtpError('');
+                        }}
+                        placeholder="Enter 6-digit OTP"
+                        className="flex-1 px-3 py-2 bg-navy-deep border border-white/15 rounded-lg text-xs text-white font-mono tracking-widest focus:outline-none focus:border-gold"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || otpCode.length !== 6}
+                        onClick={() => void handleVerifyRegistrationOtp()}
+                        className="px-3 py-2 bg-gold text-obsidian text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {busy ? 'Verifying...' : 'Verify & Continue'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-ivory/60">
+                      <span className="font-mono">
+                        {otpCooldown > 0 ? `Resend OTP in ${otpCooldown}s` : 'Did not receive the code?'}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy || otpCooldown > 0}
+                        onClick={() => void handleRequestUnifiedOtp('registration')}
+                        className="font-semibold text-gold hover:text-gold-bright disabled:opacity-45 cursor-pointer"
+                      >
+                        Resend OTP
+                      </button>
+                    </div>
                   </div>
                 )}
-                {otpNotice && !regOtpVerified && (
-                  <p className="text-[11px] text-emerald-300 mt-1.5">{otpNotice}</p>
-                )}
-                {otpError && !regOtpVerified && (
+                {!otpSentReady && otpError && !regOtpVerified && (
                   <p className="text-[11px] text-red-300 mt-1.5">{otpError}</p>
                 )}
                 {regOtpVerified && (
-                  <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+                  <p className="text-[11px] text-emerald-400 mt-1.5 flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5" /> Mobile number verified
                   </p>
                 )}

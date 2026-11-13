@@ -14,8 +14,9 @@ const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
 const APP_PUBLIC_URL = process.env.APP_URL || 'http://localhost:3000';
 
 export function normalizeIndianPhone(raw: string): string {
-  const digits = String(raw || '').replace(/\D/g, '');
+  let digits = String(raw || '').replace(/\D/g, '');
   if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
   if (digits.length === 10) return `91${digits}`;
   if (digits.startsWith('0') && digits.length === 11) return `91${digits.slice(1)}`;
   if (digits.startsWith('910') && digits.length === 13) return `91${digits.slice(3)}`;

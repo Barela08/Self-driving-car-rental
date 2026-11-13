@@ -126,9 +126,17 @@ export const VehiclesPage: React.FC = () => {
 
   const modelCards = useMemo(() => {
     const summaryMap = new Map<string, VehicleAvailabilitySummary>();
+    const byModelBranch = new Map<string, VehicleAvailabilitySummary>();
+    const byModel = new Map<string, VehicleAvailabilitySummary>();
     for (const s of summaries) {
       summaryMap.set(s.representativeVehicleId, s);
-      for (const uid of s.unitIds) summaryMap.set(uid, s);
+      if (Array.isArray(s.unitIds)) {
+        for (const uid of s.unitIds) summaryMap.set(uid, s);
+      }
+      if (s.modelKey) {
+        byModelBranch.set(`${s.modelKey}::${s.branchId}`, s);
+        if (!byModel.has(s.modelKey)) byModel.set(s.modelKey, s);
+      }
     }
 
     const grouped = new Map<string, { car: Vehicle; summary?: VehicleAvailabilitySummary }>();
@@ -136,7 +144,9 @@ export const VehiclesPage: React.FC = () => {
       if (v.archived || v.status === 'Inactive') continue;
       if (effectiveBranchId !== 'all' && v.branchId !== effectiveBranchId) continue;
 
-      const s = summaryMap.get(v.id);
+      const s =
+        summaryMap.get(v.id) ||
+        (v.modelKey ? byModelBranch.get(`${v.modelKey}::${v.branchId}`) || byModel.get(v.modelKey) : undefined);
       const groupKey = hasBranches
         ? s
           ? `${s.modelKey}::${s.branchId}`

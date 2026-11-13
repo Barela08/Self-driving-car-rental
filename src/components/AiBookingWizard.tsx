@@ -528,6 +528,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
         setFirebaseConfirmation(null);
         setOtpChallengeId(result.challengeId || '');
       }
+      setOtpCode('');
       setOtpCooldown(result.cooldownSeconds);
       setOtpNotice(result.message);
       toast.success(result.message);
@@ -899,8 +900,11 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                     onClick={() => {
                       setMobileOverrideMode(true);
                       setOtpChallengeId('');
+                      setFirebaseConfirmation(null);
                       setOtpCode('');
                       setOtpNotice('');
+                      setOtpError('');
+                      setOtpCooldown(0);
                     }}
                     className="px-3 py-2 border border-white/15 rounded-lg text-ivory/80 hover:border-gold cursor-pointer"
                   >
@@ -910,7 +914,17 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
               </div>
             ) : (
                 <div className="p-4 rounded-xl bg-navy-deep border border-white/10 space-y-4 text-xs">
-                  <form onSubmit={(e) => void handleVerifyUnifiedOtp(e)} className="space-y-3">
+                  <form
+                    onSubmit={(e) => {
+                      if (!otpSentReady) {
+                        e.preventDefault();
+                        void handleSendUnifiedOtp();
+                      } else {
+                        void handleVerifyUnifiedOtp(e);
+                      }
+                    }}
+                    className="space-y-3"
+                  >
                     <div>
                       <label className="block font-semibold text-ivory/75 mb-1">{t('ai.phoneLabel')}</label>
                       <div className="flex gap-2">
@@ -954,7 +968,7 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                     )}
 
                     {otpSentReady && (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <div className="flex items-center justify-between gap-2">
                           <label className="font-semibold text-ivory/75">
                             Enter 6-Digit Verification Code
@@ -977,37 +991,39 @@ export const AiBookingWizard: React.FC<AiBookingWizardProps> = ({
                         <input
                           type="text"
                           required
+                          inputMode="numeric"
                           maxLength={6}
                           value={otpCode}
                           onChange={(e) => {
                             setOtpCode(e.target.value.replace(/\D/g, ''));
                             if (otpError) setOtpError('');
                           }}
-                          placeholder="6-digit code"
+                          placeholder="Enter 6-digit OTP"
                           className="w-full px-3 py-2 bg-obsidian border border-white/15 rounded-xl text-sm text-white font-mono tracking-widest focus:outline-none focus:border-gold"
                         />
+                        <button
+                          type="submit"
+                          disabled={busy || otpCode.length !== 6}
+                          className="w-full py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Smartphone className="w-4 h-4" />
+                          {busy ? 'Verifying...' : t('ai.verifyOtp')}
+                        </button>
                         <div className="flex items-center justify-between text-[11px] text-ivory/60">
-                          <span>Didn&apos;t receive the code?</span>
+                          <span className="font-mono">
+                            {otpCooldown > 0 ? `Resend OTP in ${otpCooldown}s` : 'Did not receive the code?'}
+                          </span>
                           <button
                             type="button"
                             disabled={busy || otpCooldown > 0}
                             onClick={() => void handleSendUnifiedOtp()}
                             className="font-semibold text-gold hover:underline disabled:opacity-50 cursor-pointer"
                           >
-                            {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : t('ai.resendOtp')}
+                            {t('ai.resendOtp')}
                           </button>
                         </div>
                       </div>
                     )}
-
-                    <button
-                      type="submit"
-                      disabled={busy || !otpSentReady || otpCode.length !== 6}
-                      className="w-full py-2.5 bg-gold text-obsidian text-xs font-semibold rounded-xl hover:bg-gold-bright disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Smartphone className="w-4 h-4" />
-                      {busy ? 'Verifying...' : t('ai.verifyOtp')}
-                    </button>
                   </form>
                 </div>
             )}

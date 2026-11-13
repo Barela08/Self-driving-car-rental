@@ -326,9 +326,10 @@ export async function resolveOrCreatePhoneCustomer(params: {
   const uid = `cust-otp-${normPhone}`;
   const profile: UserProfile = {
     uid,
-    displayName: params.displayName?.trim() || '',
+    displayName: params.displayName?.trim() || 'Customer',
     phone: formattedPhone,
     role: 'customer',
+    active: true,
     accountStatus: 'active',
     kycStatus: 'Not Started',
     createdAt: now,

@@ -25,6 +25,7 @@ import {
   revokeAllUserSessions,
   signScreenshotSignature,
   signSessionToken,
+  verifyFirebaseGoogleIdToken,
   verifyScreenshotSignature,
   writeAdminNotification,
   writeAuditLog,
@@ -766,7 +767,7 @@ async function createNotification(params: {
 async function startServer() {
   await probeLiveFirebaseAdmin().catch(() => undefined);
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(
     express.json({
@@ -2310,6 +2311,57 @@ async function startServer() {
   });
 
   // --- MOBILE OTP AUTHENTICATION ENDPOINTS ---
+  app.post('/api/auth/otp/verify-firebase-phone', rateLimit(20, 60000), async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Verification token missing.' });
+      }
+      const idToken = authHeader.split('Bearer ')[1].trim();
+      const decoded = await verifyFirebaseGoogleIdToken(idToken);
+      if (!decoded || !decoded.phone_number) {
+        return res.status(401).json({ error: 'Unable to verify mobile number. Please request a new code.' });
+      }
+
+      const normPhone = normalizeIndianPhone(decoded.phone_number);
+      const invalidIndian = normPhone.startsWith('91') && normPhone.length !== 12;
+      if (!normPhone || normPhone.length < 10 || normPhone.length > 15 || invalidIndian) {
+        return res.status(400).json({ error: 'Verified phone number is invalid.' });
+      }
+
+      const existingPhone = await findUserByNormalizedPhone(normPhone);
+      if (
+        existingPhone &&
+        (existingPhone.profile.role !== 'customer' || existingPhone.email || existingPhone.profile.email)
+      ) {
+        return res.status(409).json({
+          error: 'This mobile number is already linked to a registered account. Please sign in with Mobile OTP.',
+        });
+      }
+
+      await writeOtpLog({
+        phone: normPhone,
+        purpose: 'registration',
+        channel: 'firebase_phone',
+        status: 'verified',
+        userId: existingPhone?.uid,
+        isDemoMode: false,
+        detail: 'Verified mobile number for registration via Firebase Phone Authentication.',
+      });
+
+      const phoneVerificationToken = signPhoneVerificationToken(normPhone, 'registration');
+      return res.json({
+        verified: true,
+        phone: `+${normPhone}`,
+        phoneVerificationToken,
+        message: 'Mobile number verified successfully.',
+      });
+    } catch (err) {
+      console.error('Verify Firebase phone registration error:', err);
+      return res.status(500).json({ error: 'Unable to verify mobile number right now.' });
+    }
+  });
+
   app.post('/api/auth/otp/send', rateLimit(20, 60000), async (req, res) => {
     try {
       const { phone, purpose, email } = req.body as { phone?: string; purpose?: OtpPurpose; email?: string };
@@ -2324,6 +2376,15 @@ async function startServer() {
       if (validPurpose === 'login' && matchedUser && matchedUser.profile.role !== 'customer') {
         return res.status(403).json({
           error: 'Mobile OTP sign-in is exclusively for Customer accounts. Staff and administrators must sign in with email and password.',
+        });
+      }
+      if (
+        validPurpose === 'registration' &&
+        matchedUser &&
+        (matchedUser.profile.role !== 'customer' || matchedUser.email || matchedUser.profile.email)
+      ) {
+        return res.status(409).json({
+          error: 'This mobile number is already linked to a registered account. Please sign in with Mobile OTP.',
         });
       }
 
@@ -11719,7 +11780,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (_req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

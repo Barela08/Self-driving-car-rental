@@ -124,12 +124,26 @@ export const HomePage: React.FC = () => {
 
   const summaryByVehicleId = useMemo(() => {
     const map = new Map<string, VehicleAvailabilitySummary>();
+    const byModelBranch = new Map<string, VehicleAvailabilitySummary>();
+    const byModel = new Map<string, VehicleAvailabilitySummary>();
     for (const s of summaries) {
       map.set(s.representativeVehicleId, s);
-      for (const uid of s.unitIds) map.set(uid, s);
+      if (Array.isArray(s.unitIds)) {
+        for (const uid of s.unitIds) map.set(uid, s);
+      }
+      if (s.modelKey) {
+        byModelBranch.set(`${s.modelKey}::${s.branchId}`, s);
+        if (!byModel.has(s.modelKey)) byModel.set(s.modelKey, s);
+      }
+    }
+    for (const v of activeVehicles) {
+      if (!map.has(v.id) && v.modelKey) {
+        const matched = byModelBranch.get(`${v.modelKey}::${v.branchId}`) || byModel.get(v.modelKey);
+        if (matched) map.set(v.id, matched);
+      }
     }
     return map;
-  }, [summaries]);
+  }, [summaries, activeVehicles]);
 
   const featuredVehicles = useMemo(() => {
     const seenModels = new Set<string>();

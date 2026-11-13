@@ -24,6 +24,7 @@ interface OtpChallengeDoc {
   attempts: number;
   maxAttempts: number;
   used: boolean;
+  verifiedAt?: string;
   expiresAt: string;
   createdAt: string;
   ipHash: string;
@@ -179,7 +180,8 @@ export async function sendWhatsAppOtp(params: {
   message: string;
 }> {
   const normalizedPhone = normalizeIndianPhone(params.phone);
-  if (!normalizedPhone || normalizedPhone.length < 10 || normalizedPhone.length > 15) {
+  const invalidIndian = normalizedPhone.startsWith('91') && normalizedPhone.length !== 12;
+  if (!normalizedPhone || normalizedPhone.length < 10 || normalizedPhone.length > 15 || invalidIndian) {
     return {
       ok: false,
       statusCode: 400,
@@ -235,10 +237,17 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Enforce resend cooldown consistently for all requests on the same phone and action
-  const newestForPurpose = recentForPurpose.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (newestForPurpose && nowMs - new Date(newestForPurpose.createdAt).getTime() < cooldownMs) {
-    const waitSec = Math.ceil((cooldownMs - (nowMs - new Date(newestForPurpose.createdAt).getTime())) / 1000);
+  // Enforce resend cooldown on active/unverified challenges for the same phone and action
+  const newestUnverifiedForPurpose = recentForPurpose
+    .filter((ch) => !ch.verifiedAt)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (
+    newestUnverifiedForPurpose &&
+    nowMs - new Date(newestUnverifiedForPurpose.createdAt).getTime() < cooldownMs
+  ) {
+    const waitSec = Math.ceil(
+      (cooldownMs - (nowMs - new Date(newestUnverifiedForPurpose.createdAt).getTime())) / 1000
+    );
     return {
       ok: false,
       statusCode: 429,
@@ -247,8 +256,13 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Reject unavailable / unauthorized numbers BEFORE writing challenge documents
-  if (!demoEligible && (!authOtpConfig.whatsappOtpEnabled || waConfig.connectionStatus !== 'Connected')) {
+  const externalWhatsAppReady = Boolean(
+    authOtpConfig.whatsappOtpEnabled && waConfig.connectionStatus === 'Connected'
+  );
+  const testingChallengeFallback = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && !externalWhatsAppReady);
+
+  // Reject unavailable channels in production (or when non-prod testing fallback is disabled) BEFORE writing challenges
+  if (!demoEligible && !testingChallengeFallback && !externalWhatsAppReady) {
     await writeOtpLog({
       phone: normalizedPhone,
       purpose: params.purpose,
@@ -257,9 +271,7 @@ export async function sendWhatsAppOtp(params: {
       ...(params.userId ? { userId: params.userId } : {}),
       isDemoMode: false,
       detail: isNonProd
-        ? isAuthorizedTestPhone
-          ? 'Demo OTP is disabled and external WhatsApp dispatch is inactive.'
-          : 'Number is not an authorized test number and external SMS/WhatsApp dispatch is unavailable.'
+        ? 'Demo/testing OTP fallback is disabled and external WhatsApp dispatch is inactive.'
         : 'Production mode: external SMS/WhatsApp dispatch is inactive.',
     });
 
@@ -273,8 +285,13 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Generate OTP — NEVER use fixed OTP unless demoEligible (non-prod + enabled + authorized phone)
-  const code = demoEligible ? '555555' : String(crypto.randomInt(100000, 1000000));
+  // Generate OTP — NEVER use fixed OTP unless demoEligible (non-prod + enabled + authorized test phone)
+  let code = '555555';
+  if (!demoEligible) {
+    do {
+      code = String(crypto.randomInt(100000, 1000000));
+    } while (code === '555555');
+  }
   const salt = crypto.randomBytes(16).toString('hex');
   const otpHash = hashOtp(code, salt, normalizedPhone, params.purpose);
   const challengeId = `otp-${nowMs}-${crypto.randomBytes(4).toString('hex')}`;
@@ -305,8 +322,8 @@ export async function sendWhatsAppOtp(params: {
 
   await db.collection('whatsapp_otp_challenges').doc(challengeId).set(challengeDoc);
 
-  // Internal test number path: keep audit trail internal, never falsely claim SMS delivery
-  if (demoEligible) {
+  // Non-production testing path (authorized test phones get fixed 555555; non-authorized phones get random OTP so Enter OTP UI opens without permitting 555555)
+  if (demoEligible || testingChallengeFallback) {
     await writeOtpLog({
       phone: normalizedPhone,
       purpose: params.purpose,
@@ -314,8 +331,10 @@ export async function sendWhatsAppOtp(params: {
       status: 'sent',
       challengeId,
       ...(params.userId ? { userId: params.userId } : {}),
-      isDemoMode: true,
-      detail: 'Test-number verification challenge issued (non-production).',
+      isDemoMode: demoEligible,
+      detail: demoEligible
+        ? 'Test-number verification challenge issued (non-production).'
+        : 'Testing OTP screen challenge issued (non-authorized number; fixed test code rejected).',
     });
 
     return {
@@ -325,7 +344,7 @@ export async function sendWhatsAppOtp(params: {
       expiresInSeconds: expirySeconds,
       cooldownSeconds: configuredCooldownSec,
       deliveryChannel: 'mobile',
-      isDemoOtpEligible: true,
+      isDemoOtpEligible: demoEligible,
       message: `Verification step is ready for +${normalizedPhone}. Enter your 6-digit verification code to continue.`,
     };
   }
@@ -458,7 +477,10 @@ export async function verifyWhatsAppOtp(params: {
   const candidateHash = hashOtp(codeTrimmed, challenge.salt, normalizedPhone, params.purpose);
   const a = Buffer.from(candidateHash, 'hex');
   const b = Buffer.from(challenge.otpHash, 'hex');
-  const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  const valid =
+    a.length === b.length &&
+    crypto.timingSafeEqual(a, b) &&
+    (challenge.isDemoMode || codeTrimmed !== '555555');
 
   if (!valid) {
     const nextAttempts = challenge.attempts + 1;
@@ -488,7 +510,7 @@ export async function verifyWhatsAppOtp(params: {
     };
   }
 
-  await ref.update({ used: true });
+  await ref.update({ used: true, verifiedAt: new Date().toISOString() });
   await writeOtpLog({
     phone: normalizedPhone,
     purpose: params.purpose,
