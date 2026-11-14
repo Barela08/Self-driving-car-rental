@@ -339,7 +339,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
           <div className="p-3 rounded-lg bg-alabaster border border-black/10 text-slate-muted leading-relaxed flex items-start gap-2.5">
             <ShieldAlert className="w-4 h-4 text-gold-hover shrink-0 mt-0.5" />
             <span>
-              Internal test verification codes are accepted ONLY in non-production environments when enabled AND strictly for authorized test phone numbers below. Live SMS/WhatsApp providers handle all customer OTP delivery.
+              Demo verification is disabled by default. When explicitly enabled, the fixed test code works only for the authorized numbers below; every other number must use a real delivery provider.
             </span>
           </div>
 
@@ -363,15 +363,14 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
               <div>
                 <p className="font-semibold text-ink">Internal Test Phone Verification</p>
                 <p className="text-[11px] text-slate-muted">
-                  Active strictly in development for authorized internal test phone numbers
+                  Enable only for explicitly authorized test numbers; production access is restricted to this list
                 </p>
               </div>
               <input
                 type="checkbox"
-                disabled={authConfig.environmentMode === 'production'}
                 checked={authConfig.demoOtpEnabled}
                 onChange={(e) => setAuthConfig({ ...authConfig, demoOtpEnabled: e.target.checked })}
-                className="w-4 h-4 accent-obsidian disabled:opacity-40"
+                className="w-4 h-4 accent-obsidian"
               />
             </label>
 
@@ -408,7 +407,7 @@ export const AdminAiAuthPanel: React.FC<AdminAiAuthPanelProps> = ({
               <div>
                 <label className="block font-semibold text-ink mb-1">Authorized Test Numbers</label>
                 <p className="text-[11px] text-slate-muted pt-1">
-                  Enforced server-side during non-production testing ({authConfig.authorizedTestPhones.length} active).
+                  Enforced server-side in every environment ({authConfig.authorizedTestPhones.length} active).
                 </p>
               </div>
             </div>

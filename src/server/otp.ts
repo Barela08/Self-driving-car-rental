@@ -12,6 +12,7 @@ const RATE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_OTP_PER_NUMBER_PER_PURPOSE = 5;
 const MAX_OTP_PER_NUMBER_TOTAL = 12;
 const MAX_OTP_PER_IP = 25;
+const DEMO_OTP_CODE = '545961';
 
 interface OtpChallengeDoc {
   id: string;
@@ -99,8 +100,9 @@ export async function getAuthOtpConfig(): Promise<AuthOtpConfig> {
   return {
     ...defaults,
     ...data,
-    // Demo OTP can NEVER be active in production runtime
-    demoOtpEnabled: isProd ? false : Boolean(data.demoOtpEnabled),
+    // Production demo verification is allowed only when the master-admin
+    // switch is explicitly enabled and the requested number is allowlisted.
+    demoOtpEnabled: data.demoOtpEnabled === true,
     otpResendCooldownSeconds: Math.max(15, Math.min(300, Number(data.otpResendCooldownSeconds ?? 60))),
     authorizedTestPhones: Array.isArray(data.authorizedTestPhones)
       ? data.authorizedTestPhones.map((p) => normalizeIndianPhone(String(p))).filter(Boolean)
@@ -127,7 +129,7 @@ export async function updateAuthOtpConfig(
 
   const next: AuthOtpConfig = {
     id: 'default',
-    demoOtpEnabled: isProd ? false : patch.demoOtpEnabled !== undefined ? Boolean(patch.demoOtpEnabled) : current.demoOtpEnabled,
+    demoOtpEnabled: patch.demoOtpEnabled !== undefined ? Boolean(patch.demoOtpEnabled) : current.demoOtpEnabled,
     authorizedTestPhones: nextPhones,
     firebasePhoneAuthEnabled:
       patch.firebasePhoneAuthEnabled !== undefined
@@ -202,12 +204,7 @@ export async function sendWhatsAppOtp(params: {
     authOtpConfig.whatsappOtpEnabled && waConfig.connectionStatus === 'Connected'
   );
   const isAuthorizedDemoPhone = authOtpConfig.authorizedTestPhones.includes(normalizedPhone);
-  const demoEligible = Boolean(
-    isNonProd &&
-      authOtpConfig.demoOtpEnabled &&
-      isAuthorizedDemoPhone &&
-      !externalWhatsAppReady
-  );
+  const demoEligible = Boolean(authOtpConfig.demoOtpEnabled && isAuthorizedDemoPhone);
 
   // Per-number & per-IP rate limiting + cooldown check
   const allChallengesSnap = await db.collection('whatsapp_otp_challenges').get();
@@ -290,12 +287,14 @@ export async function sendWhatsAppOtp(params: {
     };
   }
 
-  // Generate OTP — fixed 555555 ONLY when demoEligible (non-prod + enabled + SMS/WhatsApp unavailable); never in production
-  let code = '555555';
+  // Generate fixed 545961 only for allowlisted demo challenges explicitly enabled by a master admin.
+  // This fixed code is stored only as a salted server-side hash for allowlisted
+  // demo challenges; it is never returned to the client.
+  let code = DEMO_OTP_CODE;
   if (!demoEligible) {
     do {
       code = String(crypto.randomInt(100000, 1000000));
-    } while (code === '555555');
+    } while (code === DEMO_OTP_CODE);
   }
   const salt = crypto.randomBytes(16).toString('hex');
   const otpHash = hashOtp(code, salt, normalizedPhone, params.purpose);
@@ -327,7 +326,7 @@ export async function sendWhatsAppOtp(params: {
 
   await db.collection('whatsapp_otp_challenges').doc(challengeId).set(challengeDoc);
 
-  // Non-production testing path: issue server challenge without claiming SMS delivery
+  // Demo path: issue server challenge without claiming SMS delivery.
   if (demoEligible) {
     await writeOtpLog({
       phone: normalizedPhone,
@@ -337,7 +336,7 @@ export async function sendWhatsAppOtp(params: {
       challengeId,
       ...(params.userId ? { userId: params.userId } : {}),
       isDemoMode: true,
-      detail: 'Testing OTP verification challenge issued (non-production).',
+      detail: 'Authorized demo OTP verification challenge issued.',
     });
 
     return {
@@ -346,9 +345,9 @@ export async function sendWhatsAppOtp(params: {
       challengeId,
       expiresInSeconds: expirySeconds,
       cooldownSeconds: configuredCooldownSec,
-      deliveryChannel: 'mobile',
+      deliveryChannel: 'demo',
       isDemoOtpEligible: true,
-      message: `Verification step is ready for +${normalizedPhone}. Enter your 6-digit verification code to continue.`,
+      message: `Authorized demo verification is being used for +${normalizedPhone}. No SMS was sent. Enter your 6-digit verification code to continue.`,
     };
   }
 
@@ -454,9 +453,8 @@ export async function verifyWhatsAppOtp(params: {
 
   if (challenge.isDemoMode) {
     const cfg = await getAuthOtpConfig();
-    const isNonProd = process.env.NODE_ENV !== 'production';
     const isAuthorizedDemoPhone = cfg.authorizedTestPhones.includes(normalizedPhone);
-    if (!isNonProd || !cfg.demoOtpEnabled || !isAuthorizedDemoPhone) {
+    if (!cfg.demoOtpEnabled || !isAuthorizedDemoPhone) {
       await ref.update({ used: true });
       await writeOtpLog({
         phone: normalizedPhone,
@@ -466,7 +464,7 @@ export async function verifyWhatsAppOtp(params: {
         challengeId: challenge.id,
         userId: challenge.userId,
         isDemoMode: true,
-        detail: 'Verification rejected: testing mode disabled or production runtime.',
+        detail: 'Verification rejected: demo mode disabled or phone is no longer allowlisted.',
       });
       return {
         ok: false,
@@ -483,7 +481,7 @@ export async function verifyWhatsAppOtp(params: {
   const valid =
     a.length === b.length &&
     crypto.timingSafeEqual(a, b) &&
-    (challenge.isDemoMode || codeTrimmed !== '555555');
+    (challenge.isDemoMode || codeTrimmed !== DEMO_OTP_CODE);
 
   if (!valid) {
     const nextAttempts = challenge.attempts + 1;

@@ -2513,6 +2513,7 @@ export async function createApp() {
         expiresInSeconds: result.expiresInSeconds,
         cooldownSeconds: result.cooldownSeconds,
         deliveryChannel: result.deliveryChannel,
+        demoMode: result.isDemoOtpEligible === true,
         message: result.message,
       });
     } catch (err) {
@@ -11895,16 +11896,12 @@ export async function createApp() {
     res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.url}` });
   });
 
-<<<<<<< HEAD
-  if (process.env.NODE_ENV !== 'production') {
-    // Lazy import so the Vercel serverless function does not bundle/load Vite.
-    const { createServer: createViteServer } = await import('vite');
-=======
   if (process.env.VERCEL === '1') {
     // Vercel serves the built SPA from outputDirectory and routes API calls
     // through api/[...path].ts. Do not mount filesystem static middleware here.
   } else if (process.env.NODE_ENV !== 'production') {
->>>>>>> e38eaa3 (Fix authentication and Firebase integration)
+    // Lazy import so the Vercel serverless function does not bundle/load Vite.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

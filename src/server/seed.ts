@@ -1604,7 +1604,7 @@ async function runSeed(): Promise<void> {
     }
   }
 
-  // Auth & Demo OTP Configuration (Demo OTP active ONLY in non-production for authorized test phones)
+  // Demo OTP defaults off in production and can only be enabled explicitly by a master admin.
   const authOtpRef = db.collection('auth_otp_config').doc('default');
   if (!(await authOtpRef.get()).exists) {
     await authOtpRef.set({

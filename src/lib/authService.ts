@@ -29,48 +29,65 @@ export function normalizeE164Phone(raw: string): string {
 export function formatAuthError(err: any, fallback = 'Authentication failed. Please try again.'): string {
   const code = String(err?.code || '');
   const msg = String(err?.message || '');
+  let friendlyMessage = '';
+  const withCode = (message: string) => (code ? `${message} (${code})` : message);
 
   switch (code) {
     case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
+      return withCode('Please enter a valid email address.');
     case 'auth/weak-password':
-      return 'Password must be at least 6 characters long. Use letters and numbers for stronger security.';
+      return withCode('Password must be at least 6 characters long. Use letters and numbers for stronger security.');
     case 'auth/wrong-password':
     case 'auth/invalid-credential':
     case 'auth/invalid-login-credentials':
-      return 'Incorrect email or password.';
+      return withCode('Incorrect email or password.');
     case 'auth/user-not-found':
-      return 'No account found with this email address.';
+      return withCode('No account found with this email address.');
     case 'auth/email-already-in-use':
-      return 'An account with this email already exists. Please sign in or reset your password.';
+      return withCode('An account with this email already exists. Please sign in or reset your password.');
     case 'auth/user-disabled':
-      return 'This account has been suspended or disabled. Contact support.';
+      return withCode('This account has been suspended or disabled. Contact support.');
     case 'auth/too-many-requests':
-      return 'Too many attempts detected. Please wait a few minutes before trying again.';
+      friendlyMessage = 'Too many attempts detected. Please wait a few minutes before trying again.';
+      break;
+    case 'auth/captcha-check-failed':
+      friendlyMessage = 'Firebase could not verify reCAPTCHA. Refresh the page and try again.';
+      break;
+    case 'auth/invalid-app-credential':
+      friendlyMessage = 'Firebase rejected the app verification. Check the authorized domain and reCAPTCHA configuration.';
+      break;
+    case 'auth/quota-exceeded':
+      friendlyMessage = 'Firebase SMS quota has been reached. Try again later or use another sign-in method.';
+      break;
+    case 'auth/invalid-phone-number':
+      friendlyMessage = 'Enter a valid phone number including its country code.';
+      break;
     case 'auth/network-request-failed':
-      return 'Network error occurred while contacting authentication services. Check your connection and retry.';
+      return withCode('Network error occurred while contacting authentication services. Check your connection and retry.');
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request':
-      return 'Google sign-in popup was closed before completion.';
+      return withCode('Google sign-in popup was closed before completion.');
     case 'auth/popup-blocked':
-      return 'Popups are blocked by your browser. Please allow popups for this site and try again.';
+      return withCode('Popups are blocked by your browser. Please allow popups for this site and try again.');
     case 'auth/unauthorized-domain':
-      return 'This domain is not authorized for Google Sign-In yet. Please use Email or Mobile OTP.';
+      return withCode('This domain is not authorized for Firebase Sign-In. Add it to Firebase Authentication authorized domains.');
     case 'auth/operation-not-allowed':
-      return 'Google Sign-In is not enabled in the Firebase project settings yet. Please use Email or Mobile OTP.';
+      friendlyMessage = 'This sign-in provider is not enabled in the Firebase project settings.';
+      break;
     case 'auth/account-exists-with-different-credential':
-      return 'An account already exists with this email under another sign-in method. Sign in with Email or Mobile OTP.';
+      return withCode('An account already exists with this email under another sign-in method. Sign in with the existing provider.');
     case 'auth/invalid-verification-code':
     case 'auth/code-expired':
-      return 'The verification code is invalid or has expired. Please request a new code.';
+      return withCode('The verification code is invalid or has expired. Please request a new code.');
     default:
       break;
   }
 
+  if (friendlyMessage) return withCode(friendlyMessage);
   if (msg && !msg.startsWith('Firebase: Error (auth/')) {
-    return msg;
+    return withCode(msg);
   }
-  return fallback;
+  return withCode(fallback);
 }
 
 export function clearRecaptchaInstance(
@@ -114,6 +131,8 @@ export interface SendMobileOtpResult {
   message: string;
 }
 
+const otpRequestsInFlight = new WeakSet<object>();
+
 export async function requestUnifiedMobileOtp(params: {
   phone: string;
   purpose: OtpPurpose;
@@ -124,65 +143,92 @@ export async function requestUnifiedMobileOtp(params: {
   allowServerFallback?: boolean;
   defaultCooldownSeconds?: number;
 }): Promise<SendMobileOtpResult> {
-  const formattedPhone = normalizeE164Phone(params.phone);
-  const e164Digits = formattedPhone.replace(/\D/g, '');
-  const invalidIndian = e164Digits.startsWith('91') && e164Digits.length !== 12;
-  if (!e164Digits || e164Digits.length < 10 || e164Digits.length > 15 || invalidIndian) {
-    throw new Error('Please enter a valid 10-digit mobile number with country code (e.g. +91 98200 11223).');
+  if (otpRequestsInFlight.has(params.verifierRef)) {
+    throw new Error('An OTP request is already in progress. Please wait.');
   }
-  const configuredCooldown = Math.max(15, Number(params.defaultCooldownSeconds || 60));
+  otpRequestsInFlight.add(params.verifierRef);
+  try {
+    const formattedPhone = normalizeE164Phone(params.phone);
+    const e164Digits = formattedPhone.replace(/\D/g, '');
+    const invalidIndian = e164Digits.startsWith('91') && e164Digits.length !== 12;
+    if (!e164Digits || e164Digits.length < 10 || e164Digits.length > 15 || invalidIndian) {
+      throw new Error('Please enter a valid 10-digit mobile number with country code (e.g. +91 98200 11223).');
+    }
+    const configuredCooldown = Math.max(15, Number(params.defaultCooldownSeconds || 60));
+    let firebaseError: unknown;
+    let firebaseFailureMessage: string | undefined;
 
   // Step 1: Attempt real Firebase Phone Authentication first for login/registration/ai_booking/verification
-  if (params.firebasePhoneAuthEnabled !== false && params.purpose !== 'password_recovery' && params.containerEl) {
-    try {
-      clearRecaptchaInstance(params.verifierRef, params.containerEl);
-      const widgetHost = document.createElement('div');
-      params.containerEl.appendChild(widgetHost);
-      const verifier = new RecaptchaVerifier(auth, widgetHost, { size: 'invisible' });
-      params.verifierRef.current = verifier;
-      // Do not race Firebase's SMS request against a short timeout: the SMS
-      // request cannot be cancelled, so falling back could send a second code.
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, verifier);
-      return {
-        channel: 'firebase',
-        formattedPhone,
-        confirmation,
-        cooldownSeconds: configuredCooldown,
-        message: `A 6-digit verification code has been sent to ${formattedPhone}.`,
-      };
-    } catch {
-      clearRecaptchaInstance(params.verifierRef, params.containerEl);
-      // Automatically continue to authoritative backend OTP service (no client-side gate)
-    }
-  }
-
-  // Step 2: Authoritative backend OTP service (enforces DEMO eligibility / WhatsApp / production rules server-side)
-  const endpoint = params.purpose === 'ai_booking' ? '/api/ai/otp/send' : '/api/auth/otp/send';
-  const payload =
-    params.purpose === 'ai_booking'
-      ? { phone: formattedPhone }
-      : {
-          phone: formattedPhone,
-          purpose: params.purpose,
-          email: params.email?.trim() || undefined,
+    if (params.firebasePhoneAuthEnabled !== false && params.purpose !== 'password_recovery' && params.containerEl) {
+      try {
+        clearRecaptchaInstance(params.verifierRef, params.containerEl);
+        const widgetHost = document.createElement('div');
+        params.containerEl.appendChild(widgetHost);
+        const verifier = new RecaptchaVerifier(auth, widgetHost, { size: 'invisible' });
+        params.verifierRef.current = verifier;
+        await verifier.render();
+        // Do not race Firebase's SMS request against a short timeout: the SMS
+        // request cannot be cancelled, so falling back could send a second code.
+        const confirmation = await signInWithPhoneNumber(auth, formattedPhone, verifier);
+        return {
+          channel: 'firebase',
+          formattedPhone,
+          confirmation,
+          cooldownSeconds: configuredCooldown,
+          message: `A 6-digit verification code has been sent to ${formattedPhone}.`,
         };
+      } catch (err) {
+        firebaseError = err;
+        clearRecaptchaInstance(params.verifierRef, params.containerEl);
+        // Continue to the backend: it permits demo challenges only for
+        // allowlisted numbers when the server-side demo setting is enabled.
+      }
+    } else if (params.firebasePhoneAuthEnabled === false && params.purpose !== 'password_recovery') {
+      firebaseFailureMessage = 'Firebase Phone Authentication is disabled in the current server configuration.';
+    }
 
-  const res = await apiFetch<{
-    challengeId: string;
-    cooldownSeconds: number;
-    message: string;
-  }>(endpoint, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+    // Step 2: Authoritative backend OTP service (demo eligibility remains server enforced).
+    const endpoint = params.purpose === 'ai_booking' ? '/api/ai/otp/send' : '/api/auth/otp/send';
+    const payload =
+      params.purpose === 'ai_booking'
+        ? { phone: formattedPhone }
+        : {
+            phone: formattedPhone,
+            purpose: params.purpose,
+            email: params.email?.trim() || undefined,
+          };
 
-  return {
-    channel: 'server',
-    formattedPhone,
-    challengeId: res.challengeId,
-    cooldownSeconds: res.cooldownSeconds || configuredCooldown,
-    message: res.message,
-  };
+    let res: { challengeId: string; cooldownSeconds: number; message: string };
+    try {
+      res = await apiFetch<{
+        challengeId: string;
+        cooldownSeconds: number;
+        message: string;
+      }>(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (fallbackError: any) {
+      if (firebaseError || firebaseFailureMessage) {
+        const firebaseMessage = firebaseError
+          ? formatAuthError(firebaseError, 'Firebase phone verification failed.')
+          : firebaseFailureMessage;
+        const fallbackMessage = fallbackError?.message || 'Alternate verification could not be started.';
+        throw new Error(`${firebaseMessage} ${fallbackMessage}`);
+      }
+      throw fallbackError;
+    }
+
+    return {
+      channel: 'server',
+      formattedPhone,
+      challengeId: res.challengeId,
+      cooldownSeconds: res.cooldownSeconds || configuredCooldown,
+      message: res.message,
+    };
+  } finally {
+    otpRequestsInFlight.delete(params.verifierRef);
+  }
 }
 
 export interface VerifyMobileOtpResult {

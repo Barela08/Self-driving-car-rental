@@ -367,9 +367,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
       if (err?.code === 'auth/popup-blocked' && !isInIframe) {
-        toast.info('Redirecting to Google Sign-In...');
-        await signInWithRedirect(auth, googleAuthProvider);
-        return null;
+        try {
+          toast.info('Redirecting to Google Sign-In...');
+          await signInWithRedirect(auth, googleAuthProvider);
+          return null;
+        } catch (redirectError: any) {
+          toast.error(formatAuthError(redirectError, 'Unable to start Google Sign-In redirect.'));
+          return null;
+        }
       }
       try {
         if (auth.currentUser) await signOut(auth);
