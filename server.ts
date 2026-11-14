@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import crypto from 'crypto';
 import 'dotenv/config';
@@ -11853,6 +11852,8 @@ async function createApp() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    // Lazy import so the Vercel serverless function does not bundle/load Vite.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
