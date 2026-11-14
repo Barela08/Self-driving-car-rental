@@ -37,7 +37,7 @@ function loadFirebaseAppletConfig(): FirebaseAppletConfig {
 export const FIREBASE_CONFIG = loadFirebaseAppletConfig();
 
 export interface FirebaseBackendStatus {
-  mode: 'live_firestore' | 'local_json_fallback';
+  mode: 'live_firestore' | 'local_json_fallback' | 'unavailable';
   liveReady: boolean;
   projectId: string;
   databaseId: string;
@@ -76,12 +76,19 @@ function ensureAdminAppInitialized(): { app: App | null; source: FirebaseBackend
   if (adminApp) return { app: adminApp, source: credentialSource };
   const existing = getApps();
   if (existing.length > 0) {
+    const existingProjectId = existing[0].options.projectId;
+    if (existingProjectId && existingProjectId !== FIREBASE_CONFIG.projectId) {
+      throw new Error(`Initialized Firebase Admin project does not match configured project ${FIREBASE_CONFIG.projectId}.`);
+    }
     adminApp = existing[0];
     return { app: adminApp, source: credentialSource };
   }
 
   const sa = parseServiceAccountFromEnv();
   if (sa) {
+    if (sa.project_id && sa.project_id !== FIREBASE_CONFIG.projectId) {
+      throw new Error(`Firebase service account project does not match configured project ${FIREBASE_CONFIG.projectId}.`);
+    }
     credentialSource = 'service_account_env';
     adminApp = initializeApp({
       credential: cert(sa as any),
@@ -93,6 +100,10 @@ function ensureAdminAppInitialized(): { app: App | null; source: FirebaseBackend
   }
 
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT) {
+    const credentialProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+    if (credentialProject && credentialProject !== FIREBASE_CONFIG.projectId) {
+      throw new Error(`Application credentials project does not match configured project ${FIREBASE_CONFIG.projectId}.`);
+    }
     credentialSource = 'application_default';
     try {
       adminApp = initializeApp({
@@ -169,7 +180,7 @@ export async function probeLiveFirebaseAdmin(force = false): Promise<{
 
 export function getFirebaseBackendStatus(): FirebaseBackendStatus {
   return {
-    mode: liveReady && liveFirestore ? 'live_firestore' : 'local_json_fallback',
+    mode: liveReady && liveFirestore ? 'live_firestore' : localFallbackEnabled() ? 'local_json_fallback' : 'unavailable',
     liveReady: Boolean(liveReady && liveFirestore),
     projectId: FIREBASE_CONFIG.projectId,
     databaseId: FIREBASE_CONFIG.firestoreDatabaseId,
@@ -178,6 +189,17 @@ export function getFirebaseBackendStatus(): FirebaseBackendStatus {
     lastProbeAt,
     lastProbeError,
   };
+}
+
+function assertDatabaseAvailable(): void {
+  if (liveReady && liveFirestore) return;
+  if (!localFallbackEnabled()) {
+    throw new Error('Firebase Admin is unavailable. Configure valid Firebase Admin credentials for the deployed environment.');
+  }
+}
+
+function localFallbackEnabled(): boolean {
+  return process.env.NODE_ENV !== 'production' && process.env.ALLOW_LOCAL_JSON_FALLBACK === 'true';
 }
 
 export function getLiveFirestore(): Firestore | null {
@@ -326,6 +348,7 @@ export class DocRef {
   }
 
   async get(): Promise<DocSnapshot> {
+    assertDatabaseAvailable();
     const native = this.getNativeRef();
     if (native) {
       const snap = await native.get();
@@ -337,6 +360,7 @@ export class DocRef {
   }
 
   async set(data: DocData, options?: { merge?: boolean }): Promise<void> {
+    assertDatabaseAvailable();
     const native = this.getNativeRef();
     if (native) {
       await native.set(deepClone(data), options || {});
@@ -352,6 +376,7 @@ export class DocRef {
   }
 
   async update(updates: DocData): Promise<void> {
+    assertDatabaseAvailable();
     const native = this.getNativeRef();
     if (native) {
       await native.update(deepClone(updates));
@@ -366,6 +391,7 @@ export class DocRef {
   }
 
   async delete(): Promise<void> {
+    assertDatabaseAvailable();
     const native = this.getNativeRef();
     if (native) {
       await native.delete();
@@ -445,6 +471,7 @@ export class CollectionQuery {
   }
 
   async get(): Promise<QuerySnapshot> {
+    assertDatabaseAvailable();
     const nativeQ = this.getNativeQuery();
     if (nativeQ) {
       const snap = await nativeQ.get();
@@ -538,6 +565,7 @@ export const db = {
   },
 
   runTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
+    assertDatabaseAvailable();
     if (liveReady && liveFirestore) {
       return liveFirestore.runTransaction((nativeTx) => fn(new TransactionContext(nativeTx)));
     }

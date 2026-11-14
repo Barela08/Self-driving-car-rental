@@ -795,10 +795,9 @@ async function createNotification(params: {
   }
 }
 
-async function startServer() {
+async function createApp() {
   await probeLiveFirebaseAdmin().catch(() => undefined);
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(
     express.json({
@@ -836,7 +835,7 @@ async function startServer() {
   // Ensure Firestore seed data exists before serving API traffic
   app.use('/api', async (_req, _res, next) => {
     try {
-      await ensureSeeded();
+          await ensureSeeded();
     } catch (err) {
       console.error('Bootstrap seed check failed:', err);
     }
@@ -11867,9 +11866,23 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`EliteDrive server running on http://localhost:${PORT}`);
-  });
+  return app;
 }
 
-startServer();
+// Vercel imports this handler for each serverless invocation. The same app
+// factory is used by the standalone local/Node deployment below.
+const appPromise = createApp();
+
+export default async function handler(req: express.Request, res: express.Response) {
+  const app = await appPromise;
+  return app(req, res);
+}
+
+if (process.env.VERCEL !== '1') {
+  void appPromise.then((app) => {
+    const PORT = Number(process.env.PORT) || 3000;
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`EliteDrive server running on http://localhost:${PORT}`);
+    });
+  });
+}
