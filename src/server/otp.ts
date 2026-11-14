@@ -201,7 +201,13 @@ export async function sendWhatsAppOtp(params: {
   const externalWhatsAppReady = Boolean(
     authOtpConfig.whatsappOtpEnabled && waConfig.connectionStatus === 'Connected'
   );
-  const demoEligible = Boolean(isNonProd && authOtpConfig.demoOtpEnabled && !externalWhatsAppReady);
+  const isAuthorizedDemoPhone = authOtpConfig.authorizedTestPhones.includes(normalizedPhone);
+  const demoEligible = Boolean(
+    isNonProd &&
+      authOtpConfig.demoOtpEnabled &&
+      isAuthorizedDemoPhone &&
+      !externalWhatsAppReady
+  );
 
   // Per-number & per-IP rate limiting + cooldown check
   const allChallengesSnap = await db.collection('whatsapp_otp_challenges').get();
@@ -449,7 +455,8 @@ export async function verifyWhatsAppOtp(params: {
   if (challenge.isDemoMode) {
     const cfg = await getAuthOtpConfig();
     const isNonProd = process.env.NODE_ENV !== 'production';
-    if (!isNonProd || !cfg.demoOtpEnabled) {
+    const isAuthorizedDemoPhone = cfg.authorizedTestPhones.includes(normalizedPhone);
+    if (!isNonProd || !cfg.demoOtpEnabled || !isAuthorizedDemoPhone) {
       await ref.update({ used: true });
       await writeOtpLog({
         phone: normalizedPhone,

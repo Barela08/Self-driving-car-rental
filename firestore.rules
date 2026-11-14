@@ -209,12 +209,11 @@ service cloud.firestore {
     match /vehicles/{vehicleId} {
       allow get: if isValidId(vehicleId);
       allow list: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isMasterAdmin();
     }
 
     match /vehicle_private/{vehicleId} {
-      allow get: if isValidId(vehicleId) && isAdmin();
-      allow list, write: if isAdmin();
+      allow get, list, write: if isValidId(vehicleId) && (isAdmin() || isMasterAdmin());
     }
 
     match /insurance_packages/{packageId} {

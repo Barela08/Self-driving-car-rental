@@ -134,21 +134,15 @@ export async function requestUnifiedMobileOtp(params: {
 
   // Step 1: Attempt real Firebase Phone Authentication first for login/registration/ai_booking/verification
   if (params.firebasePhoneAuthEnabled !== false && params.purpose !== 'password_recovery' && params.containerEl) {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
       clearRecaptchaInstance(params.verifierRef, params.containerEl);
       const widgetHost = document.createElement('div');
       params.containerEl.appendChild(widgetHost);
       const verifier = new RecaptchaVerifier(auth, widgetHost, { size: 'invisible' });
       params.verifierRef.current = verifier;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error('firebase-phone-timeout')), 5000);
-      });
-      const confirmation = await Promise.race([
-        signInWithPhoneNumber(auth, formattedPhone, verifier),
-        timeoutPromise,
-      ]);
-      if (timeoutHandle) clearTimeout(timeoutHandle);
+      // Do not race Firebase's SMS request against a short timeout: the SMS
+      // request cannot be cancelled, so falling back could send a second code.
+      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, verifier);
       return {
         channel: 'firebase',
         formattedPhone,
@@ -157,7 +151,6 @@ export async function requestUnifiedMobileOtp(params: {
         message: `A 6-digit verification code has been sent to ${formattedPhone}.`,
       };
     } catch {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       clearRecaptchaInstance(params.verifierRef, params.containerEl);
       // Automatically continue to authoritative backend OTP service (no client-side gate)
     }

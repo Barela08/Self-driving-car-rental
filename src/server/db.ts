@@ -86,8 +86,11 @@ function ensureAdminAppInitialized(): { app: App | null; source: FirebaseBackend
 
   const sa = parseServiceAccountFromEnv();
   if (sa) {
-    if (sa.project_id && sa.project_id !== FIREBASE_CONFIG.projectId) {
-      throw new Error(`Firebase service account project does not match configured project ${FIREBASE_CONFIG.projectId}.`);
+    if (sa.project_id !== FIREBASE_CONFIG.projectId) {
+      throw new Error(`Firebase service account project must match configured project ${FIREBASE_CONFIG.projectId}.`);
+    }
+    if (typeof sa.client_email !== 'string' || typeof sa.private_key !== 'string') {
+      throw new Error('Firebase service account JSON is missing required credential fields.');
     }
     credentialSource = 'service_account_env';
     adminApp = initializeApp({

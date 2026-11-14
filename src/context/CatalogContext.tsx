@@ -197,21 +197,12 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     void reloadCatalog();
   }, [reloadCatalog]);
 
-  // Real-time Firestore onSnapshot listeners layered over /api/bootstrap
+  // Real-time listeners for public catalog collections layered over /api/bootstrap.
+  // Fleet records are served through the server-side allowlisted bootstrap projection;
+  // the raw vehicles collection contains private registration and document metadata.
   useEffect(() => {
     const unsubs: Array<() => void> = [];
     try {
-      unsubs.push(
-        onSnapshot(
-          collection(db, 'vehicles'),
-          (snap) => {
-            if (snap.empty) return;
-            const list = snap.docs.map((d) => d.data() as Vehicle);
-            setVehicles(list);
-          },
-          (err) => console.debug('Firestore vehicles listener skipped:', err.message)
-        )
-      );
       unsubs.push(
         onSnapshot(
           collection(db, 'branches'),

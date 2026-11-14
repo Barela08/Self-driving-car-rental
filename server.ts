@@ -176,6 +176,50 @@ function resolveOperatingHub(
   return { hub, effectiveBranches: allBranches };
 }
 
+// Public catalog responses must never serialize operational fields from the
+// private vehicles collection (registration, RC, insurance, or unit details).
+function toPublicVehicle(vehicle: Vehicle): Vehicle {
+  return {
+    id: vehicle.id,
+    modelKey: vehicle.modelKey,
+    name: vehicle.name,
+    brand: vehicle.brand,
+    model: vehicle.model,
+    year: vehicle.year,
+    category: vehicle.category,
+    transmission: vehicle.transmission,
+    fuelType: vehicle.fuelType,
+    seats: vehicle.seats,
+    luggageCapacity: vehicle.luggageCapacity,
+    ac: vehicle.ac,
+    description: vehicle.description,
+    pricePerHour: vehicle.pricePerHour,
+    pricePerDay: vehicle.pricePerDay,
+    pricePerWeek: vehicle.pricePerWeek,
+    pricePerMonth: vehicle.pricePerMonth,
+    weekendMultiplier: vehicle.weekendMultiplier,
+    includedKmPerDay: vehicle.includedKmPerDay,
+    extraKmRate: vehicle.extraKmRate,
+    securityDeposit: vehicle.securityDeposit,
+    fuelPolicy: vehicle.fuelPolicy,
+    cancellationPolicy: vehicle.cancellationPolicy,
+    branchId: vehicle.branchId,
+    branchName: vehicle.branchName,
+    cityId: vehicle.cityId,
+    cityName: vehicle.cityName,
+    instantBooking: vehicle.instantBooking,
+    deliveryEligible: vehicle.deliveryEligible,
+    oneWayEligible: vehicle.oneWayEligible,
+    status: vehicle.status,
+    archived: vehicle.archived,
+    rating: vehicle.rating,
+    reviewCount: vehicle.reviewCount,
+    images: vehicle.images,
+    features: vehicle.features,
+    specifications: vehicle.specifications,
+  };
+}
+
 function buildScreenshotProxyUrl(proofId: string): string {
   const exp = Math.floor(Date.now() / 1000) + 60 * 60; // 1 hour signed view token
   const sig = signScreenshotSignature(proofId, exp);
@@ -794,7 +838,7 @@ async function createNotification(params: {
   }
 }
 
-async function createApp() {
+export async function createApp() {
   await probeLiveFirebaseAdmin().catch(() => undefined);
   const app = express();
 
@@ -894,7 +938,7 @@ async function createApp() {
       res.json({
         cities: citiesSnap.docs.map((d) => d.data()),
         branches: branchesSnap.docs.map((d) => d.data()),
-        vehicles: activeVehicles,
+        vehicles: activeVehicles.map(toPublicVehicle),
         insurancePackages: insSnap.docs.map((d) => d.data()),
         subscriptionPlans: plansSnap.docs.map((d) => d.data()),
         coupons: activeCoupons,
@@ -11851,9 +11895,16 @@ async function createApp() {
     res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.url}` });
   });
 
+<<<<<<< HEAD
   if (process.env.NODE_ENV !== 'production') {
     // Lazy import so the Vercel serverless function does not bundle/load Vite.
     const { createServer: createViteServer } = await import('vite');
+=======
+  if (process.env.VERCEL === '1') {
+    // Vercel serves the built SPA from outputDirectory and routes API calls
+    // through api/[...path].ts. Do not mount filesystem static middleware here.
+  } else if (process.env.NODE_ENV !== 'production') {
+>>>>>>> e38eaa3 (Fix authentication and Firebase integration)
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -11870,16 +11921,10 @@ async function createApp() {
   return app;
 }
 
-// Vercel imports this handler for each serverless invocation. The same app
-// factory is used by the standalone local/Node deployment below.
-const appPromise = createApp();
-
-export default async function handler(req: express.Request, res: express.Response) {
-  const app = await appPromise;
-  return app(req, res);
-}
-
+// Keep the standalone development server available, while Vercel imports
+// createApp() from the /api catch-all function without opening a listener.
 if (process.env.VERCEL !== '1') {
+  const appPromise = createApp();
   void appPromise.then((app) => {
     const PORT = Number(process.env.PORT) || 3000;
     app.listen(PORT, '0.0.0.0', () => {
